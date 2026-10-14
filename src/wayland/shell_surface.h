@@ -1,0 +1,128 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <unordered_set>
+
+#include "ui/event.h"
+#include "ui/window.h"
+
+struct wl_callback;
+struct wl_surface;
+struct wp_fractional_scale_v1;
+struct wp_presentation_feedback;
+struct wp_viewport;
+struct xdg_dialog_v1;
+struct xdg_popup;
+struct xdg_surface;
+struct xdg_toplevel;
+
+namespace cutefish::ui::wayland {
+
+class Connection;
+struct ShellSurfaceListeners;
+
+// An xdg_surface, as a toplevel or a popup, with a viewport and a fractional
+// scale. Its size is in logical pixels; the buffer is whatever the renderer
+// attaches.
+class ShellSurface
+{
+public:
+    class Delegate
+    {
+    public:
+        virtual ~Delegate() = default;
+
+        // A configure sequence ended. A zero size leaves the choice to the client.
+        virtual void configure(int width, int height, const WindowStates& states) = 0;
+        virtual void scaleChanged(double scale) = 0;
+        // The close button of a toplevel, or a popup dismissed by the compositor.
+        virtual void closeRequested() = 0;
+        virtual void frameDone() = 0;
+        virtual void presented(uint64_t timestampNs, uint32_t refreshNs) = 0;
+        virtual void discarded() = 0;
+
+        virtual void pointerEnter(double x, double y) = 0;
+        virtual void pointerLeave() = 0;
+        virtual void pointerMotion(double x, double y) = 0;
+        virtual void pointerButton(MouseButton button, bool pressed, uint32_t modifiers) = 0;
+        virtual void pointerScroll(const ScrollEvent& event) = 0;
+        // Fingers came to rest on the touchpad.
+        virtual void pointerHold() = 0;
+
+        virtual void keyboardEnter() = 0;
+        virtual void keyboardLeave() = 0;
+        virtual void key(const KeyEvent& event, bool pressed) = 0;
+        virtual void textInput(const TextInputEvent& event) = 0;
+    };
+
+    // A toplevel.
+    ShellSurface(Connection& connection, Delegate* delegate);
+    // A popup of the parent, placed relative to it; with a grab, it takes the
+    // keyboard and goes when the pointer presses elsewhere.
+    ShellSurface(Connection& connection, Delegate* delegate, ShellSurface* parent,
+                 const PopupPlacement& placement, int width, int height, bool grab);
+    ~ShellSurface();
+
+    ShellSurface(const ShellSurface&) = delete;
+    ShellSurface& operator=(const ShellSurface&) = delete;
+
+    Delegate* delegate() const { return m_delegate; }
+    wl_surface* surface() const { return m_surface; }
+    Connection& connection() const { return m_connection; }
+
+    void setTitle(const std::string& title);
+    void setAppId(const std::string& appId);
+    void setMinimumSize(int width, int height);
+    void setMaximumSize(int width, int height);
+    void startMove();
+    void setMaximized(bool maximized);
+    void setFullScreen(bool fullScreen);
+    void minimize();
+    // A dialog of the parent: kept above it, modal when asked.
+    void setParent(ShellSurface* parent, bool modal);
+
+    // The initial commit, without a buffer; the compositor answers with a configure.
+    void map();
+
+    // The rounded body the compositor blurs behind, outlines and shadows; an
+    // empty rect turns it off. Applies with the next commit.
+    void setBlur(const RectF& rect, double radius);
+
+    // Everything that has to land in the same commit as the next buffer:
+    // the configure ack, the viewport, the opaque region, the next frame
+    // callback and presentation feedback.
+    void prepareCommit(int width, int height, bool opaque);
+
+private:
+    friend struct ShellSurfaceListeners;
+
+    void createSurface();
+
+    Connection& m_connection;
+    Delegate* m_delegate;
+    wl_surface* m_surface = nullptr;
+    wp_viewport* m_viewport = nullptr;
+    wp_fractional_scale_v1* m_fractionalScale = nullptr;
+    xdg_surface* m_xdgSurface = nullptr;
+    xdg_toplevel* m_xdgToplevel = nullptr;
+    xdg_popup* m_xdgPopup = nullptr;
+    xdg_dialog_v1* m_dialog = nullptr;
+    wl_callback* m_frameCallback = nullptr;
+    // The request of the same name hides the type in C++.
+    std::unordered_set<struct wp_presentation_feedback*> m_feedbacks;
+
+    int m_pendingWidth = 0;
+    int m_pendingHeight = 0;
+    WindowStates m_pendingStates;
+    uint32_t m_configureSerial = 0;
+    bool m_configurePending = false;
+    int m_committedWidth = 0;
+    int m_committedHeight = 0;
+    bool m_committedOpaque = false;
+};
+
+} // namespace cutefish::ui::wayland

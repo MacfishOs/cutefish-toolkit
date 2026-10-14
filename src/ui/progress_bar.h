@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <memory>
+
+#include "ui/view.h"
+
+namespace cutefish::ui {
+
+class Animation;
+
+// FishUI's progress bar: a pill track filled in the accent colour. An
+// indeterminate bar sends a third of its length across, back and forth.
+class ProgressBar : public View
+{
+public:
+    ProgressBar();
+    ~ProgressBar() override;
+
+    // From 0 to 1.
+    void setValue(double value);
+    double value() const { return m_value; }
+    void setIndeterminate(bool indeterminate);
+
+    SizeF sizeHint() const override { return {200, 6}; }
+
+protected:
+    void paint(Painter& painter) override;
+
+private:
+    double m_value = 0;
+    bool m_indeterminate = false;
+    double m_phase = 0;
+    std::unique_ptr<Animation> m_animation;
+};
+
+// FishUI's busy indicator: the refresh glyph turning once a second.
+class BusyIndicator : public View
+{
+public:
+    BusyIndicator();
+    ~BusyIndicator() override;
+
+    void setRunning(bool running);
+    bool isRunning() const { return m_running; }
+
+    SizeF sizeHint() const override { return {22, 22}; }
+
+protected:
+    void paint(Painter& painter) override;
+
+private:
+    bool m_running = true;
+    double m_angle = 0;
+    std::unique_ptr<Animation> m_animation;
+};
+
+} // namespace cutefish::ui

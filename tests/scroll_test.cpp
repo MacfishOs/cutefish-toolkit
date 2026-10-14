@@ -1,0 +1,244 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <gtest/gtest.h>
+
+#include <set>
+#include <string>
+
+#include "test_views.h"
+#include "ui/label.h"
+#include "ui/layout.h"
+#include "ui/list_view.h"
+#include "ui/scroll_view.h"
+#include "ui/scroller.h"
+#include "ui/test_input.h"
+#include "ui/window.h"
+
+using namespace cutefish::ui;
+using test::Box;
+
+// Mirrors cutefish-framework's scrolling tests, so both toolkits keep one feel.
+// Deltas point towards the end of the content, the other way from Qt's.
+
+static double now = 0;
+
+static double testClock()
+{
+    return now;
+}
+
+static void touchpad(Window& window, PointF delta, uint32_t time, PointF position = {50, 50})
+{
+    now = time;
+    ScrollEvent event;
+    event.deltaX = delta.x;
+    event.deltaY = delta.y;
+    event.precise = true;
+    event.time = time;
+    TestInput::scroll(window, position, event);
+}
+
+static void lift(Window& window, uint32_t time, PointF position = {50, 50})
+{
+    now = time;
+    ScrollEvent event;
+    event.precise = true;
+    event.stop = true;
+    event.time = time;
+    TestInput::scroll(window, position, event);
+}
+
+// Shows the frame that samples the fingers at time.
+static void frame(Window& window, double time)
+{
+    now = time + Scroller::resampleLatency;
+    window.grab(uint64_t(now * 1e6));
+}
+
+static void swipe(Window& window, double step, uint32_t start = 1000, PointF position = {50, 50})
+{
+    for (uint32_t i = 1; i <= 3; ++i)
+        touchpad(window, {0, step}, start + 16 * i, position);
+    lift(window, start + 50, position);
+}
+
+class ScrollTest : public testing::Test
+{
+protected:
+    void SetUp() override { Scroller::setClock(testClock); }
+    void TearDown() override { Scroller::setClock(nullptr); }
+};
+
+namespace {
+
+struct Scene
+{
+    Scene()
+    {
+        auto content = std::make_unique<Row>();
+        left = view(content.get());
+        right = view(content.get());
+        window.resize({600, 300});
+        window.setContentView(std::move(content));
+        window.show();
+        window.grab(1);
+        left->setScrollPosition({0, 500});
+        right->setScrollPosition({0, 500});
+    }
+
+    static ScrollView* view(Row* row)
+    {
+        auto* scrollView = row->addChild<ScrollView>();
+        scrollView->setLayoutHints({.fillHeight = true, .preferredWidth = 300});
+        scrollView->setScrollDirections(true, true);
+        scrollView->setContent<Box>(SizeF{2000, 2000});
+        return scrollView;
+    }
+
+    Window window;
+    ScrollView* left;
+    ScrollView* right;
+};
+
+} // namespace
+
+TEST_F(ScrollTest, TouchpadScrollsAndCoasts)
+{
+    Scene scene;
+    touchpad(scene.window, {0, 10}, 1016);
+    frame(scene.window, 1016);
+    EXPECT_EQ(scene.left->scrollPosition().y, 510);
+    lift(scene.window, 1020);
+
+    swipe(scene.window, 16, 2000);
+    frame(scene.window, 2048);
+    const double released = scene.left->scrollPosition().y;
+    frame(scene.window, 2200);
+    EXPECT_GT(scene.left->scrollPosition().y, released);
+}
+
+TEST_F(ScrollTest, WheelStepsAtOnce)
+{
+    Scene scene;
+    now = 1000;
+    ScrollEvent event;
+    event.value120Y = 120;
+    event.deltaY = 10;
+    TestInput::scroll(scene.window, {50, 50}, event);
+    EXPECT_EQ(scene.left->scrollPosition().y, 545);
+}
+
+TEST_F(ScrollTest, StopAtBoundsDoesNotOvershoot)
+{
+    Scene scene;
+    scene.left->setScrollPosition({0, 0});
+    scene.right->setScrollPosition({0, 0});
+    scene.left->setElastic(false);
+    swipe(scene.window, -10);
+    frame(scene.window, 1040);
+    EXPECT_EQ(scene.left->scrollPosition().y, 0);
+
+    swipe(scene.window, -10, 2000, {350, 50});
+    frame(scene.window, 2040);
+    EXPECT_LT(scene.right->scrollPosition().y, 0);
+    for (int time = 2056; time <= 3000; time += 16)
+        frame(scene.window, time);
+    EXPECT_EQ(scene.right->scrollPosition().y, 0);
+}
+
+TEST_F(ScrollTest, GestureStaysWithItsFirstView)
+{
+    Scene scene;
+    touchpad(scene.window, {0, 10}, 1016);
+    touchpad(scene.window, {0, 10}, 1032, {350, 50});
+    frame(scene.window, 1032);
+    EXPECT_EQ(scene.left->scrollPosition().y, 520);
+    EXPECT_EQ(scene.right->scrollPosition().y, 500);
+}
+
+TEST_F(ScrollTest, PerpendicularGestureReachesTheParent)
+{
+    Window window;
+    auto outer = std::make_unique<ScrollView>();
+    auto* column = outer->setContent<Column>();
+    auto* inner = column->addChild<ScrollView>();
+    inner->setLayoutHints({.fillWidth = true, .preferredHeight = 300});
+    inner->setScrollDirections(true, false);
+    inner->setContent<Box>(SizeF{2000, 300});
+    column->addChild<Box>(SizeF{300, 1700});
+    ScrollView* outerView = outer.get();
+    window.resize({300, 300});
+    window.setContentView(std::move(outer));
+    window.show();
+    window.grab(1);
+
+    touchpad(window, {0, 10}, 1016);
+    frame(window, 1016);
+    EXPECT_EQ(inner->scrollPosition().x, 0);
+    EXPECT_EQ(outerView->scrollPosition().y, 10);
+}
+
+TEST_F(ScrollTest, RestingFingersStopACoast)
+{
+    Scene scene;
+    swipe(scene.window, 16, 2000);
+    frame(scene.window, 2100);
+    const double stopped = scene.left->scrollPosition().y;
+    TestInput::hold(scene.window);
+    frame(scene.window, 2200);
+    EXPECT_EQ(scene.left->scrollPosition().y, stopped);
+}
+
+TEST_F(ScrollTest, PressStopsACoast)
+{
+    Scene scene;
+    swipe(scene.window, 16, 2000);
+    frame(scene.window, 2100);
+    const double stopped = scene.left->scrollPosition().y;
+    TestInput::click(scene.window, {50, 50});
+    frame(scene.window, 2200);
+    EXPECT_EQ(scene.left->scrollPosition().y, stopped);
+}
+
+TEST_F(ScrollTest, ListViewMakesOnlyRowsInSight)
+{
+    Window window;
+    auto list = std::make_unique<ListView>();
+    int created = 0;
+    std::set<size_t> bound;
+    list->createItem = [&created] {
+        ++created;
+        return std::make_unique<Label>();
+    };
+    list->bindItem = [&bound](View* item, size_t row) {
+        static_cast<Label*>(item)->setText("Row " + std::to_string(row));
+        bound.insert(row);
+    };
+    list->setRowHeight(20);
+    list->setRowCount(1000);
+    ListView* listView = list.get();
+    window.resize({200, 100});
+    window.setContentView(std::move(list));
+    window.show();
+    window.grab(1);
+
+    EXPECT_EQ(created, 5);
+    EXPECT_EQ(listView->contentSize().height, 20000);
+    EXPECT_NE(listView->itemForRow(4), nullptr);
+    EXPECT_EQ(listView->itemForRow(5), nullptr);
+
+    listView->setScrollPosition({0, 510});
+    window.grab(2);
+    // Rows 25 to 30 show, part of the first and last; the views are reused.
+    EXPECT_EQ(created, 6);
+    EXPECT_NE(listView->itemForRow(25), nullptr);
+    EXPECT_NE(listView->itemForRow(30), nullptr);
+    EXPECT_EQ(listView->itemForRow(24), nullptr);
+    EXPECT_EQ(static_cast<Label*>(listView->itemForRow(30))->text(), "Row 30");
+    EXPECT_EQ(listView->itemForRow(30)->mapToWindow({}).y, 30 * 20 - 510);
+
+    listView->scrollToRow(999);
+    window.grab(3);
+    EXPECT_EQ(listView->scrollPosition().y, 20000 - 100);
+}

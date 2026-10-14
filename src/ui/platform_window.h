@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "ui/event.h"
+#include "ui/geometry.h"
+#include "ui/window.h"
+
+class SkCanvas;
+
+namespace cutefish::ui {
+
+class Window;
+
+// The window-system side of a Window: its surface, its buffers and the events
+// that come back. Window does layout, painting, pacing and input routing.
+class PlatformWindow
+{
+public:
+    // Draws into a buffer that holds the frame presented `bufferAge` frames
+    // ago, or anything when 0, and returns the device rects that changed.
+    using PaintFunction = std::function<std::vector<Rect>(SkCanvas* canvas, int bufferAge)>;
+
+    // For the application's platform; a popup when it has a parent.
+    static std::unique_ptr<PlatformWindow> create(Window* window, PlatformWindow* parent,
+                                                  const PopupPlacement& placement, bool grab);
+
+    explicit PlatformWindow(Window* window)
+        : m_window(window)
+    {
+    }
+    virtual ~PlatformWindow() = default;
+
+    PlatformWindow(const PlatformWindow&) = delete;
+    PlatformWindow& operator=(const PlatformWindow&) = delete;
+
+    // Headless windows have no frame clock; they draw only when grabbed.
+    virtual bool isHeadless() const = 0;
+
+    virtual void setTitle(const std::string& title) = 0;
+    virtual void setAppId(const std::string& appId) = 0;
+    virtual void setMinimumSize(int width, int height) = 0;
+    virtual void setMaximumSize(int width, int height) = 0;
+    virtual void setMaximized(bool maximized) = 0;
+    virtual void setFullScreen(bool fullScreen) = 0;
+    virtual void minimize() = 0;
+    virtual void setTransientParent(PlatformWindow* parent, bool modal) = 0;
+    virtual void show(int width, int height) = 0;
+    virtual void startMove() = 0;
+    virtual void setCursorShape(CursorShape shape) = 0;
+    virtual void setBlur(const RectF& rect, double radius) = 0;
+    // The focused text view's state for input methods, or none.
+    virtual void setTextInput(const TextInputState* state) = 0;
+
+    // Draws a frame of the logical size at the scale and presents it.
+    virtual bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) = 0;
+    // Headless only: the buffer last presented.
+    virtual const Image* presentedImage() const { return nullptr; }
+
+protected:
+    void notifyConfigure(int width, int height, const WindowStates& states);
+    void notifyScaleChanged(double scale);
+    void notifyCloseRequested();
+    void notifyFrameDone();
+    void notifyPresented(uint64_t timestampNs, uint32_t refreshNs);
+    void notifyDiscarded();
+    void notifyPointerEnter(double x, double y);
+    void notifyPointerLeave();
+    void notifyPointerMotion(double x, double y);
+    void notifyPointerButton(MouseButton button, bool pressed, uint32_t modifiers);
+    void notifyPointerScroll(const ScrollEvent& event);
+    void notifyKeyboardEnter();
+    void notifyKeyboardLeave();
+    void notifyKey(const KeyEvent& event, bool pressed);
+    void notifyHold();
+    void notifyTextInput(const TextInputEvent& event);
+
+    Window* m_window;
+};
+
+} // namespace cutefish::ui

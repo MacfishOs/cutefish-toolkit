@@ -1,0 +1,128 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "ui/view.h"
+
+namespace cutefish::ui {
+
+class Label;
+class Window;
+
+// FishUI's dialog button: a pill, in the accent colour when primary, in red
+// when it confirms something that cannot be undone.
+class DialogButton : public View
+{
+public:
+    explicit DialogButton(std::string text = {}, bool primary = false);
+
+    void setText(std::string text);
+    void setPrimary(bool primary);
+    void setDestructive(bool destructive);
+
+    SizeF sizeHint() const override;
+    RectF visualRect() const override;
+    bool acceptsPointer() const override { return true; }
+    bool acceptsFocus() const override { return true; }
+
+    std::function<void()> onClicked;
+
+protected:
+    void layout() override;
+    void paint(Painter& painter) override;
+    void pointerEnter() override;
+    void pointerLeave() override;
+    void pointerPress(const PointerEvent& event) override;
+    void pointerRelease(const PointerEvent& event) override;
+    bool keyPress(const KeyEvent& event) override;
+
+private:
+    Color actionColor() const;
+
+    Label* m_label;
+    bool m_primary;
+    bool m_destructive = false;
+    bool m_hovered = false;
+    bool m_pressed = false;
+};
+
+// FishUI's dialog: a modal window over its parent, its title on the line of
+// its close button and its height that of its content.
+class DialogWindow
+{
+public:
+    DialogWindow(Window* parent, std::string title, double width = 400);
+    virtual ~DialogWindow();
+
+    DialogWindow(const DialogWindow&) = delete;
+    DialogWindow& operator=(const DialogWindow&) = delete;
+
+    void setTitle(std::string title);
+    void setContentView(std::unique_ptr<View> view);
+    template<typename T, typename... Args>
+    T* setContent(Args&&... args)
+    {
+        auto view = std::make_unique<T>(std::forward<Args>(args)...);
+        T* content = view.get();
+        setContentView(std::move(view));
+        return content;
+    }
+    // FishUI's back button, before the title, for pages that replace each other.
+    void setBackVisible(bool visible);
+
+    void show();
+    // Goes once the event being handled is over.
+    void close();
+    Window* window() const { return m_window.get(); }
+
+    std::function<void()> onBack;
+    std::function<void()> onClosed;
+
+private:
+    class Root;
+
+    Window* m_parent;
+    double m_width;
+    std::unique_ptr<Window> m_window;
+    Root* m_root;
+};
+
+// FishUI's confirmation: a title, an explanation and two buttons, the
+// confirming one in the accent colour or, when it destroys something, red.
+class ConfirmDialog
+{
+public:
+    ConfirmDialog(Window* parent, std::string title, std::string text = {});
+    ~ConfirmDialog();
+
+    void setConfirmText(std::string text);
+    void setCancelText(std::string text);
+    void setDestructive(bool destructive);
+    void setCancelVisible(bool visible);
+
+    void show();
+    Window* window() const { return m_window.get(); }
+
+    std::function<void()> onAccepted;
+    std::function<void()> onRejected;
+
+private:
+    void finish(bool accepted);
+
+    Window* m_parent;
+    std::string m_title;
+    std::string m_text;
+    std::string m_confirm = "Confirm";
+    std::string m_cancel = "Cancel";
+    bool m_destructive = false;
+    bool m_cancelVisible = true;
+    std::unique_ptr<Window> m_window;
+};
+
+} // namespace cutefish::ui

@@ -1,0 +1,388 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "ui/dialog_window.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include "base/event_loop.h"
+#include "ui/application.h"
+#include "ui/header_button.h"
+#include "ui/keys.h"
+#include "ui/label.h"
+#include "ui/layout.h"
+#include "ui/painter.h"
+#include "ui/theme.h"
+#include "ui/window.h"
+
+namespace cutefish::ui {
+
+// FishUI's dialog metrics.
+static constexpr double kHeaderHeight = 44;
+static constexpr double kButtonMargin = 8;
+static constexpr double kButton = 32;
+static constexpr double kContentPadding = 16;
+static constexpr double kTitleSize = 14;
+static constexpr double kConfirmMinimumWidth = 336;
+// The keyboard focus ring outside a dialog button.
+static constexpr double kFocusRing = 3;
+
+// Destroys the window from the event loop, after the event being handled.
+static void release(std::unique_ptr<Window>& window)
+{
+    if (!window)
+        return;
+    std::shared_ptr<Window> doomed(std::move(window));
+    Application::instance()->loop().post([doomed] {});
+}
+
+DialogButton::DialogButton(std::string text, bool primary)
+    : m_label(addChild<Label>(std::move(text)))
+    , m_primary(primary)
+{
+    m_label->setTextAlignment(Label::TextAlignment::Center);
+    m_label->setVerticallyCentered(true);
+    m_label->setWeight(500);
+    m_label->setFontSize(12);
+    if (primary)
+        m_label->setColor(Color::rgb(0xFFFFFF));
+}
+
+void DialogButton::setText(std::string text)
+{
+    m_label->setText(std::move(text));
+}
+
+void DialogButton::setPrimary(bool primary)
+{
+    m_primary = primary;
+    m_label->setColor(primary ? std::optional<Color>(Color::rgb(0xFFFFFF)) : std::nullopt);
+    requestPaint();
+}
+
+void DialogButton::setDestructive(bool destructive)
+{
+    m_destructive = destructive;
+    requestPaint();
+}
+
+RectF DialogButton::visualRect() const
+{
+    return localRect().adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing);
+}
+
+SizeF DialogButton::sizeHint() const
+{
+    const SizeF text = m_label->sizeHint();
+    return {std::max(64.0, text.width + 2 * Theme::current().largeSpacing), std::max(32.0, text.height)};
+}
+
+void DialogButton::layout()
+{
+    m_label->setGeometry(localRect());
+}
+
+Color DialogButton::actionColor() const
+{
+    const Theme& theme = Theme::current();
+    if (m_destructive)
+        return theme.darkMode ? Color::rgb(0xFF453A) : Color::rgb(0xD92D20);
+    return theme.highlight;
+}
+
+void DialogButton::paint(Painter& painter)
+{
+    const Theme& theme = Theme::current();
+    const RectF bounds = localRect();
+    const double radius = bounds.height / 2;
+    const Color surface = m_primary ? actionColor() : theme.alternateBackground;
+    Color color = surface;
+    if (isEnabled() && m_pressed)
+        color = surface.darker(1.08);
+    else if (isEnabled() && m_hovered)
+        color = m_primary || theme.darkMode ? surface.lighter(1.05) : surface.darker(1.04);
+    painter.fillRoundedRect(bounds, radius, color);
+    const int border = painter.borderWidth(1);
+    painter.strokeRoundedRect(bounds, radius,
+                              m_primary ? actionColor().darker(1.25)
+                                        : (theme.darkMode ? Color::rgb(0x545455) : Color::rgb(0xD9DADD)),
+                              border);
+    if (m_primary || !theme.darkMode) {
+        const double inset = border / painter.scale();
+        painter.strokeRoundedRect(bounds.adjusted(inset, inset, -inset, -inset), radius - inset,
+                                  Color::rgb(0xFFFFFF).withAlpha(m_primary ? 0.2 : 0.08), border);
+    }
+    if (hasVisibleFocus()) {
+        const RectF ring = bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing);
+        painter.strokeRoundedRect(ring, radius + kFocusRing,
+                                  (m_primary ? actionColor() : theme.highlight).withAlpha(0.3),
+                                  painter.borderWidth(2));
+    }
+}
+
+void DialogButton::pointerEnter()
+{
+    m_hovered = true;
+    requestPaint();
+}
+
+void DialogButton::pointerLeave()
+{
+    m_hovered = false;
+    requestPaint();
+}
+
+void DialogButton::pointerPress(const PointerEvent& event)
+{
+    if (event.button != MouseButton::Left)
+        return;
+    m_pressed = true;
+    requestPaint();
+}
+
+void DialogButton::pointerRelease(const PointerEvent& event)
+{
+    if (!m_pressed)
+        return;
+    m_pressed = false;
+    requestPaint();
+    if (localRect().contains(event.position) && onClicked)
+        onClicked();
+}
+
+bool DialogButton::keyPress(const KeyEvent& event)
+{
+    if (event.modifiers == NoModifier
+        && (event.key == key::Space || event.key == key::Return || event.key == key::KeypadEnter)) {
+        if (onClicked)
+            onClicked();
+        return true;
+    }
+    return false;
+}
+
+// The dialog's view: the header line with the title and buttons, the
+// content below with FishUI's padding.
+class DialogWindow::Root : public View
+{
+public:
+    explicit Root(DialogWindow* dialog, std::string title)
+        : m_dialog(dialog)
+        , m_back(addChild<HeaderButton>(std::string(), kButton))
+        , m_title(addChild<Label>(std::move(title)))
+        , m_close(addChild<HeaderButton>("close", kButton))
+    {
+        m_title->setFontSize(kTitleSize);
+        m_title->setVerticallyCentered(true);
+        m_back->setGlyph("chevron-left");
+        m_back->setVisible(false);
+        m_back->onClicked = [this] {
+            if (m_dialog->onBack)
+                m_dialog->onBack();
+        };
+        m_close->onClicked = [this] { m_dialog->close(); };
+    }
+
+    Label* title() const { return m_title; }
+    HeaderButton* back() const { return m_back; }
+    View* content() const { return m_content; }
+
+    void setContent(std::unique_ptr<View> view)
+    {
+        if (m_content)
+            takeChild(m_content);
+        m_content = view.get();
+        addChild(std::move(view));
+    }
+
+    double heightForWidth(double width) const override
+    {
+        const double content = m_content ? m_content->heightForWidth(width - 2 * kContentPadding) : 0;
+        return kHeaderHeight + content + kContentPadding;
+    }
+
+    bool acceptsPointer() const override { return true; }
+
+protected:
+    void layout() override
+    {
+        const double width = geometry().width;
+        // The title is centred on the buttons' line.
+        const double line = kButtonMargin;
+        double left = kContentPadding;
+        if (m_back->isVisible()) {
+            m_back->setGeometry({kButtonMargin, line, kButton, kButton});
+            left = kButtonMargin + kButton + Theme::current().smallSpacing;
+        }
+        m_close->setGeometry({width - kButtonMargin - kButton, line, kButton, kButton});
+        m_title->setGeometry({left, line, std::max(0.0, width - left - 2 * kButtonMargin - kButton), kButton});
+        if (m_content) {
+            m_content->setGeometry({kContentPadding, kHeaderHeight, width - 2 * kContentPadding,
+                                    std::max(0.0, geometry().height - kHeaderHeight - kContentPadding)});
+        }
+    }
+
+    // The empty parts of the window move it.
+    void pointerPress(const PointerEvent& event) override
+    {
+        if (event.button == MouseButton::Left && window())
+            window()->startMove();
+    }
+
+    bool keyPress(const KeyEvent& event) override
+    {
+        if (event.key == key::Escape && event.modifiers == NoModifier) {
+            m_dialog->close();
+            return true;
+        }
+        return false;
+    }
+
+private:
+    DialogWindow* m_dialog;
+    HeaderButton* m_back;
+    Label* m_title;
+    HeaderButton* m_close;
+    View* m_content = nullptr;
+};
+
+DialogWindow::DialogWindow(Window* parent, std::string title, double width)
+    : m_parent(parent)
+    , m_width(width)
+    , m_window(std::make_unique<Window>())
+{
+    auto root = std::make_unique<Root>(this, std::move(title));
+    m_root = root.get();
+    m_window->setContentView(std::move(root));
+    m_window->setTransientParent(parent, true);
+    m_window->onCloseRequested = [this] { close(); };
+}
+
+DialogWindow::~DialogWindow() = default;
+
+void DialogWindow::setTitle(std::string title)
+{
+    m_root->title()->setText(title);
+    if (m_window)
+        m_window->setTitle(title);
+}
+
+void DialogWindow::setContentView(std::unique_ptr<View> view)
+{
+    m_root->setContent(std::move(view));
+}
+
+void DialogWindow::setBackVisible(bool visible)
+{
+    m_root->back()->setVisible(visible);
+}
+
+void DialogWindow::show()
+{
+    if (!m_window)
+        return;
+    m_window->setTitle(m_root->title()->text());
+    m_window->resize({m_width, 0});
+    m_window->setFitsContentHeight(true);
+    m_window->show();
+}
+
+void DialogWindow::close()
+{
+    release(m_window);
+    if (onClosed)
+        onClosed();
+}
+
+ConfirmDialog::ConfirmDialog(Window* parent, std::string title, std::string text)
+    : m_parent(parent)
+    , m_title(std::move(title))
+    , m_text(std::move(text))
+{
+}
+
+ConfirmDialog::~ConfirmDialog() = default;
+
+void ConfirmDialog::setConfirmText(std::string text)
+{
+    m_confirm = std::move(text);
+}
+
+void ConfirmDialog::setCancelText(std::string text)
+{
+    m_cancel = std::move(text);
+}
+
+void ConfirmDialog::setDestructive(bool destructive)
+{
+    m_destructive = destructive;
+}
+
+void ConfirmDialog::setCancelVisible(bool visible)
+{
+    m_cancelVisible = visible;
+}
+
+void ConfirmDialog::show()
+{
+    m_window = std::make_unique<Window>();
+    m_window->setBackgroundColor(Theme::current().secondBackground);
+    m_window->setTransientParent(m_parent, true);
+    m_window->setTitle(m_title);
+    m_window->onCloseRequested = [this] { finish(false); };
+
+    auto column = std::make_unique<Column>();
+    column->setMargins({kContentPadding, kContentPadding, kContentPadding, 12});
+    column->setSpacing(kContentPadding);
+
+    auto* texts = column->addChild<Column>();
+    texts->setSpacing(4);
+    // Clear of the close corner of the window.
+    texts->setLayoutHints({.fillWidth = true});
+    texts->setMargins({0, 0, 32, 0});
+    Label* title = texts->addChild<Label>(m_title);
+    title->setFontSize(kTitleSize);
+    title->setWeight(600);
+    title->setWrap(true);
+    title->setLayoutHints({.fillWidth = true});
+    if (!m_text.empty()) {
+        Label* text = texts->addChild<Label>(m_text);
+        text->setFontSize(kTitleSize);
+        text->setColor(Theme::current().disabledText);
+        text->setWrap(true);
+        text->setLayoutHints({.fillWidth = true});
+    }
+
+    auto* actions = column->addChild<Row>();
+    actions->setSpacing(8);
+    actions->setLayoutHints({.alignment = Alignment::End});
+    DialogButton* cancel = nullptr;
+    if (m_cancelVisible) {
+        cancel = actions->addChild<DialogButton>(m_cancel);
+        cancel->onClicked = [this] { finish(false); };
+    }
+    DialogButton* confirm = actions->addChild<DialogButton>(m_confirm, true);
+    confirm->setDestructive(m_destructive);
+    confirm->onClicked = [this] { finish(true); };
+
+    // Escape cancels, Return confirms.
+    m_window->addShortcut(NoModifier, key::Escape, [this] { finish(false); });
+    m_window->setContentView(std::move(column));
+    m_window->resize({std::max(kConfirmMinimumWidth, actions->sizeHint().width + 2 * kContentPadding), 0});
+    m_window->setFitsContentHeight(true);
+    // A destructive action waits for a deliberate choice.
+    (m_destructive && cancel ? static_cast<View*>(cancel) : static_cast<View*>(confirm))->setFocus();
+    m_window->show();
+}
+
+void ConfirmDialog::finish(bool accepted)
+{
+    release(m_window);
+    if (accepted && onAccepted)
+        onAccepted();
+    else if (!accepted && onRejected)
+        onRejected();
+}
+
+} // namespace cutefish::ui

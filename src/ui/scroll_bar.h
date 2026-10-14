@@ -1,0 +1,72 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <functional>
+#include <memory>
+
+#include "ui/view.h"
+
+namespace cutefish::ui {
+
+class Animation;
+
+// FishUI's scroll bar: a thin handle over the edge of the view, shown while
+// the view moves and while hovered, fading out a second after.
+class ScrollBar : public View
+{
+public:
+    enum class Orientation {
+        Horizontal,
+        Vertical,
+    };
+
+    // Across the bar, padding included.
+    static constexpr double thickness = 8;
+
+    explicit ScrollBar(Orientation orientation);
+    ~ScrollBar() override;
+
+    // Lengths along the bar's direction; the position may overshoot.
+    void setRange(double viewport, double content, double position);
+    void setMoving(bool moving);
+    bool isNeeded() const { return m_content > m_viewport; }
+
+    bool acceptsPointer() const override { return isNeeded(); }
+
+    // The content position the bar was dragged or paged to.
+    std::function<void(double position)> onPositionRequested;
+
+protected:
+    void paint(Painter& painter) override;
+    void pointerEnter() override;
+    void pointerLeave() override;
+    void pointerPress(const PointerEvent& event) override;
+    void pointerMove(const PointerEvent& event) override;
+    void pointerRelease(const PointerEvent& event) override;
+
+private:
+    double along(PointF point) const;
+    double trackLength() const;
+    double handleLength() const;
+    double handleStart() const;
+    void updateShown();
+    void fadeTo(double opacity);
+
+    Orientation m_orientation;
+    double m_viewport = 0;
+    double m_content = 0;
+    double m_position = 0;
+    bool m_moving = false;
+    bool m_hovered = false;
+    bool m_dragging = false;
+    double m_dragOffset = 0;
+    double m_opacity = 0;
+    double m_fadeFrom = 0;
+    double m_fadeTo = 0;
+    int m_hideTimer = 0;
+    std::unique_ptr<Animation> m_fade;
+};
+
+} // namespace cutefish::ui
