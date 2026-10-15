@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "ui/painter.h"
+#include "ui/path_private.h"
 
 #include <algorithm>
 #include <cmath>
@@ -201,33 +202,7 @@ void Painter::fillRoundedRect(const RectF& rect, double radius, const LinearGrad
 
 SkPath Painter::toSkPath(const Path& path) const
 {
-    SkPathBuilder builder;
-    const auto map = [this](PointF point) {
-        return SkPoint::Make(SkScalar((m_offset.x + point.x) * m_scale), SkScalar((m_offset.y + point.y) * m_scale));
-    };
-    size_t index = 0;
-    for (const Path::Verb verb : path.m_verbs) {
-        switch (verb) {
-        case Path::Verb::Move:
-            builder.moveTo(map(path.m_points[index++]));
-            break;
-        case Path::Verb::Line:
-            builder.lineTo(map(path.m_points[index++]));
-            break;
-        case Path::Verb::Quad:
-            builder.quadTo(map(path.m_points[index]), map(path.m_points[index + 1]));
-            index += 2;
-            break;
-        case Path::Verb::Cubic:
-            builder.cubicTo(map(path.m_points[index]), map(path.m_points[index + 1]), map(path.m_points[index + 2]));
-            index += 3;
-            break;
-        case Path::Verb::Close:
-            builder.close();
-            break;
-        }
-    }
-    return builder.detach();
+    return PathAccess::toSkPath(path, m_scale, m_offset);
 }
 
 void Painter::fillPath(const Path& path, Color color)

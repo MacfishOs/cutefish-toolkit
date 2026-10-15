@@ -94,6 +94,20 @@ private:
         FdCallback callback;
     };
 
+    struct TimerEntry
+    {
+        int fd = -1;
+        std::chrono::steady_clock::time_point deadline;
+        std::chrono::nanoseconds interval{1};
+        bool repeat = false;
+        Task task;
+    };
+
+    // Runs the timer, and unwatches or rearms it first.
+    void fireTimer(int id);
+    // Timers whose deadline has passed, whether or not their descriptor has
+    // turned readable yet: timer slack delays that by tens of microseconds.
+    void runDueTimers();
     void runPosted();
     bool hasPosted();
     void runPrepareHooks();
@@ -109,6 +123,7 @@ private:
     int m_exitCode = 0;
     // Shared so a callback can unwatch itself while it runs.
     std::unordered_map<int, std::shared_ptr<Watch>> m_watches;
+    std::unordered_map<int, std::shared_ptr<TimerEntry>> m_timers;
     std::vector<std::pair<int, Task>> m_prepareHooks;
     std::vector<Task> m_destroyHooks;
     std::mutex m_postedMutex;

@@ -24,6 +24,8 @@
 using namespace cutefish::ui;
 using namespace std::chrono_literals;
 
+extern cutefish::base::EventLoop* g_hostLoop;
+
 static constexpr uint64_t kStart = 1000000000;
 
 static uint64_t at(std::chrono::milliseconds offset)
@@ -361,4 +363,11 @@ TEST(EmbeddedTest, SeveralWindowsShareTheApplication)
     EXPECT_EQ(second.render(at(0ms)).width, 16);
     EXPECT_EQ(pixelAt(second.frame(), 7, 7).a, 255);
     EXPECT_EQ(pixelAt(second.frame(), 8, 8).a, 0);
+}
+
+TEST(EmbeddedApplicationTest, UsesTheHostLoop)
+{
+    ASSERT_NE(g_hostLoop, nullptr);
+    EXPECT_EQ(&Application::instance()->loop(), g_hostLoop);
+    EXPECT_EQ(cutefish::base::EventLoop::current(), g_hostLoop);
 }

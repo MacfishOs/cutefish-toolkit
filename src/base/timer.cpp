@@ -20,9 +20,11 @@ Timer::~Timer()
 void Timer::start()
 {
     stop();
-    m_id = m_loop.startTimer(m_interval, !m_singleShot, [this] {
+    // Always repeating underneath: the single-shot flag is read at each
+    // expiry, so it may change while the timer runs.
+    m_id = m_loop.startTimer(m_interval, true, [this] {
         if (m_singleShot)
-            m_id = 0;
+            stop();
         if (onTimeout)
             onTimeout();
     });

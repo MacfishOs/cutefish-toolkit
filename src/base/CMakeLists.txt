@@ -2,40 +2,65 @@
 # services and daemons as well as applications.
 set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
     application_registry.h
+    auto_reset.h
+    byte_stream.h
+    command_line.h
     dbus.h
     dbus_types.h
+    elapsed_timer.h
     desktop_entry.h
     event_loop.h
     file.h
     file_watcher.h
+    geometry.h
+    hash.h
     json.h
+    local_socket.h
     locale.h
+    logging.h
+    lru_cache.h
     mime_apps.h
     mime_database.h
     paths.h
     process.h
+    region.h
     settings.h
     signal.h
+    strings.h
     thread_pool.h
     timer.h
+    transform.h
+    url.h
+    uuid.h
+    weak_ptr.h
 )
 
 add_library(cutefish-toolkit-base SHARED
     application_registry.cpp
+    command_line.cpp
     dbus.cpp
     desktop_entry.cpp
     event_loop.cpp
     file.cpp
     file_watcher.cpp
+    geometry.cpp
+    hash.cpp
     json.cpp
+    local_socket.cpp
     locale.cpp
+    logging.cpp
     mime_apps.cpp
     mime_database.cpp
     paths.cpp
     process.cpp
+    region.cpp
     settings.cpp
+    strings.cpp
     thread_pool.cpp
     timer.cpp
+    transform.cpp
+    url.cpp
+    uuid.cpp
 )
 
 add_library(Cutefish::ToolkitBase ALIAS cutefish-toolkit-base)

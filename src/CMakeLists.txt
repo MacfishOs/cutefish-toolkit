@@ -50,6 +50,8 @@ add_subdirectory(base)
 set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/animation.h
     ui/application.h
+    ui/bitmap.h
+    ui/bitmap_painter.h
     ui/button.h
     ui/check_box.h
     ui/clipboard.h
@@ -60,6 +62,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/event.h
     ui/frame_client.h
     ui/geometry.h
+    ui/geometry_conversions.h
     ui/file_chooser.h
     ui/header_backdrop.h
     ui/header_button.h
@@ -130,6 +133,8 @@ add_library(cutefish-toolkit SHARED
     ui/menu.cpp
     ui/painter.cpp
     ui/path.cpp
+    ui/bitmap.cpp
+    ui/bitmap_painter.cpp
     ui/platform_window.cpp
     ui/progress_bar.cpp
     ui/quick_layer.cpp

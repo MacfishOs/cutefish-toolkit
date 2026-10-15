@@ -4,6 +4,7 @@
 #include "base/file.h"
 
 #include <cerrno>
+#include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <sys/stat.h>
@@ -84,6 +85,50 @@ bool writeAtomically(const std::string& path, std::string_view contents)
         return false;
     }
     return true;
+}
+
+TemporaryDirectory::TemporaryDirectory(const std::string& parent, const std::string& prefix)
+{
+    std::string pattern = parent + "/" + prefix + "XXXXXX";
+    if (mkdtemp(pattern.data()))
+        m_path = std::move(pattern);
+}
+
+TemporaryDirectory::~TemporaryDirectory()
+{
+    if (m_autoRemove && !m_path.empty()) {
+        std::error_code error;
+        std::filesystem::remove_all(m_path, error);
+    }
+}
+
+TemporaryFile::TemporaryFile(const std::string& directory, const std::string& prefix)
+{
+    std::string pattern = directory + "/" + prefix + "XXXXXX";
+    m_fd = mkostemp(pattern.data(), O_CLOEXEC);
+    if (m_fd >= 0)
+        m_path = std::move(pattern);
+}
+
+TemporaryFile::~TemporaryFile()
+{
+    if (m_fd >= 0) {
+        close(m_fd);
+        unlink(m_path.c_str());
+    }
+}
+
+bool TemporaryFile::write(std::string_view contents)
+{
+    while (!contents.empty() && m_fd >= 0) {
+        const ssize_t written = ::write(m_fd, contents.data(), contents.size());
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            return false;
+        contents.remove_prefix(size_t(written));
+    }
+    return m_fd >= 0;
 }
 
 } // namespace cutefish::base::file

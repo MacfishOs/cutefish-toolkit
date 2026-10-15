@@ -3,10 +3,12 @@
 
 #include "base/process.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <memory>
 #include <fcntl.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/epoll.h>
 #include <sys/syscall.h>
@@ -111,6 +113,21 @@ void Process::setStandardInput(std::string data)
     m_input = std::move(data);
 }
 
+void Process::setEnvironment(std::vector<std::string> environment)
+{
+    m_environment = std::move(environment);
+}
+
+void Process::setOutputForwarded(bool forwarded)
+{
+    m_outputForwarded = forwarded;
+}
+
+void Process::setInheritedFd(int fd)
+{
+    m_inheritedFd = fd;
+}
+
 bool Process::start(const std::string& program, const std::vector<std::string>& arguments)
 {
     if (m_pid > 0)
@@ -120,41 +137,59 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
     m_error.clear();
     m_inputWritten = 0;
 
-    int input[2];
-    int output[2];
-    int error[2];
-    if (pipe2(input, O_CLOEXEC) != 0)
-        return false;
-    if (pipe2(output, O_CLOEXEC) != 0) {
-        ::close(input[0]);
-        ::close(input[1]);
+    int input[2] = {-1, -1};
+    int output[2] = {-1, -1};
+    int error[2] = {-1, -1};
+    const auto closePipes = [&] {
+        for (int* pipe : {input, output, error}) {
+            closeFd(pipe[0]);
+            closeFd(pipe[1]);
+        }
+    };
+    if (pipe2(input, O_CLOEXEC) != 0
+        || (!m_outputForwarded && (pipe2(output, O_CLOEXEC) != 0 || pipe2(error, O_CLOEXEC) != 0))) {
+        closePipes();
         return false;
     }
-    if (pipe2(error, O_CLOEXEC) != 0) {
-        ::close(input[0]);
-        ::close(input[1]);
-        ::close(output[0]);
-        ::close(output[1]);
-        return false;
+
+    // A copy well above kInheritedFd, so that dup2 always moves it and
+    // clears close-on-exec in the child.
+    int inherited = -1;
+    if (m_inheritedFd >= 0) {
+        inherited = fcntl(m_inheritedFd, F_DUPFD_CLOEXEC, 10);
+        if (inherited < 0) {
+            closePipes();
+            return false;
+        }
     }
 
     SpawnSetup setup;
     posix_spawn_file_actions_adddup2(&setup.actions, input[0], STDIN_FILENO);
-    posix_spawn_file_actions_adddup2(&setup.actions, output[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&setup.actions, error[1], STDERR_FILENO);
+    if (!m_outputForwarded) {
+        posix_spawn_file_actions_adddup2(&setup.actions, output[1], STDOUT_FILENO);
+        posix_spawn_file_actions_adddup2(&setup.actions, error[1], STDERR_FILENO);
+    }
+    if (inherited >= 0) {
+        posix_spawn_file_actions_adddup2(&setup.actions, inherited, kInheritedFd);
+        posix_spawn_file_actions_addclosefrom_np(&setup.actions, kInheritedFd + 1);
+    }
     if (!m_workingDirectory.empty())
         posix_spawn_file_actions_addchdir_np(&setup.actions, m_workingDirectory.c_str());
     posix_spawnattr_setflags(&setup.attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
     std::vector<char*> argv = argumentVector(program, arguments);
+    std::vector<char*> envp;
+    for (const std::string& entry : m_environment)
+        envp.push_back(const_cast<char*>(entry.c_str()));
+    envp.push_back(nullptr);
     pid_t pid = -1;
-    const int result = posix_spawnp(&pid, program.c_str(), &setup.actions, &setup.attributes, argv.data(), environ);
-    ::close(input[0]);
-    ::close(output[1]);
-    ::close(error[1]);
+    const int result = posix_spawnp(&pid, program.c_str(), &setup.actions, &setup.attributes, argv.data(),
+                                    m_environment.empty() ? environ : envp.data());
+    closeFd(inherited);
+    closeFd(input[0]);
+    closeFd(output[1]);
+    closeFd(error[1]);
     if (result != 0) {
-        ::close(input[1]);
-        ::close(output[0]);
-        ::close(error[0]);
+        closePipes();
         return false;
     }
 
@@ -163,15 +198,21 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
     m_stdin = input[1];
     m_stdout = output[0];
     m_stderr = error[0];
-    for (int fd : {m_stdin, m_stdout, m_stderr})
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    for (int fd : {m_stdin, m_stdout, m_stderr}) {
+        if (fd >= 0)
+            fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    }
 
-    m_stdoutWatch = m_loop.watch(m_stdout, EPOLLIN, [this](uint32_t) {
-        readAvailable(m_stdout, m_output, onStandardOutput);
-    });
-    m_stderrWatch = m_loop.watch(m_stderr, EPOLLIN, [this](uint32_t) {
-        readAvailable(m_stderr, m_error, onStandardError);
-    });
+    if (m_stdout >= 0) {
+        m_stdoutWatch = m_loop.watch(m_stdout, EPOLLIN, [this](uint32_t) {
+            readAvailable(m_stdout, m_output, onStandardOutput);
+        });
+    }
+    if (m_stderr >= 0) {
+        m_stderrWatch = m_loop.watch(m_stderr, EPOLLIN, [this](uint32_t) {
+            readAvailable(m_stderr, m_error, onStandardError);
+        });
+    }
     if (m_input.empty())
         closeFd(m_stdin);
     else
@@ -261,6 +302,27 @@ void Process::closeWatches()
 bool Process::sendSignal(int signal)
 {
     return m_pid > 0 && signalPidfd(m_pidfd, signal) == 0;
+}
+
+bool Process::waitForFinished(std::chrono::milliseconds timeout)
+{
+    if (m_pid <= 0)
+        return true;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (m_pid > 0) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
+        pollfd descriptor{m_pidfd, POLLIN, 0};
+        const int ready = ::poll(&descriptor, 1, int(std::max<int64_t>(left.count(), 0)));
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (ready < 0 || (ready == 0 && std::chrono::steady_clock::now() >= deadline))
+            return false;
+        if (ready == 0)
+            continue;
+        finish();
+    }
+    return true;
 }
 
 bool Process::terminate()

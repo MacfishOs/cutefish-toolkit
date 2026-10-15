@@ -110,3 +110,53 @@ TEST(EventLoopTest, DispatchesFromAnotherLoop)
     loop.dispatch();
     EXPECT_EQ(ran, 2);
 }
+
+TEST(EventLoopTest, DispatchRunsDueTimersAtOnce)
+{
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        EventLoop loop;
+        int fired = 0;
+        // Due at once: the descriptor would turn readable only after the slack.
+        loop.startTimer(std::chrono::nanoseconds(0), false, [&] { ++fired; });
+        std::this_thread::sleep_for(std::chrono::microseconds(1));
+        loop.dispatch();
+        ASSERT_EQ(fired, 1) << "attempt " << attempt;
+        // Not again when its descriptor turns readable later.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        loop.dispatch();
+        ASSERT_EQ(fired, 1);
+    }
+}
+
+TEST(EventLoopTest, DueRepeatingTimerSkipsMissedExpiries)
+{
+    EventLoop loop;
+    int fired = 0;
+    const int id = loop.startTimer(std::chrono::milliseconds(2), true, [&] { ++fired; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(9));
+    loop.dispatch();
+    EXPECT_EQ(fired, 1);
+    loop.dispatch();
+    EXPECT_EQ(fired, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    loop.dispatch();
+    EXPECT_EQ(fired, 2);
+    loop.stopTimer(id);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    loop.dispatch();
+    EXPECT_EQ(fired, 2);
+}
+
+TEST(EventLoopTest, DueTimerMayStopAnother)
+{
+    EventLoop loop;
+    int second = 0;
+    int secondId = 0;
+    loop.startTimer(std::chrono::nanoseconds(0), false, [&] { loop.stopTimer(secondId); });
+    secondId = loop.startTimer(std::chrono::nanoseconds(0), false, [&] { ++second; });
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+    loop.dispatch();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    loop.dispatch();
+    EXPECT_EQ(second, 0);
+}

@@ -42,7 +42,9 @@ public:
         // Inside a process that owns the screen, such as the compositor:
         // EmbeddedWindows render into memory when the host asks, input comes
         // from the host, and nothing connects to Wayland, a GPU or D-Bus.
-        // The host drives loop() through its descriptor.
+        // The application uses the calling thread's current loop when there
+        // is one, and leaves it to the host; otherwise the host drives
+        // loop() through its descriptor.
         Embedded,
     };
 
@@ -88,7 +90,8 @@ private:
     std::vector<std::string> m_arguments;
     std::string m_applicationId;
     Platform m_platform;
-    std::unique_ptr<base::EventLoop> m_loop;
+    std::unique_ptr<base::EventLoop> m_ownedLoop;
+    base::EventLoop* m_loop = nullptr;
     std::unique_ptr<wayland::Connection> m_connection;
     std::unique_ptr<gpu::EglContext> m_gpu;
     std::unique_ptr<TextContext> m_text;

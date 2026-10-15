@@ -744,10 +744,10 @@ void Settings::setValue(const std::string& key, const std::vector<std::string>& 
         return;
     }
     std::string raw;
-    for (const std::string& item : value) {
-        if (!raw.empty())
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (i != 0)
             raw += ", ";
-        raw += escapeTextValue(item);
+        raw += escapeTextValue(value[i]);
     }
     setRaw(key, raw);
 }

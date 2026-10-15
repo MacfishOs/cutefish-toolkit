@@ -29,6 +29,7 @@ public:
     void setInterval(std::chrono::nanoseconds interval) { m_interval = interval; }
 
     bool isSingleShot() const { return m_singleShot; }
+    // Read at every expiry, so it also changes a running timer.
     void setSingleShot(bool singleShot) { m_singleShot = singleShot; }
 
     // Starts or restarts the timer.

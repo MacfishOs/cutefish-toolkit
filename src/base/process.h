@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -15,7 +16,8 @@ class EventLoop;
 
 // A program run in the background, as QProcess runs one: its output is
 // collected and its end reported on the loop. The program is looked up on
-// PATH; its environment is this process's.
+// PATH; its environment is this process's unless setEnvironment() says
+// otherwise.
 class Process
 {
 public:
@@ -29,6 +31,16 @@ public:
     void setWorkingDirectory(std::string directory);
     // Written to the program's input, which is closed after it.
     void setStandardInput(std::string data);
+    // `NAME=value` entries for the program; empty keeps this process's.
+    void setEnvironment(std::vector<std::string> environment);
+    // The program's output and errors go to this process's own instead of
+    // being collected; onStandardOutput and onStandardError stay silent.
+    void setOutputForwarded(bool forwarded);
+    // The program gets `fd` as descriptor kInheritedFd, and every other
+    // descriptor above standard error closed. -1 passes none. `fd` must stay
+    // open until start() returns.
+    static constexpr int kInheritedFd = 3;
+    void setInheritedFd(int fd);
 
     // False when the program cannot be started; onFinished follows otherwise.
     bool start(const std::string& program, const std::vector<std::string>& arguments = {});
@@ -39,6 +51,10 @@ public:
     bool terminate();
     bool kill();
     bool sendSignal(int signal);
+
+    // Blocks until the program ends, at most `timeout`; onFinished runs
+    // before it returns true. True at once when nothing runs.
+    bool waitForFinished(std::chrono::milliseconds timeout);
 
     // Everything the program wrote so far.
     const std::string& standardOutput() const { return m_output; }
@@ -65,6 +81,9 @@ private:
     EventLoop& m_loop;
     std::string m_workingDirectory;
     std::string m_input;
+    std::vector<std::string> m_environment;
+    bool m_outputForwarded = false;
+    int m_inheritedFd = -1;
     size_t m_inputWritten = 0;
     pid_t m_pid = -1;
     int m_pidfd = -1;

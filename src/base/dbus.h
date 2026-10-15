@@ -386,6 +386,15 @@ struct TupleSignature<std::tuple<Ts...>>
     static std::string signature() { return signatureOf<Ts...>(); }
 };
 
+// Argument names for introspection, one per complete type of the signature
+// in order. A list whose length does not match its signature is dropped,
+// with the other one, and the arguments go unnamed.
+struct ArgumentNames
+{
+    std::vector<std::string> in;
+    std::vector<std::string> out;
+};
+
 // An interface of an object this process exports. Add the members, then
 // publish(); members added later need another publish().
 class Object
@@ -404,9 +413,14 @@ public:
     // return type; a std::tuple returns several values.
     template<typename F>
     void addMethod(const std::string& name, F handler);
+    // With argument names for introspection.
+    template<typename F>
+    void addMethod(const std::string& name, F handler, ArgumentNames names);
     // A handler that replies itself, now or later.
     void addMethod(const std::string& name, std::string inSignature, std::string outSignature,
                    std::function<void(MethodCall&)> handler);
+    void addMethod(const std::string& name, std::string inSignature, std::string outSignature,
+                   std::function<void(MethodCall&)> handler, ArgumentNames names);
 
     // Read-only with a getter alone; a setter takes the value and may return
     // false to refuse it.
@@ -416,6 +430,8 @@ public:
     void addProperty(const std::string& name, Getter getter, Setter setter);
 
     void addSignal(const std::string& name, std::string signature);
+    // With argument names for introspection, one per complete type.
+    void addSignal(const std::string& name, std::string signature, std::vector<std::string> names);
 
     bool publish();
 
@@ -433,6 +449,13 @@ private:
         std::string inSignature;
         std::string outSignature;
         std::function<void(MethodCall&)> handler;
+        // In names, then out names, each ending in NUL; empty without names.
+        std::string names;
+    };
+    struct Signal
+    {
+        std::string signature;
+        std::string names;
     };
     struct Property
     {
@@ -448,7 +471,7 @@ private:
     std::string m_interface;
     std::map<std::string, Method> m_methods;
     std::map<std::string, Property> m_properties;
-    std::map<std::string, std::string> m_signals;
+    std::map<std::string, Signal> m_signals;
     std::vector<sd_bus_vtable> m_vtable;
     Slot m_slot;
 };
@@ -484,6 +507,14 @@ void Object::addMethod(const std::string& name, F handler)
                       call.reply(std::apply(handler, std::move(arguments)));
                   }
               });
+}
+
+template<typename F>
+void Object::addMethod(const std::string& name, F handler, ArgumentNames names)
+{
+    addMethod(name, std::move(handler));
+    Method& method = m_methods[name];
+    addMethod(name, method.inSignature, method.outSignature, std::move(method.handler), std::move(names));
 }
 
 template<typename Getter>

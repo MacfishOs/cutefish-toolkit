@@ -73,3 +73,52 @@ TEST(TimerTest, RepeatingTimerMayDestroyItself)
     loop.run();
     EXPECT_EQ(count, 3);
 }
+
+TEST(TimerTest, SingleShotFlagIsReadAtEachExpiry)
+{
+    EventLoop loop;
+    int count = 0;
+    {
+        auto timer = std::make_unique<Timer>(&loop);
+        timer->onTimeout = [&] { ++count; };
+        timer->start(2ms);
+        // Set after start: the timer still fires once and stops.
+        timer->setSingleShot(true);
+        loop.startTimer(30ms, false, [&] { loop.quit(); });
+        loop.run();
+        EXPECT_EQ(count, 1);
+        EXPECT_FALSE(timer->isActive());
+    }
+
+    // The other way: a single-shot timer made repeating before it fires
+    // keeps going.
+    count = 0;
+    Timer repeating(&loop);
+    repeating.setSingleShot(true);
+    repeating.onTimeout = [&] {
+        if (++count == 3) {
+            repeating.stop();
+            loop.quit();
+        }
+    };
+    repeating.start(2ms);
+    repeating.setSingleShot(false);
+    loop.startTimer(2s, false, [&] { loop.quit(); });
+    loop.run();
+    EXPECT_EQ(count, 3);
+}
+
+TEST(TimerTest, DestroyedOwnerIsNeverCalled)
+{
+    EventLoop loop;
+    bool fired = false;
+    {
+        Timer timer(&loop);
+        timer.onTimeout = [&] { fired = true; };
+        timer.start(1ms);
+        timer.setSingleShot(true);
+    }
+    loop.startTimer(20ms, false, [&] { loop.quit(); });
+    loop.run();
+    EXPECT_FALSE(fired);
+}

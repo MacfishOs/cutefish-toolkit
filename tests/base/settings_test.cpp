@@ -108,6 +108,25 @@ TEST_F(SettingsTest, WritesWhatQSettingsWrites)
     EXPECT_EQ(file::read(path("our.conf")), kQtFile);
 }
 
+// Empty items keep their place, as QSettings (Qt 6.11) writes and reads them.
+TEST_F(SettingsTest, ListsKeepEmptyItems)
+{
+    const std::vector<std::string> names{"", "", "Music"};
+    const std::vector<std::string> trailing{"a", ""};
+    const std::vector<std::string> allEmpty{"", ""};
+    {
+        Settings settings(path("lists.conf"));
+        settings.setValue("Desks/Names", names);
+        settings.setValue("Desks/Trailing", trailing);
+        settings.setValue("Desks/AllEmpty", allEmpty);
+    }
+    EXPECT_EQ(file::read(path("lists.conf")), "[Desks]\nAllEmpty=, \nNames=, , Music\nTrailing=a, \n");
+    Settings settings(path("lists.conf"));
+    EXPECT_EQ(settings.stringListValue("Desks/Names"), names);
+    EXPECT_EQ(settings.stringListValue("Desks/Trailing"), trailing);
+    EXPECT_EQ(settings.stringListValue("Desks/AllEmpty"), allEmpty);
+}
+
 TEST_F(SettingsTest, ReadsWhatQSettingsWrites)
 {
     ASSERT_TRUE(file::writeAtomically(path("qt.conf"), kQtFile));

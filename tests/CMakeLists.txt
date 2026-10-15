@@ -7,13 +7,22 @@ add_executable(cutefish-toolkit-base-tests
     base/desktop_entry_test.cpp
     base/event_loop_test.cpp
     base/file_test.cpp
+    base/hash_test.cpp
+    base/helpers_test.cpp
+    base/io_helpers_test.cpp
+    base/geometry_test.cpp
     base/json_test.cpp
     base/locale_test.cpp
+    base/logging_test.cpp
     base/mime_test.cpp
     base/process_test.cpp
+    base/region_test.cpp
     base/settings_test.cpp
+    base/signal_test.cpp
+    base/strings_test.cpp
     base/thread_pool_test.cpp
     base/timer_test.cpp
+    base/transform_test.cpp
     base/user_directory_test.cpp
 )
 
@@ -24,6 +33,7 @@ gtest_discover_tests(cutefish-toolkit-base-tests)
 add_executable(cutefish-toolkit-tests
     main.cpp
     animation_test.cpp
+    bitmap_test.cpp
     color_test.cpp
     controls_test.cpp
     frame_cost_test.cpp

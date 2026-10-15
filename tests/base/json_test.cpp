@@ -51,6 +51,11 @@ TEST(JsonTest, WritesAsQtDoes)
     value.insert("list", list);
     EXPECT_EQ(value.serialize(), R"({"text":"tab\there \"quoted\"","whole":3,"fraction":0.1,"list":[true,null]})");
     EXPECT_EQ(Value::parse(value.serialize()), value);
-    EXPECT_EQ(Value(Value::Array{}).serialize(false), "[]\n");
+    EXPECT_EQ(Value(Value::Array{}).serialize(false), "[\n]\n");
+    EXPECT_EQ(Value::object().serialize(false), "{\n}\n");
+    EXPECT_EQ(Value::object().serialize(), "{}");
+    // Empty containers as display.json has them.
+    EXPECT_EQ(Value::parse(R"({"e":{},"x":{"b":[],"d":1.5}})")->serialize(false),
+              "{\n    \"e\": {\n    },\n    \"x\": {\n        \"b\": [\n        ],\n        \"d\": 1.5\n    }\n}\n");
     EXPECT_EQ(Value::parse("{\"a\":[1]}")->serialize(false), "{\n    \"a\": [\n        1\n    ]\n}\n");
 }

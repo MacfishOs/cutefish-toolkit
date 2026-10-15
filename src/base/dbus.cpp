@@ -826,9 +826,70 @@ void Object::addMethod(const std::string& name, std::string inSignature, std::st
     m_methods[name] = Method{std::move(inSignature), std::move(outSignature), std::move(handler)};
 }
 
+// The index after the complete type at `i`, or npos when it is malformed.
+static size_t skipCompleteType(std::string_view signature, size_t i)
+{
+    if (i >= signature.size())
+        return std::string_view::npos;
+    const char c = signature[i];
+    if (c == 'a')
+        return skipCompleteType(signature, i + 1);
+    if (c == '(' || c == '{') {
+        const char close = c == '(' ? ')' : '}';
+        ++i;
+        while (i < signature.size() && signature[i] != close) {
+            i = skipCompleteType(signature, i);
+            if (i == std::string_view::npos)
+                return i;
+        }
+        return i < signature.size() ? i + 1 : std::string_view::npos;
+    }
+    if (c == ')' || c == '}')
+        return std::string_view::npos;
+    return i + 1;
+}
+
+// The number of complete types in a signature, or -1 when it is malformed.
+static int countCompleteTypes(std::string_view signature)
+{
+    int count = 0;
+    for (size_t i = 0; i < signature.size(); ++count) {
+        i = skipCompleteType(signature, i);
+        if (i == std::string_view::npos)
+            return -1;
+    }
+    return count;
+}
+
+static std::string joinNames(const std::vector<std::string>& names)
+{
+    std::string joined;
+    for (const std::string& name : names) {
+        joined += name;
+        joined += '\0';
+    }
+    return joined;
+}
+
+void Object::addMethod(const std::string& name, std::string inSignature, std::string outSignature,
+                       std::function<void(MethodCall&)> handler, ArgumentNames names)
+{
+    const bool matches = countCompleteTypes(inSignature) == int(names.in.size())
+            && countCompleteTypes(outSignature) == int(names.out.size());
+    addMethod(name, std::move(inSignature), std::move(outSignature), std::move(handler));
+    if (matches)
+        m_methods[name].names = joinNames(names.in) + joinNames(names.out);
+}
+
 void Object::addSignal(const std::string& name, std::string signature)
 {
-    m_signals[name] = std::move(signature);
+    m_signals[name] = Signal{std::move(signature), {}};
+}
+
+void Object::addSignal(const std::string& name, std::string signature, std::vector<std::string> names)
+{
+    const bool matches = countCompleteTypes(signature) == int(names.size());
+    m_signals[name] = Signal{std::move(signature), matches ? joinNames(names) : std::string()};
 }
 
 bool Object::publish()
@@ -839,9 +900,14 @@ bool Object::publish()
     m_slot.reset();
     m_vtable.clear();
     m_vtable.push_back(SD_BUS_VTABLE_START(0));
-    for (const auto& [name, method] : m_methods)
-        m_vtable.push_back(SD_BUS_METHOD(name.c_str(), method.inSignature.c_str(), method.outSignature.c_str(),
-                                         &ObjectAccess::handleMethod, SD_BUS_VTABLE_UNPRIVILEGED));
+    for (const auto& [name, method] : m_methods) {
+        sd_bus_vtable entry = SD_BUS_METHOD(name.c_str(), method.inSignature.c_str(), method.outSignature.c_str(),
+                                            &ObjectAccess::handleMethod, SD_BUS_VTABLE_UNPRIVILEGED);
+        // Names stay in the method, whose map node outlives the vtable.
+        if (!method.names.empty())
+            entry.x.method.names = method.names.c_str();
+        m_vtable.push_back(entry);
+    }
     for (const auto& [name, property] : m_properties) {
         if (property.set)
             m_vtable.push_back(SD_BUS_WRITABLE_PROPERTY(name.c_str(), property.signature.c_str(), &ObjectAccess::getProperty,
@@ -852,8 +918,12 @@ bool Object::publish()
             m_vtable.push_back(SD_BUS_PROPERTY(name.c_str(), property.signature.c_str(), &ObjectAccess::getProperty, 0,
                                                SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE));
     }
-    for (const auto& [name, signature] : m_signals)
-        m_vtable.push_back(SD_BUS_SIGNAL(name.c_str(), signature.c_str(), 0));
+    for (const auto& [name, signal] : m_signals) {
+        sd_bus_vtable entry = SD_BUS_SIGNAL(name.c_str(), signal.signature.c_str(), 0);
+        if (!signal.names.empty())
+            entry.x.signal.names = signal.names.c_str();
+        m_vtable.push_back(entry);
+    }
     m_vtable.push_back(SD_BUS_VTABLE_END);
 
     sd_bus_slot* slot = nullptr;

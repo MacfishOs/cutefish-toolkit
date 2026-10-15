@@ -124,6 +124,15 @@ private:
             return true;
         });
         object.addSignal("Changed", "s");
+        object.addMethod(
+                "Named",
+                [](const std::string& text, int32_t count) { return std::tuple<std::string, bool>(text, count > 0); },
+                ArgumentNames{{"text", "count"}, {"result", "ok"}});
+        object.addMethod("NamedRaw", "a{sv}(ii)", "", [](MethodCall& call) { call.reply(); },
+                         ArgumentNames{{"options", "pair"}, {}});
+        object.addMethod("Mismatched", "ss", "", [](MethodCall& call) { call.reply(); },
+                         ArgumentNames{{"only"}, {}});
+        object.addSignal("NamedChanged", "sa(ii)", {"name", "items"});
         ready.set_value(object.publish());
         loop.run();
         m_connection = nullptr;
@@ -324,4 +333,31 @@ TEST_F(DBusTest, SharedConnectionLivesWithItsLoop)
         EXPECT_EQ(proxy.call("Echo", "a", int32_t(1)).value<std::string>(), "a!");
     }
     EXPECT_NE(Connection::session(&m_loop), nullptr);
+}
+
+TEST_F(DBusTest, IntrospectionCarriesArgumentNames)
+{
+    Proxy introspectable(m_connection.get(), kService, kPath, "org.freedesktop.DBus.Introspectable");
+    const std::optional<std::string> xml = introspectable.call("Introspect").value<std::string>();
+    ASSERT_TRUE(xml);
+    const auto has = [&xml](const std::string& text) { return xml->find(text) != std::string::npos; };
+    EXPECT_TRUE(has(R"x(<arg type="s" name="text" direction="in"/>)x")) << *xml;
+    EXPECT_TRUE(has(R"x(<arg type="i" name="count" direction="in"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="s" name="result" direction="out"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="b" name="ok" direction="out"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="a{sv}" name="options" direction="in"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="(ii)" name="pair" direction="in"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="s" name="name"/>)x"));
+    EXPECT_TRUE(has(R"x(<arg type="a(ii)" name="items"/>)x"));
+    // A list that does not match its signature is dropped.
+    EXPECT_FALSE(has(R"x(name="only")x"));
+    // Members without names still work.
+    EXPECT_TRUE(has(R"x(<method name="Echo">)x"));
+
+    const Reply named = m_proxy.call("Named", "x", int32_t(2));
+    std::string text;
+    bool ok = false;
+    ASSERT_TRUE(named.read(text, ok));
+    EXPECT_EQ(text, "x");
+    EXPECT_TRUE(ok);
 }

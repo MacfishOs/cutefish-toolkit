@@ -31,7 +31,11 @@ Application::Application(int argc, char** argv, Platform platform)
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
 
-    m_loop = std::make_unique<base::EventLoop>();
+    m_loop = platform == Platform::Embedded ? base::EventLoop::current() : nullptr;
+    if (!m_loop) {
+        m_ownedLoop = std::make_unique<base::EventLoop>();
+        m_loop = m_ownedLoop.get();
+    }
     m_text = std::make_unique<TextContext>();
     m_text->setHintedLayout(platform != Platform::Embedded);
     if (platform != Platform::Wayland)
@@ -44,7 +48,7 @@ Application::Application(int argc, char** argv, Platform platform)
     if (!m_gpu)
         std::exit(1);
 
-    m_sessionBus = base::dbus::Connection::session(m_loop.get());
+    m_sessionBus = base::dbus::Connection::session(m_loop);
     if (m_sessionBus)
         m_appearance = std::make_unique<AppearanceWatcher>(*m_sessionBus);
 }
@@ -52,14 +56,17 @@ Application::Application(int argc, char** argv, Platform platform)
 Application::~Application()
 {
     // Posted tasks may own windows, whose views still need the loop, the
-    // connection and the GPU context while they are destroyed.
-    m_loop->dropPosted();
+    // connection and the GPU context while they are destroyed. A host's loop
+    // keeps its tasks.
+    if (m_ownedLoop)
+        m_loop->dropPosted();
     m_appearance.reset();
     m_sessionBus = nullptr;
     m_text.reset();
     m_gpu.reset();
     m_connection.reset();
-    m_loop.reset();
+    m_ownedLoop.reset();
+    m_loop = nullptr;
     s_instance = nullptr;
 }
 

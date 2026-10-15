@@ -8,6 +8,10 @@
 #include <utility>
 #include <vector>
 
+// Qt defines `emit` as an empty macro; this header may follow a Qt one.
+#pragma push_macro("emit")
+#undef emit
+
 namespace cutefish::base {
 
 // Keeps a callback connected to a Signal; destroying, reassigning or
@@ -53,10 +57,10 @@ public:
     {
         auto slot = std::make_shared<Slot>(Slot{std::move(callback), true});
         m_slots->push_back(slot);
-        std::weak_ptr<std::vector<std::shared_ptr<Slot>>> slots = m_slots;
-        return Subscription([slots, slot] {
+        std::weak_ptr<std::vector<std::shared_ptr<Slot>>> weakSlots = m_slots;
+        return Subscription([weakSlots, slot] {
             slot->connected = false;
-            if (auto list = slots.lock())
+            if (auto list = weakSlots.lock())
                 std::erase(*list, slot);
         });
     }
@@ -64,8 +68,8 @@ public:
     void emit(Args... args) const
     {
         // Copies, so changes during the emission apply to the next one.
-        const auto slots = *m_slots;
-        for (const auto& slot : slots) {
+        const auto snapshot = *m_slots;
+        for (const auto& slot : snapshot) {
             if (slot->connected)
                 slot->callback(args...);
         }
@@ -86,3 +90,5 @@ private:
 };
 
 } // namespace cutefish::base
+
+#pragma pop_macro("emit")

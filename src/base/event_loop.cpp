@@ -115,6 +115,18 @@ void EventLoop::unwatch(int id)
     if (it->second->ownsFd)
         close(it->second->fd);
     m_watches.erase(it);
+    m_timers.erase(id);
+}
+
+static void arm(int fd, std::chrono::steady_clock::time_point deadline)
+{
+    // steady_clock is CLOCK_MONOTONIC.
+    const auto sinceBoot = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline.time_since_epoch());
+    const int64_t nanoseconds = std::max<int64_t>(sinceBoot.count(), 1);
+    itimerspec spec{};
+    spec.it_value.tv_sec = time_t(nanoseconds / 1000000000);
+    spec.it_value.tv_nsec = long(nanoseconds % 1000000000);
+    timerfd_settime(fd, TFD_TIMER_ABSTIME, &spec, nullptr);
 }
 
 int EventLoop::startTimer(std::chrono::nanoseconds interval, bool repeat, Task task)
@@ -125,31 +137,70 @@ int EventLoop::startTimer(std::chrono::nanoseconds interval, bool repeat, Task t
         return 0;
     }
 
-    // A zero expiry would disarm the timer.
-    const int64_t nanoseconds = std::max<int64_t>(interval.count(), 1);
-    itimerspec spec{};
-    spec.it_value.tv_sec = time_t(nanoseconds / 1000000000);
-    spec.it_value.tv_nsec = long(nanoseconds % 1000000000);
-    if (repeat)
-        spec.it_interval = spec.it_value;
-    timerfd_settime(fd, 0, &spec, nullptr);
+    auto timer = std::make_shared<TimerEntry>();
+    timer->fd = fd;
+    timer->interval = std::max(interval, std::chrono::nanoseconds(1));
+    timer->deadline = std::chrono::steady_clock::now() + timer->interval;
+    timer->repeat = repeat;
+    timer->task = std::move(task);
+    // Absolute and one-shot: repeats are rearmed from the deadline.
+    arm(fd, timer->deadline);
 
     const int id = watch(fd, EPOLLIN, nullptr);
     if (!id) {
         close(fd);
         return 0;
     }
-    auto& timer = m_watches.at(id);
-    timer->ownsFd = true;
-    timer->callback = [this, id, fd, repeat, task = std::move(task)](uint32_t) {
+    auto& watch = m_watches.at(id);
+    watch->ownsFd = true;
+    watch->callback = [this, id, fd](uint32_t) {
         uint64_t expirations;
+        // Nothing when the due-timer pass rearmed it first.
         if (read(fd, &expirations, sizeof(expirations)) <= 0)
             return;
-        if (!repeat)
-            unwatch(id);
-        task();
+        fireTimer(id);
     };
+    m_timers.emplace(id, std::move(timer));
     return id;
+}
+
+void EventLoop::fireTimer(int id)
+{
+    const auto it = m_timers.find(id);
+    if (it == m_timers.end())
+        return;
+    // Kept alive while it runs: the task may stop its own timer.
+    const std::shared_ptr<TimerEntry> timer = it->second;
+    if (!timer->repeat) {
+        unwatch(id);
+    } else {
+        // Missed expiries are skipped, not run back to back.
+        const auto now = std::chrono::steady_clock::now();
+        timer->deadline += timer->interval;
+        if (timer->deadline <= now)
+            timer->deadline = now + timer->interval;
+        arm(timer->fd, timer->deadline);
+    }
+    timer->task();
+}
+
+void EventLoop::runDueTimers()
+{
+    if (m_timers.empty())
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::pair<std::chrono::steady_clock::time_point, int>> due;
+    for (const auto& [id, timer] : m_timers) {
+        if (timer->deadline <= now)
+            due.emplace_back(timer->deadline, id);
+    }
+    std::sort(due.begin(), due.end());
+    for (const auto& [deadline, id] : due) {
+        // An earlier task may have stopped or restarted it.
+        const auto it = m_timers.find(id);
+        if (it != m_timers.end() && it->second->deadline <= now)
+            fireTimer(id);
+    }
 }
 
 void EventLoop::stopTimer(int id)
@@ -248,6 +299,7 @@ bool EventLoop::dispatchEvents(int timeout)
         if (watch->callback)
             watch->callback(events[i].events);
     }
+    runDueTimers();
     return true;
 }
 

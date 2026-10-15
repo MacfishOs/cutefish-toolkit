@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string>
 
 #include "base/event_loop.h"
@@ -99,4 +101,84 @@ TEST(ProcessTest, StartsDetachedInASessionOfItsOwn)
     wait.start(500ms);
     loop.run();
     EXPECT_NE(kill(pid, 0), 0);
+}
+
+TEST(ProcessTest, UsesTheGivenEnvironment)
+{
+    EventLoop loop;
+    Process process(&loop);
+    process.setEnvironment({"CUTEFISH_TEST_VALUE=given", "PATH=/usr/bin:/bin"});
+    ASSERT_TRUE(process.start("sh", {"-c", "printf '%s' \"$CUTEFISH_TEST_VALUE\"; printf '%s' \"${HOME:-none}\""}));
+    ASSERT_TRUE(runUntilFinished(loop, process));
+    EXPECT_EQ(process.standardOutput(), "givennone");
+}
+
+TEST(ProcessTest, PassesOneDescriptorAndClosesTheRest)
+{
+    EventLoop loop;
+    int pipe[2];
+    ASSERT_EQ(::pipe(pipe), 0);
+    // Open without close-on-exec: the child must still not get it.
+    const int stray = ::open("/dev/null", O_RDONLY);
+    ASSERT_GT(stray, Process::kInheritedFd);
+    Process process(&loop);
+    process.setInheritedFd(pipe[1]);
+    const std::string script = "printf 'via3' >&3; if [ -e /proc/self/fd/" + std::to_string(stray)
+            + " ]; then printf open; else printf closed; fi";
+    ASSERT_TRUE(process.start("sh", {"-c", script}));
+    ::close(pipe[1]);
+    ASSERT_TRUE(runUntilFinished(loop, process));
+    char buffer[16] = {};
+    ASSERT_EQ(::read(pipe[0], buffer, sizeof(buffer)), 4);
+    EXPECT_STREQ(buffer, "via3");
+    EXPECT_EQ(process.standardOutput(), "closed");
+    ::close(pipe[0]);
+    ::close(stray);
+}
+
+TEST(ProcessTest, ForwardsOutput)
+{
+    EventLoop loop;
+    int pipe[2];
+    ASSERT_EQ(::pipe(pipe), 0);
+    const int savedOut = ::dup(STDOUT_FILENO);
+    const int savedErr = ::dup(STDERR_FILENO);
+    ::dup2(pipe[1], STDOUT_FILENO);
+    ::dup2(pipe[1], STDERR_FILENO);
+    ::close(pipe[1]);
+    Process process(&loop);
+    process.setOutputForwarded(true);
+    std::string seen;
+    process.onStandardOutput = [&](std::string_view text) { seen += text; };
+    const bool started = process.start("sh", {"-c", "printf out; printf err >&2"});
+    const bool finished = started && process.waitForFinished(5s);
+    ::dup2(savedOut, STDOUT_FILENO);
+    ::dup2(savedErr, STDERR_FILENO);
+    ::close(savedOut);
+    ::close(savedErr);
+    ASSERT_TRUE(finished);
+    char buffer[16] = {};
+    ASSERT_EQ(::read(pipe[0], buffer, sizeof(buffer)), 6);
+    EXPECT_STREQ(buffer, "outerr");
+    EXPECT_TRUE(seen.empty());
+    EXPECT_TRUE(process.standardOutput().empty());
+    ::close(pipe[0]);
+}
+
+TEST(ProcessTest, WaitForFinishedTimesOutThenCompletes)
+{
+    EventLoop loop;
+    Process process(&loop);
+    int exitCode = -1;
+    process.onFinished = [&](int code, bool) { exitCode = code; };
+    ASSERT_TRUE(process.start("sleep", {"5"}));
+    const auto before = std::chrono::steady_clock::now();
+    EXPECT_FALSE(process.waitForFinished(100ms));
+    EXPECT_GE(std::chrono::steady_clock::now() - before, 100ms);
+    EXPECT_TRUE(process.isRunning());
+    process.terminate();
+    EXPECT_TRUE(process.waitForFinished(2s));
+    EXPECT_FALSE(process.isRunning());
+    EXPECT_EQ(exitCode, SIGTERM);
+    EXPECT_TRUE(process.waitForFinished(0ms));
 }

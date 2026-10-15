@@ -461,8 +461,8 @@ static void write(std::string& out, const Value& value, bool compact, int indent
             newline(indent + 1);
             write(out, array[i], compact, indent + 1);
         }
-        if (!array.empty())
-            newline(indent);
+        // Indented, even an empty container closes on a line of its own.
+        newline(indent);
         out += ']';
         break;
     }
@@ -477,8 +477,7 @@ static void write(std::string& out, const Value& value, bool compact, int indent
             out += compact ? ":" : ": ";
             write(out, object[i].second, compact, indent + 1);
         }
-        if (!object.empty())
-            newline(indent);
+        newline(indent);
         out += '}';
         break;
     }
