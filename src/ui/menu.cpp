@@ -565,6 +565,8 @@ public:
             if (m_indicator)
                 m_indicator->requestPaint();
         };
+        // The row under the pointer is lit whether or not a button is held.
+        setTracksHover(true);
     }
 
     SizeF sizeHint() const override
@@ -596,7 +598,12 @@ protected:
     }
 
     void pointerMove(const PointerEvent& event) override { m_rows->pointerMoved(mapToWindow(event.position)); }
-    void pointerLeave() override { m_rows->pointerLeft(); }
+    void hoverMove(const PointerEvent& event) override { m_rows->pointerMoved(mapToWindow(event.position)); }
+    void hoverChanged() override
+    {
+        if (!isHovered())
+            m_rows->pointerLeft();
+    }
     bool keyPress(const KeyEvent& event) override { return m_rows->key(event); }
 
 private:

@@ -126,6 +126,18 @@ TEST(MenuTest, ClickChoosesTheRowUnderThePointer)
     EXPECT_EQ(f.chosen, (std::vector<std::string>{"Open"}));
 }
 
+TEST(MenuTest, HoverLightsTheRowUnderThePointer)
+{
+    Fixture f;
+    f.menu.popup(&f.window, {20, 20});
+    Window* popup = f.menu.window();
+    popup->grab();
+    // No button held: the row lights from hover alone, and Return takes it.
+    TestInput::movePointer(*popup, {40, 5 + 30 + 30 + 9 + 15});
+    TestInput::typeKey(*popup, key::Return);
+    EXPECT_EQ(f.chosen, (std::vector<std::string>{"Quit"}));
+}
+
 TEST(MenuTest, EscapeAndDismissalClose)
 {
     Fixture f;
