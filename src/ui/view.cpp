@@ -4,6 +4,7 @@
 #include "ui/view.h"
 
 #include <algorithm>
+#include <functional>
 
 #include "ui/layer.h"
 #include "ui/painter.h"
@@ -160,6 +161,12 @@ void View::setEnabled(bool enabled)
         if (Window* window = this->window())
             window->viewRemoved(this);
     }
+    const std::function<void(View*)> notify = [&notify](View* view) {
+        view->enabledChanged();
+        for (const auto& child : view->m_children)
+            notify(child.get());
+    };
+    notify(this);
     requestPaint();
 }
 
@@ -208,6 +215,15 @@ void View::requestLayout()
     invalidate();
     if (Window* window = this->window())
         window->requestLayout();
+}
+
+void View::setTracksHover(bool tracks)
+{
+    if (tracks == m_tracksHover)
+        return;
+    m_tracksHover = tracks;
+    if (Window* window = this->window())
+        window->updateHover();
 }
 
 void View::requestPaint()

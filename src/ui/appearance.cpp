@@ -7,7 +7,7 @@
 #include <string>
 #include <systemd/sd-bus.h>
 
-#include "base/dbus_connection.h"
+#include "base/dbus.h"
 #include "ui/theme.h"
 
 namespace cutefish::ui {
@@ -21,7 +21,7 @@ static const Color kAccents[] = {
     accent::blue, accent::red, accent::green, accent::purple, accent::pink, accent::orange, accent::grey,
 };
 
-AppearanceWatcher::AppearanceWatcher(DBusConnection& connection)
+AppearanceWatcher::AppearanceWatcher(base::dbus::Connection& connection)
     : m_connection(connection)
 {
     sd_bus* bus = connection.bus();

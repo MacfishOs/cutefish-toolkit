@@ -21,6 +21,8 @@ Button::Button(std::string text)
 {
     m_label->setTextAlignment(Label::TextAlignment::Center);
     m_label->setVerticallyCentered(true);
+    // FishUI's Button colours its IconLabel instead of fading it.
+    m_label->setFadesWhenDisabled(false);
 }
 
 Button::~Button() = default;
@@ -40,8 +42,16 @@ SizeF Button::sizeHint() const
 
 void Button::layout()
 {
-    const double padding = Theme::current().largeSpacing;
+    const Theme& theme = Theme::current();
+    const double padding = theme.largeSpacing;
     m_label->setGeometry(localRect().adjusted(padding, 0, -padding, 0));
+    m_label->setColor(isEnabled() ? std::nullopt : std::optional<Color>(theme.disabledText));
+}
+
+void Button::enabledChanged()
+{
+    requestLayout();
+    requestPaint();
 }
 
 void Button::paint(Painter& painter)
@@ -53,9 +63,8 @@ void Button::paint(Painter& painter)
         color = theme.darkMode ? color.lighter(1.1) : color.darker(1.2);
     else if (enabled && m_hovered)
         color = theme.darkMode ? color.lighter(1.2) : color.darker(1.1);
-    painter.fillRoundedRect(localRect(), theme.mediumRadius, color);
-    if (hasVisibleFocus())
-        painter.strokeRoundedRect(localRect(), theme.mediumRadius, theme.highlight.withAlpha(0.5));
+    painter.drawRoundedRect(localRect(), {theme.mediumRadius, 0, themeCorners()}, color, 1 / painter.scale(),
+                            hasVisibleFocus() ? theme.highlight.withAlpha(0.5) : Color{0, 0, 0, 0});
 }
 
 void Button::pointerEnter()

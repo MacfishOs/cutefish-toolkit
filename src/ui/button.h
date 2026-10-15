@@ -29,6 +29,7 @@ public:
 protected:
     void layout() override;
     void paint(Painter& painter) override;
+    void enabledChanged() override;
 
     void pointerEnter() override;
     void pointerLeave() override;

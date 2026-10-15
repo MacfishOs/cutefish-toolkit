@@ -93,11 +93,38 @@ void WaylandWindow::minimize()
         m_shell->minimize();
 }
 
+void WaylandWindow::activate()
+{
+    if (m_shell)
+        Application::instance()->connection().activate(m_shell.get(), Application::instance()->applicationId());
+}
+
+SizeF WaylandWindow::screenSize() const
+{
+    if (m_shell)
+        return m_shell->outputSize();
+    return Application::instance()->connection().primaryOutputSize();
+}
+
+void WaylandWindow::exportHandle(std::function<void(const std::string&)> done)
+{
+    if (m_shell && !m_parent)
+        Application::instance()->connection().exportToplevel(m_shell.get(), std::move(done));
+    else
+        done({});
+}
+
 void WaylandWindow::setTransientParent(PlatformWindow* parent, bool modal)
 {
     auto* waylandParent = static_cast<WaylandWindow*>(parent);
     if (m_shell)
         m_shell->setParent(waylandParent ? waylandParent->m_shell.get() : nullptr, modal);
+}
+
+void WaylandWindow::setRestoreSize(int width, int height)
+{
+    if (m_shell)
+        m_shell->setRestoreSize(width, height);
 }
 
 void WaylandWindow::show(int width, int height)
@@ -168,7 +195,7 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
         framebuffer.fFormat = GL_RGBA8;
         const GrBackendRenderTarget target =
             GrBackendRenderTargets::MakeGL(width, height, 0, gpu.stencilBits(), framebuffer);
-        const SkSurfaceProps properties(0, application->text().pixelGeometry());
+        const SkSurfaceProps properties = application->text().surfaceProps();
         m_surface = SkSurfaces::WrapBackendRenderTarget(gpu.skiaContext(), target,
                                                         kBottomLeft_GrSurfaceOrigin,
                                                         kRGBA_8888_SkColorType, nullptr,
@@ -190,6 +217,16 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
 void WaylandWindow::configure(int width, int height, const WindowStates& states)
 {
     notifyConfigure(width, height, states);
+}
+
+void WaylandWindow::configureBounds(int width, int height)
+{
+    notifyConfigureBounds(width, height);
+}
+
+void WaylandWindow::interactiveResize(bool active)
+{
+    notifyInteractiveResize(active);
 }
 
 void WaylandWindow::scaleChanged(double scale)
@@ -261,6 +298,7 @@ void WaylandWindow::pointerHold()
 {
     notifyHold();
 }
+
 
 void WaylandWindow::textInput(const TextInputEvent& event)
 {

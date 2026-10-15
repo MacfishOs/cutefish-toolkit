@@ -121,6 +121,13 @@ TEST(InputTest, TabSkipsViewsThatTakeNoFocus)
     f.third->setEnabled(false);
     TestInput::typeKey(f.window, key::Tab);
     EXPECT_TRUE(f.first->hasFocus());
+    // So do click-focus-only ones, which a press still focuses.
+    f.third->setEnabled(true);
+    f.third->setClickFocusOnly(true);
+    TestInput::typeKey(f.window, key::Tab);
+    EXPECT_TRUE(f.first->hasFocus());
+    TestInput::click(f.window, {10, f.third->geometry().y + 2});
+    EXPECT_TRUE(f.third->hasFocus());
 }
 
 TEST(InputTest, UnhandledKeysReachShortcuts)
@@ -196,4 +203,69 @@ TEST(InputTest, LayoutDoesNotHoverAPointerThatLeft)
     fixture.window.requestLayout();
     fixture.window.grab();
     EXPECT_FALSE(fixture.first->hovered);
+}
+
+namespace {
+
+class HoverProbe : public View
+{
+public:
+    HoverProbe() { setTracksHover(true); }
+
+    int changes = 0;
+    int moves = 0;
+    PointF last;
+
+protected:
+    void hoverChanged() override { ++changes; }
+    void hoverMove(const PointerEvent& event) override
+    {
+        ++moves;
+        last = event.position;
+    }
+};
+
+} // namespace
+
+// As Qt Quick's hoverEnabled: a view stays hovered while the pointer is over
+// a child of it, and hears every move.
+TEST(InputTest, HoverTracksTheViewAndItsChildren)
+{
+    Window window;
+    auto root = std::make_unique<View>();
+    HoverProbe* outer = root->addChild<HoverProbe>();
+    outer->setGeometry({10, 10, 100, 60});
+    HoverProbe* inner = outer->addChild<HoverProbe>();
+    inner->setGeometry({20, 20, 30, 20});
+    window.setContentView(std::move(root));
+    window.resize({200, 100});
+    window.show();
+    window.grab();
+
+    TestInput::movePointer(window, {15, 15});
+    EXPECT_TRUE(outer->isHovered());
+    EXPECT_FALSE(inner->isHovered());
+    TestInput::movePointer(window, {35, 35});
+    EXPECT_TRUE(outer->isHovered());
+    EXPECT_TRUE(inner->isHovered());
+    EXPECT_EQ(inner->last, (PointF{5, 5}));
+    TestInput::movePointer(window, {150, 50});
+    EXPECT_FALSE(outer->isHovered());
+    EXPECT_FALSE(inner->isHovered());
+    EXPECT_EQ(outer->changes, 2);
+    EXPECT_EQ(inner->changes, 2);
+    // Entering counts as a move: outer at (15, 15), then (35, 35).
+    EXPECT_EQ(outer->moves, 2);
+
+    // A layout moving the view under a still pointer tells it where it is.
+    TestInput::movePointer(window, {35, 35});
+    const int moves = inner->moves;
+    inner->setGeometry({22, 20, 30, 20});
+    window.grab();
+    EXPECT_EQ(inner->moves, moves + 1);
+    EXPECT_EQ(inner->last, (PointF{3, 5}));
+
+    TestInput::leavePointer(window);
+    EXPECT_FALSE(outer->isHovered());
+    EXPECT_FALSE(inner->isHovered());
 }

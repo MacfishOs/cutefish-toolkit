@@ -21,6 +21,7 @@
 #include "ui/menu.h"
 #include "ui/painter.h"
 #include "ui/text_context.h"
+#include "ui/text_lines.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 
@@ -33,11 +34,12 @@ static constexpr double kMinimumWidth = 200;
 static constexpr double kHeight = 35;
 // FishUI's focus ring, outside the field.
 static constexpr double kFocusRing = 2;
-static constexpr auto kBlinkInterval = std::chrono::milliseconds(500);
+// QQuickTextInput's coarse timer of half the cursor flash time fires up to 5% early.
+static constexpr auto kBlinkInterval = std::chrono::milliseconds(475);
 // Wide enough that a single line never wraps.
 static constexpr double kUnboundedWidth = 1e6;
-// U+2022 BULLET.
-static constexpr const char* kPasswordDot = "•";
+// U+25CF BLACK CIRCLE, Qt's password mask character.
+static constexpr const char* kPasswordDot = "●";
 static constexpr size_t kPasswordDotSize = 3;
 // The surrounding text an input method gets around the cursor.
 static constexpr size_t kSurroundingLimit = 4000;
@@ -75,20 +77,33 @@ struct TextField::Private
     std::string placeholder;
     EchoMode echo = EchoMode::Normal;
     bool readOnly = false;
+    size_t maximumLength = 0;
+    // The text as the last edit or move left it, for a refused edit to return to.
+    std::string savedText;
+    size_t savedAnchor = 0;
+    size_t savedCursor = 0;
+    std::function<bool(const std::string&)> validator;
+    double fontSize = 0;
+    double leftMargin = -1;
+    double rightMargin = -1;
+    bool frameVisible = true;
+
+    double left() const { return leftMargin >= 0 ? leftMargin : Theme::current().largeSpacing; }
+    double right() const { return rightMargin >= 0 ? rightMargin : Theme::current().largeSpacing; }
+    double pixelSize() const { return TextContext::pixelSize(fontSize > 0 ? fontSize : Theme::current().fontSize()); }
     std::string preedit;
     int preeditCursor = -1;
 
+    // Laid out in logical pixels, as Qt Quick's TextInput lays out.
     std::unique_ptr<textlayout::Paragraph> paragraph;
     std::string display;
-    double paragraphScale = 0;
     bool paragraphEnabled = true;
     uint64_t paragraphTheme = 0;
     bool dirty = true;
     std::unique_ptr<textlayout::Paragraph> placeholderParagraph;
-    double placeholderScale = 0;
     uint64_t placeholderTheme = 0;
 
-    // Device pixels the text is scrolled by to keep the cursor in sight.
+    // Logical pixels the text is scrolled by to keep the cursor in sight.
     double scrollX = 0;
     bool caretVisible = true;
     int blinkTimer = 0;
@@ -150,19 +165,19 @@ struct TextField::Private
         return cursor;
     }
 
-    textlayout::Paragraph* layout(double scale, bool enabled)
+    textlayout::Paragraph* layout(bool enabled)
     {
-        if (paragraph && !dirty && paragraphScale == scale && paragraphEnabled == enabled
-            && paragraphTheme == Theme::generation())
+        if (paragraph && !dirty && paragraphEnabled == enabled && paragraphTheme == Theme::generation())
             return paragraph.get();
 
         const TextContext& context = Application::instance()->text();
         const Theme& theme = Theme::current();
         const Color color = enabled ? theme.text : theme.disabledText;
-        const textlayout::TextStyle normal = context.style(0, scale, 400, color);
+        const textlayout::TextStyle normal = context.style(fontSize, 400, color);
         textlayout::ParagraphStyle style;
         style.setTextStyle(normal);
         style.setMaxLines(1);
+        style.setApplyRoundingHack(false);
 
         display = displayText();
         auto builder = textlayout::ParagraphBuilder::make(style, context.fontCollection(),
@@ -198,23 +213,21 @@ struct TextField::Private
         builder->pop();
         paragraph = builder->Build();
         paragraph->layout(SkScalar(kUnboundedWidth));
-        paragraphScale = scale;
         paragraphEnabled = enabled;
         paragraphTheme = Theme::generation();
         dirty = false;
         return paragraph.get();
     }
 
-    textlayout::Paragraph* placeholderLayout(double scale)
+    textlayout::Paragraph* placeholderLayout()
     {
-        if (placeholderParagraph && placeholderScale == scale
-            && placeholderTheme == Theme::generation())
+        if (placeholderParagraph && placeholderTheme == Theme::generation())
             return placeholderParagraph.get();
         const TextContext& context = Application::instance()->text();
-        const textlayout::TextStyle style = context.style(0, scale, 400,
-                                                          Theme::current().text.withAlpha(0.4));
+        const textlayout::TextStyle style = context.style(fontSize, 400, Theme::current().text.withAlpha(0.4));
         textlayout::ParagraphStyle paragraphStyle;
         paragraphStyle.setTextStyle(style);
+        paragraphStyle.setApplyRoundingHack(false);
         paragraphStyle.setMaxLines(1);
         paragraphStyle.setEllipsis(SkString("…"));
         auto builder = textlayout::ParagraphBuilder::make(paragraphStyle, context.fontCollection(),
@@ -223,12 +236,11 @@ struct TextField::Private
         builder->addText(placeholder.data(), placeholder.size());
         builder->pop();
         placeholderParagraph = builder->Build();
-        placeholderScale = scale;
         placeholderTheme = Theme::generation();
         return placeholderParagraph.get();
     }
 
-    // Device pixels from the start of the text to the caret at a display offset.
+    // Logical pixels from the start of the text to the caret at a display offset.
     double caretX(size_t offset) const
     {
         if (display.empty() || !paragraph)
@@ -249,7 +261,7 @@ struct TextField::Private
         return 0;
     }
 
-    // The display offset nearest to a device x from the start of the text.
+    // The display offset nearest to a logical x from the start of the text.
     size_t displayOffsetAt(double x) const
     {
         if (display.empty() || !paragraph)
@@ -272,6 +284,9 @@ TextField::TextField(std::string text)
 {
     d->self = std::make_shared<TextField*>(this);
     d->edit.setText(std::move(text));
+    d->savedText = d->edit.text();
+    d->savedAnchor = d->edit.anchor();
+    d->savedCursor = d->edit.cursor();
 }
 
 TextField::~TextField()
@@ -291,7 +306,43 @@ void TextField::setText(std::string text)
         return;
     d->edit.setText(std::move(text));
     d->preedit.clear();
-    edited();
+    moved();
+    textChanged();
+    if (onTextChanged)
+        onTextChanged();
+}
+
+void TextField::setMaximumLength(size_t length)
+{
+    d->maximumLength = length;
+}
+
+void TextField::setValidator(std::function<bool(const std::string& text)> validator)
+{
+    d->validator = std::move(validator);
+}
+
+void TextField::setFontSize(double size)
+{
+    d->fontSize = size;
+    d->dirty = true;
+    d->placeholderParagraph.reset();
+    requestLayout();
+    requestPaint();
+}
+
+void TextField::setTextMargins(double left, double right)
+{
+    d->leftMargin = left;
+    d->rightMargin = right;
+    requestLayout();
+    requestPaint();
+}
+
+void TextField::setFrameVisible(bool visible)
+{
+    d->frameVisible = visible;
+    requestPaint();
 }
 
 void TextField::setPlaceholder(std::string placeholder)
@@ -420,11 +471,9 @@ SizeF TextField::sizeHint() const
 {
     double width = kMinimumWidth;
     if (!d->placeholder.empty()) {
-        const double scale = window() ? window()->scale() : 1.0;
-        textlayout::Paragraph* placeholder = d->placeholderLayout(scale);
+        textlayout::Paragraph* placeholder = d->placeholderLayout();
         placeholder->layout(SkScalar(kUnboundedWidth));
-        width = std::max(width, std::ceil(placeholder->getMaxIntrinsicWidth()) / scale
-                                        + 2 * Theme::current().largeSpacing);
+        width = std::max(width, double(placeholder->getMaxIntrinsicWidth()) + d->left() + d->right());
     }
     return {width, kHeight};
 }
@@ -435,25 +484,24 @@ void TextField::paint(Painter& painter)
     const double scale = painter.scale();
     const RectF bounds = localRect();
     const bool focused = hasFocus();
-    const int border = std::max(1, int(std::lround(scale)));
 
-    painter.fillRoundedRect(bounds, theme.smallRadius, theme.alternateBackground);
-    if (focused) {
-        painter.strokeRoundedRect(bounds, theme.smallRadius, theme.highlight, border);
-        // Concentric with the field.
-        painter.strokeRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
-                                  theme.smallRadius + kFocusRing, theme.highlight.withAlpha(0.25),
-                                  std::max(1, int(std::lround(kFocusRing * scale))));
+    // FishUI's TextField background, its focus ring concentric through the inset.
+    if (d->frameVisible) {
+        painter.drawRoundedRect(bounds, {theme.smallRadius, 0, themeCorners()}, theme.alternateBackground, 1,
+                                focused ? theme.highlight : theme.alternateBackground);
+    }
+    if (focused && d->frameVisible) {
+        painter.drawRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
+                                {theme.smallRadius, -kFocusRing, themeCorners()}, Color{0, 0, 0, 0}, 2,
+                                theme.highlight.withAlpha(0.25));
     }
 
-    const double padding = theme.largeSpacing;
-    const RectF content = bounds.adjusted(padding, 0, -padding, 0);
-    const Rect device = painter.deviceRect(content);
-    textlayout::Paragraph* text = d->layout(scale, isEnabled());
-    const double width = device.width;
+    const RectF content = bounds.adjusted(d->left(), 0, -d->right(), 0);
+    textlayout::Paragraph* text = d->layout(isEnabled());
+    const double width = content.width;
 
     // Keep the caret in sight, and no empty space past the end of the text.
-    const double caretWidth = std::max(1.0, std::round(scale));
+    const double caretWidth = std::max(1.0, std::round(scale)) / scale;
     const double caret = d->caretX(d->caretDisplayOffset());
     const double textWidth = text->getMaxIntrinsicWidth();
     if (caret - d->scrollX > width - caretWidth)
@@ -462,12 +510,29 @@ void TextField::paint(Painter& painter)
         d->scrollX = caret;
     d->scrollX = std::max(0.0, std::min(d->scrollX, textWidth + caretWidth - width));
 
-    const double originX = device.x - std::round(d->scrollX);
-    const double originY = device.y + std::round((device.height - text->getHeight()) / 2);
+    // Qt Quick's TextInput: one line box, centred in the field, unsnapped.
+    const TextContext& context = Application::instance()->text();
+    const double pixelSize = d->pixelSize();
+    const TextLineBox line = textLineBoxes(text, context.typeface(400).get(), pixelSize, scale).front();
+    const double originX = content.x - d->scrollX;
+    const double lineTop = (bounds.height - line.height) / 2;
+    const PointF offset = painter.offset();
+    const auto device = [scale, offset](double x, double y) {
+        return SkPoint::Make(SkScalar(std::round((offset.x + x) * scale)), SkScalar(std::round((offset.y + y) * scale)));
+    };
     SkCanvas* canvas = painter.canvas();
 
     painter.save();
     painter.clip(content);
+    // The selection, the glyphs and the caret draw on the canvas itself; a
+    // faded field fades them through a layer.
+    const bool faded = painter.opacity() < 1;
+    if (faded) {
+        const Rect area = painter.deviceRect(content);
+        const SkRect rect = SkRect::MakeXYWH(SkScalar(area.x), SkScalar(area.y), SkScalar(area.width),
+                                             SkScalar(area.height));
+        canvas->saveLayerAlphaf(&rect, float(painter.opacity()));
+    }
     if (focused && d->preedit.empty() && d->edit.hasSelection()) {
         SkPaint selection;
         selection.setColor(theme.highlight.argb());
@@ -476,30 +541,45 @@ void TextField::paint(Painter& painter)
         for (const textlayout::TextBox& box : text->getRectsForRange(
                  unsigned(start), unsigned(end), textlayout::RectHeightStyle::kMax,
                  textlayout::RectWidthStyle::kTight)) {
-            SkRect rect = box.rect.makeOffset(SkScalar(originX), SkScalar(originY));
-            rect = SkRect::MakeLTRB(std::round(rect.left()), std::round(rect.top()),
-                                    std::round(rect.right()), std::round(rect.bottom()));
-            canvas->drawRect(rect, selection);
+            const SkPoint topLeft = device(originX + box.rect.left(), lineTop);
+            const SkPoint bottomRight = device(originX + box.rect.right(), lineTop + line.height);
+            canvas->drawRect(SkRect::MakeLTRB(topLeft.fX, topLeft.fY, bottomRight.fX, bottomRight.fY), selection);
         }
     }
+
+    // The paragraphs draw in logical pixels from the field's origin; their
+    // first baseline goes on Qt's.
+    canvas->save();
+    canvas->translate(SkScalar(offset.x * scale), SkScalar(offset.y * scale));
+    canvas->scale(SkScalar(scale), SkScalar(scale));
     if (d->display.empty() && !d->placeholder.empty()) {
-        textlayout::Paragraph* placeholder = d->placeholderLayout(scale);
+        textlayout::Paragraph* placeholder = d->placeholderLayout();
         placeholder->layout(SkScalar(width));
-        placeholder->paint(canvas, SkScalar(device.x),
-                           SkScalar(device.y + std::round((device.height - placeholder->getHeight()) / 2)));
+        placeholder->paint(canvas, SkScalar(content.x),
+                           SkScalar(lineTop + line.ascent - placeholder->getAlphabeticBaseline()));
     }
-    text->paint(canvas, SkScalar(originX), SkScalar(originY));
+    text->paint(canvas, SkScalar(originX), SkScalar(lineTop + line.ascent - text->getAlphabeticBaseline()));
+    canvas->restore();
 
     const Window* window = this->window();
     if (focused && window && window->hasKeyboardFocus() && d->caretVisible) {
         SkPaint paint;
         paint.setColor(theme.text.argb());
-        const double x = std::round(originX + caret);
-        canvas->drawRect(SkRect::MakeXYWH(SkScalar(x), SkScalar(originY), SkScalar(caretWidth),
-                                          SkScalar(std::round(text->getHeight()))),
+        const SkPoint top = device(originX + caret, lineTop);
+        const SkPoint bottom = device(originX + caret, lineTop + line.height);
+        canvas->drawRect(SkRect::MakeXYWH(top.fX, top.fY, SkScalar(std::max(1.0, std::round(scale))),
+                                          bottom.fY - top.fY),
                          paint);
     }
+    if (faded)
+        canvas->restore();
     painter.restore();
+}
+
+void TextField::enabledChanged()
+{
+    // FishUI's TextField: half opaque, its text in the disabled colour.
+    setOpacity(isEnabled() ? 1 : 0.5);
 }
 
 void TextField::pointerPress(const PointerEvent& event)
@@ -510,9 +590,8 @@ void TextField::pointerPress(const PointerEvent& event)
     }
     if (event.button != MouseButton::Left)
         return;
-    const double scale = window() ? window()->scale() : 1.0;
-    // Text inside the padding, as in paint, without the device-pixel snapping.
-    const double x = (event.position.x - Theme::current().largeSpacing) * scale + d->scrollX;
+    // Text inside the padding, as in paint.
+    const double x = event.position.x - d->left() + d->scrollX;
     if (!d->preedit.empty()) {
         d->preedit.clear();
         d->dirty = true;
@@ -535,8 +614,7 @@ void TextField::pointerMove(const PointerEvent& event)
 {
     if (!d->selecting || d->granularity == 3)
         return;
-    const double scale = window() ? window()->scale() : 1.0;
-    const double x = (event.position.x - Theme::current().largeSpacing) * scale + d->scrollX;
+    const double x = event.position.x - d->left() + d->scrollX;
     const size_t offset = d->fromDisplay(d->displayOffsetAt(x));
     if (d->granularity == 2) {
         const auto word = d->edit.wordAt(offset);
@@ -562,6 +640,8 @@ void TextField::focusIn(FocusReason)
 
 void TextField::focusOut()
 {
+    if (onEditingFinished)
+        onEditingFinished();
     if (d->blinkTimer) {
         Application::instance()->loop().stopTimer(d->blinkTimer);
         d->blinkTimer = 0;
@@ -642,6 +722,8 @@ bool TextField::keyPress(const KeyEvent& event)
     case key::KeypadEnter:
         if (onAccepted)
             onAccepted();
+        if (onEditingFinished)
+            onEditingFinished();
         return true;
     default:
         break;
@@ -680,11 +762,14 @@ TextInputState TextField::textInputState() const
     state.anchor = d->edit.anchor() - start;
 
     const double scale = window() ? window()->scale() : 1.0;
-    const double padding = Theme::current().largeSpacing;
+    const double padding = d->left();
     // The state follows an edit before it is painted; lay the new text out first.
-    textlayout::Paragraph* paragraph = d->layout(scale, isEnabled());
-    const double x = padding + (d->caretX(d->caretDisplayOffset()) - d->scrollX) / scale;
-    const double height = paragraph->getHeight() / scale;
+    textlayout::Paragraph* paragraph = d->layout(isEnabled());
+    const double x = padding + d->caretX(d->caretDisplayOffset()) - d->scrollX;
+    const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(400).get(),
+                                        d->pixelSize(), scale)
+                              .front()
+                              .height;
     const PointF topLeft = mapToWindow({x, (geometry().height - height) / 2});
     state.cursorRectangle = {topLeft.x, topLeft.y, 1, height};
     return state;
@@ -738,15 +823,45 @@ void TextField::showContextMenu(PointF position)
     menu.popup(window(), mapToWindow(position));
 }
 
-void TextField::edited()
+static size_t utf16Length(const std::string& text)
 {
+    size_t units = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if ((c & 0xC0) != 0x80)
+            units += c >= 0xF0 ? 2 : 1;
+    }
+    return units;
+}
+
+bool TextField::edited()
+{
+    EditableText& edit = d->edit;
+    // TextInput.maximumLength: what was inserted is cut back to fit.
+    while (d->maximumLength && utf16Length(edit.text()) > d->maximumLength && edit.cursor() > 0) {
+        const size_t cursor = edit.cursor();
+        edit.erase(edit.previousGrapheme(cursor), cursor);
+    }
+    if (d->validator && !d->validator(edit.text())) {
+        edit.setText(d->savedText);
+        edit.select(d->savedAnchor, d->savedCursor);
+        moved();
+        return false;
+    }
     moved();
+    textChanged();
     if (onTextChanged)
         onTextChanged();
+    if (onTextEdited)
+        onTextEdited();
+    return true;
 }
 
 void TextField::moved()
 {
+    d->savedText = d->edit.text();
+    d->savedAnchor = d->edit.anchor();
+    d->savedCursor = d->edit.cursor();
     d->dirty = true;
     d->caretVisible = true;
     auto& loop = Application::instance()->loop();

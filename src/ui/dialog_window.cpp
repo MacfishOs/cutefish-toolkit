@@ -102,23 +102,27 @@ void DialogButton::paint(Painter& painter)
         color = surface.darker(1.08);
     else if (isEnabled() && m_hovered)
         color = m_primary || theme.darkMode ? surface.lighter(1.05) : surface.darker(1.04);
-    painter.fillRoundedRect(bounds, radius, color);
-    const int border = painter.borderWidth(1);
-    painter.strokeRoundedRect(bounds, radius,
-                              m_primary ? actionColor().darker(1.25)
-                                        : (theme.darkMode ? Color::rgb(0x545455) : Color::rgb(0xD9DADD)),
-                              border);
+    // FishUI's borders are one device pixel, 1 / Dpi.ratio; the inner edge
+    // and the focus ring keep the button's shape through RoundedRectangle's inset.
+    const double pixel = 1 / painter.scale();
+    painter.drawRoundedRect(bounds, {radius}, color, pixel,
+                            m_primary ? actionColor().darker(1.25)
+                                      : (theme.darkMode ? Color::rgb(0x545455) : Color::rgb(0xD9DADD)));
     if (m_primary || !theme.darkMode) {
-        const double inset = border / painter.scale();
-        painter.strokeRoundedRect(bounds.adjusted(inset, inset, -inset, -inset), radius - inset,
-                                  Color::rgb(0xFFFFFF).withAlpha(m_primary ? 0.2 : 0.08), border);
+        painter.drawRoundedRect(bounds.adjusted(pixel, pixel, -pixel, -pixel), {radius, pixel}, Color{0, 0, 0, 0},
+                                pixel, Color::rgb(0xFFFFFF).withAlpha(m_primary ? 0.2 : 0.08));
     }
     if (hasVisibleFocus()) {
-        const RectF ring = bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing);
-        painter.strokeRoundedRect(ring, radius + kFocusRing,
-                                  (m_primary ? actionColor() : theme.highlight).withAlpha(0.3),
-                                  painter.borderWidth(2));
+        painter.drawRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
+                                {radius, -kFocusRing}, Color{0, 0, 0, 0}, 2,
+                                (m_primary ? actionColor() : theme.highlight).withAlpha(0.3));
     }
+}
+
+// FishUI's ConfirmDialogButton fades as a whole.
+void DialogButton::enabledChanged()
+{
+    setOpacity(isEnabled() ? 1 : 0.5);
 }
 
 void DialogButton::pointerEnter()
@@ -151,15 +155,26 @@ void DialogButton::pointerRelease(const PointerEvent& event)
         onClicked();
 }
 
+// As a Qt Quick button: Space presses it and the release clicks; Return is
+// left to the dialog.
 bool DialogButton::keyPress(const KeyEvent& event)
 {
-    if (event.modifiers == NoModifier
-        && (event.key == key::Space || event.key == key::Return || event.key == key::KeypadEnter)) {
-        if (onClicked)
-            onClicked();
-        return true;
-    }
-    return false;
+    if (event.key != key::Space || event.modifiers != NoModifier)
+        return false;
+    m_pressed = true;
+    requestPaint();
+    return true;
+}
+
+bool DialogButton::keyRelease(const KeyEvent& event)
+{
+    if (event.key != key::Space || !m_pressed)
+        return false;
+    m_pressed = false;
+    requestPaint();
+    if (onClicked)
+        onClicked();
+    return true;
 }
 
 // The dialog's view: the header line with the title and buttons, the
@@ -228,15 +243,6 @@ protected:
     {
         if (event.button == MouseButton::Left && window())
             window()->startMove();
-    }
-
-    bool keyPress(const KeyEvent& event) override
-    {
-        if (event.key == key::Escape && event.modifiers == NoModifier) {
-            m_dialog->close();
-            return true;
-        }
-        return false;
     }
 
 private:
@@ -324,6 +330,24 @@ void ConfirmDialog::setCancelVisible(bool visible)
     m_cancelVisible = visible;
 }
 
+void ConfirmDialog::setTitle(std::string title)
+{
+    m_title = std::move(title);
+    if (m_window) {
+        m_window->setTitle(m_title);
+        m_titleLabel->setText(m_title);
+    }
+}
+
+void ConfirmDialog::setText(std::string text)
+{
+    m_text = std::move(text);
+    if (m_window) {
+        m_textLabel->setText(m_text);
+        m_textLabel->setVisible(!m_text.empty());
+    }
+}
+
 void ConfirmDialog::show()
 {
     m_window = std::make_unique<Window>();
@@ -342,17 +366,19 @@ void ConfirmDialog::show()
     texts->setLayoutHints({.fillWidth = true});
     texts->setMargins({0, 0, 32, 0});
     Label* title = texts->addChild<Label>(m_title);
+    m_titleLabel = title;
     title->setFontSize(kTitleSize);
     title->setWeight(600);
     title->setWrap(true);
     title->setLayoutHints({.fillWidth = true});
-    if (!m_text.empty()) {
-        Label* text = texts->addChild<Label>(m_text);
-        text->setFontSize(kTitleSize);
-        text->setColor(Theme::current().disabledText);
-        text->setWrap(true);
-        text->setLayoutHints({.fillWidth = true});
-    }
+    // Kept when empty, so a text set while shown has its place.
+    Label* text = texts->addChild<Label>(m_text);
+    text->setFontSize(kTitleSize);
+    text->setColor(Theme::current().disabledText);
+    text->setWrap(true);
+    text->setLayoutHints({.fillWidth = true});
+    text->setVisible(!m_text.empty());
+    m_textLabel = text;
 
     auto* actions = column->addChild<Row>();
     actions->setSpacing(8);
@@ -366,8 +392,10 @@ void ConfirmDialog::show()
     confirm->setDestructive(m_destructive);
     confirm->onClicked = [this] { finish(true); };
 
-    // Escape cancels, Return confirms.
+    // Escape cancels; Return confirms even while Cancel has the focus.
     m_window->addShortcut(NoModifier, key::Escape, [this] { finish(false); });
+    m_window->addShortcut(NoModifier, key::Return, [this] { finish(true); });
+    m_window->addShortcut(NoModifier, key::KeypadEnter, [this] { finish(true); });
     m_window->setContentView(std::move(column));
     m_window->resize({std::max(kConfirmMinimumWidth, actions->sizeHint().width + 2 * kContentPadding), 0});
     m_window->setFitsContentHeight(true);

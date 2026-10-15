@@ -49,7 +49,8 @@ struct PopupPlacement
     PopupAnchor anchor = PopupAnchor::BottomLeft;
     PopupAnchor gravity = PopupAnchor::BottomRight;
     PointF offset;
-    bool flip = true;
+    bool flipX = true;
+    bool flipY = true;
     bool slide = true;
     bool resize = false;
 };
@@ -102,13 +103,23 @@ public:
     void setFitsContentHeight(bool fits);
     // A colour with alpha makes the window translucent. Unset follows the theme.
     void setBackgroundColor(std::optional<Color> color);
+    // A tool tip over a rect of the view, in its coordinates, until unpinned,
+    // as a ToolTip bound to a control's state; hover tool tips wait meanwhile.
+    void pinToolTip(View* view, const RectF& rect, std::string text);
+    void unpinToolTip(View* view);
     // The rounded body the compositor blurs behind, outlines and shadows.
     void setBackgroundBlur(const RectF& rect, double radius);
     bool isPopup() const { return m_parent != nullptr; }
     Window* parentWindow() const { return m_parent; }
+    Window* transientParent() const { return m_transientParent; }
 
     void setContentView(std::unique_ptr<View> view);
     View* contentView() const { return m_contentView.get(); }
+    // Views over the content, as Qt Quick's Overlay: each child covers the
+    // window and places its own views, painted above the content, taking the
+    // pointer where one of them accepts it and leaving it to the content
+    // elsewhere.
+    View* overlay();
 
     void show();
     void startMove();
@@ -117,14 +128,35 @@ public:
     void minimize();
     // Kept above the parent window and opened over it; a modal one blocks it.
     void setTransientParent(Window* parent, bool modal);
+
+    // Opens at the size the user last left a window of this id at, and
+    // maximized when it was left maximized, as FishUI windows do. Kept in
+    // ~/.config/cutefish/<name>.conf, the application id without
+    // "cutefish-" being the name; windows of one id share it. Before show().
+    void setRestoresSize(std::string windowId);
     const WindowStates& states() const { return m_states; }
 
     double scale() const { return m_scale; }
     bool hasKeyboardFocus() const { return m_keyboardFocus; }
     // Headless windows only; on screen the compositor sets the scale.
     void setScale(double scale);
+    // The logical size of the screen the window is on, as Qt's screen
+    // geometry under Wayland (no work area); empty when unknown.
+    SizeF screenSize() const;
+    // Headless windows only, for tests; popups take their parent's.
+    void setScreenSize(SizeF size) { m_screenSize = size; }
     SizeF size() const { return m_size; }
-    bool isActive() const { return m_states.activated; }
+    // As QWindow::isActive: the window, or one of its transient family (its
+    // transient parents, dialogs and popups), has the compositor's focus. A
+    // window stays active while its dialog is focused.
+    bool isActive() const;
+    // Asks the compositor to focus the window and raise it, as
+    // QWindow::requestActivate: through xdg-activation, with the last input.
+    void activate();
+    // The window's identifier for another process's dialog to be parented
+    // to, as portals take it: "wayland:<handle>" through xdg-foreign, or
+    // empty when the window cannot be exported. Shown windows only.
+    void exportHandle(std::function<void(const std::string& handle)> done);
 
     void requestLayout();
     void requestPaint();
@@ -144,12 +176,20 @@ public:
 
     // After the compositor changed the states.
     std::function<void()> onStatesChanged;
+    // After isActive() changed, once the compositor's focus settled.
+    std::function<void()> onActiveChanged;
+    // Every press in the window, in its logical coordinates, before a view
+    // gets it; for closing what the pointer pressed outside of.
+    std::function<void(PointF position, MouseButton button)> onPointerPressed;
     // The close button of a toplevel, or a popup the compositor dismissed.
     // Unset, a toplevel quits the application and a popup does nothing.
     std::function<void()> onCloseRequested;
 
 private:
     friend class Application;
+    // Repaints and notifies when isActive() differs from what was notified.
+    void updateActive();
+
     friend class FrameClient;
     friend class PlatformWindow;
     friend class TestInput;
@@ -164,6 +204,8 @@ private:
     };
 
     void handleConfigure(int width, int height, const WindowStates& states);
+    void handleConfigureBounds(int width, int height);
+    void handleInteractiveResize(bool active);
     void handleScaleChanged(double scale);
     void handleCloseRequested();
     void handleFrameDone();
@@ -191,9 +233,10 @@ private:
     // Everything inside the region, or everything without one.
     void paintContent(SkCanvas* canvas, const SkRegion* region);
     void updateHover();
+    void updateHoverChain();
     void updateCursor();
     void scheduleToolTip(View* view);
-    void showToolTip(View* view);
+    void showToolTip(View* view, const RectF& rect, const std::string& text);
     void hideToolTip();
     void setFocusView(View* view, FocusReason reason);
     void focusNext(bool backwards);
@@ -222,23 +265,42 @@ private:
     void interruptFrameClients(int interruption);
     uint64_t frameTime(uint64_t now);
     void fitContentHeight();
+    void restoreSize();
+    void saveSize();
+    void saveMaximized();
 
     std::unique_ptr<PlatformWindow> m_platform;
+    SizeF m_screenSize;
     std::unique_ptr<FrameDamage> m_frameDamage;
     Window* m_parent = nullptr;
     // Popups keep no keyboard focus of their own: the root window's keys go
     // to the innermost grabbing popup, as the compositor leaves them.
     std::vector<Window*> m_grabbingPopups;
     std::unique_ptr<View> m_contentView;
+    std::unique_ptr<View> m_overlay;
+    // The overlay's views first, then the content's.
+    View* viewAt(PointF point, bool input) const;
     std::vector<FrameClient*> m_frameClients;
     std::shared_ptr<Window*> m_self;
 
     SizeF m_size = {640, 480};
+    SizeF m_minimumSize;
+    SizeF m_maximumSize = {16777215, 16777215};
+    std::string m_restoreId;
+    // The work area, which a restored size stays inside.
+    SizeF m_bounds;
+    bool m_boundsApplied = false;
+    bool m_interactiveResize = false;
+    bool m_resized = false;
+    int m_saveTimer = 0;
     double m_scale = 1.0;
     bool m_fitsContentHeight = false;
     SizeF m_fittedSize;
     std::optional<Color> m_backgroundColor;
     WindowStates m_states;
+    Window* m_transientParent = nullptr;
+    // isActive() as last notified.
+    bool m_active = false;
     bool m_configured = false;
     bool m_layoutNeeded = true;
     bool m_needsFrame = false;
@@ -253,6 +315,8 @@ private:
     // Layout passes re-hover only a pointer still over the window.
     bool m_pointerInside = false;
     View* m_hovered = nullptr;
+    // The views tracking hover that the pointer is within, deepest first.
+    std::vector<View*> m_hoverChain;
     View* m_pressed = nullptr;
     // A touchpad gesture stays with the view that took its first movement.
     View* m_scrollTarget = nullptr;
@@ -271,10 +335,12 @@ private:
     // A press puts the tip away until the pointer moves to another view.
     View* m_toolTipDismissed = nullptr;
     int m_toolTipTimer = 0;
+    bool m_toolTipPinned = false;
 
     View* m_focusView = nullptr;
     FocusReason m_focusReason = FocusReason::Other;
     bool m_keyboardFocus = false;
+    bool m_shown = false;
     std::vector<Shortcut> m_shortcuts;
     int m_nextShortcutId = 1;
 };

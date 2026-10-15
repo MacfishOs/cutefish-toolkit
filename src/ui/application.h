@@ -7,11 +7,17 @@
 #include <string>
 #include <vector>
 
+namespace cutefish::base {
+class EventLoop;
+}
+
+namespace cutefish::base::dbus {
+class Connection;
+}
+
 namespace cutefish::ui {
 
 class AppearanceWatcher;
-class DBusConnection;
-class EventLoop;
 class TextContext;
 class Window;
 
@@ -51,14 +57,14 @@ public:
     void setApplicationId(std::string applicationId);
     const std::string& applicationId() const { return m_applicationId; }
 
-    EventLoop& loop() const { return *m_loop; }
+    base::EventLoop& loop() const { return *m_loop; }
     // Wayland only.
     wayland::Connection& connection() const { return *m_connection; }
     gpu::EglContext& gpu() const { return *m_gpu; }
     TextContext& text() const { return *m_text; }
 
-    // The session bus, when there is one.
-    DBusConnection* sessionBus() const { return m_sessionBus.get(); }
+    // The loop's shared session bus connection, when there is one.
+    base::dbus::Connection* sessionBus() const { return m_sessionBus; }
     const std::vector<Window*>& windows() const { return m_windows; }
 
     int run();
@@ -69,17 +75,20 @@ private:
     friend class Window;
 
     void themeChanged();
+    // Notifies the windows whose isActive() changed, after the events at hand.
+    void scheduleActiveUpdate();
 
     std::vector<std::string> m_arguments;
     std::string m_applicationId;
     Platform m_platform;
-    std::unique_ptr<EventLoop> m_loop;
+    std::unique_ptr<base::EventLoop> m_loop;
     std::unique_ptr<wayland::Connection> m_connection;
     std::unique_ptr<gpu::EglContext> m_gpu;
     std::unique_ptr<TextContext> m_text;
-    std::unique_ptr<DBusConnection> m_sessionBus;
+    base::dbus::Connection* m_sessionBus = nullptr;
     std::unique_ptr<AppearanceWatcher> m_appearance;
     std::vector<Window*> m_windows;
+    bool m_activeUpdatePending = false;
 };
 
 } // namespace cutefish::ui

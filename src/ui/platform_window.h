@@ -51,7 +51,15 @@ public:
     virtual void setMaximized(bool maximized) = 0;
     virtual void setFullScreen(bool fullScreen) = 0;
     virtual void minimize() = 0;
+    // Asks the compositor to focus and raise the window.
+    virtual void activate() {}
+    // "wayland:<handle>" for other clients to parent to; empty when none.
+    virtual void exportHandle(std::function<void(const std::string&)> done) { done({}); }
+    // The logical size of the screen the window is on; empty when unknown.
+    virtual SizeF screenSize() const { return {}; }
     virtual void setTransientParent(PlatformWindow* parent, bool modal) = 0;
+    // The size a window shown maximized returns to; before show().
+    virtual void setRestoreSize(int, int) {}
     virtual void show(int width, int height) = 0;
     virtual void startMove() = 0;
     virtual void setCursorShape(CursorShape shape) = 0;
@@ -66,6 +74,8 @@ public:
 
 protected:
     void notifyConfigure(int width, int height, const WindowStates& states);
+    void notifyConfigureBounds(int width, int height);
+    void notifyInteractiveResize(bool active);
     void notifyScaleChanged(double scale);
     void notifyCloseRequested();
     void notifyFrameDone();

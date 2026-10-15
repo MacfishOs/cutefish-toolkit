@@ -38,23 +38,52 @@ void HeaderButton::setGlyph(std::string name, double size)
     requestPaint();
 }
 
+void HeaderButton::setChecked(bool checked)
+{
+    if (m_checked == checked)
+        return;
+    m_checked = checked;
+    requestPaint();
+}
+
+void HeaderButton::setHighlighted(bool highlighted)
+{
+    if (m_highlighted == highlighted)
+        return;
+    m_highlighted = highlighted;
+    requestPaint();
+}
+
+void HeaderButton::setPlateAlphas(PlateAlphas light, PlateAlphas dark)
+{
+    m_light = light;
+    m_dark = dark;
+    requestPaint();
+}
+
 void HeaderButton::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
     const Color tint = theme.darkMode ? Color::rgb(0xFFFFFF) : Color::rgb(0x323238);
     const Rect box = painter.deviceRect(localRect());
-    const int artwork = int(std::lround(kArtwork * painter.scale()));
+    // RoundImageButton: the icon at whole logical pixels in the button, then
+    // snapped onto the device grid as IconItem snaps it.
+    const double iconSize = m_glyph.empty() ? kArtwork : m_glyphSize;
+    const RectF bounds = localRect();
+    const Rect icon = painter.snappedRect({std::round((bounds.width - iconSize) / 2),
+                                          std::round((bounds.height - iconSize) / 2), iconSize, iconSize});
 
-    // The plate keeps the artwork's parity inside the button, so both stay
-    // centred on the same pixel.
-    if (isEnabled() && (m_hovered || m_pressed)) {
-        const double alpha = m_pressed ? (theme.darkMode ? 0.06 : 0.21) : (theme.darkMode ? 0.12 : 0.11);
+    // The plate keeps the icon's parity, so both stay centred on the same pixel.
+    const bool pressed = m_pressed || m_checked;
+    if (isEnabled() && (pressed || m_hovered || m_highlighted)) {
+        const PlateAlphas& alphas = theme.darkMode ? m_dark : m_light;
+        const double alpha = pressed ? alphas.pressed : alphas.hovered;
         const int margin = int(std::lround(m_size * 0.1 * painter.scale()));
         int plate = std::min(box.width, box.height) - 2 * margin;
-        if ((plate - artwork) % 2 != 0)
+        if ((plate - icon.width) % 2 != 0)
             plate -= 1;
-        painter.fillDeviceRoundedRect({box.x + (box.width - plate) / 2,
-                                       box.y + (box.height - plate) / 2, plate, plate},
+        painter.fillDeviceRoundedRect({icon.x + (icon.width - plate) / 2, icon.y + (icon.height - plate) / 2,
+                                       plate, plate},
                                       plate / 2.0, tint.withAlpha(alpha));
     }
 
@@ -63,13 +92,13 @@ void HeaderButton::paint(Painter& painter)
         return;
     const Window* window = this->window();
     const double opacity = !isEnabled() ? 0.35 : (window && window->isActive()) ? 1.0 : 0.6;
-    const int side = m_glyph.empty() ? artwork : int(std::lround(m_glyphSize * painter.scale()));
+    const int side = icon.width;
     sk_sp<SkImage> image = m_glyph.empty()
             ? IconLoader::instance().glyph("window-" + artworkName, side, tint)
             : IconLoader::instance().glyph(m_glyph, side, tint);
     painter.save();
     painter.multiplyOpacity(opacity);
-    painter.drawImage(image.get(), box.x + (box.width - side) / 2, box.y + (box.height - side) / 2);
+    painter.drawImage(image.get(), icon.x, icon.y);
     painter.restore();
 }
 

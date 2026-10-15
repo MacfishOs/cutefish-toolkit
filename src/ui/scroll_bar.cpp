@@ -22,6 +22,8 @@ static constexpr auto kHideDelay = std::chrono::milliseconds(1000);
 
 ScrollBar::ScrollBar(Orientation orientation)
     : m_orientation(orientation)
+    , m_startPadding(kPadding)
+    , m_endPadding(kPadding)
 {
 }
 
@@ -43,6 +45,19 @@ void ScrollBar::setRange(double viewport, double content, double position)
     updateShown();
 }
 
+void ScrollBar::setPadding(double start, double end)
+{
+    m_startPadding = start;
+    m_endPadding = end;
+    requestPaint();
+}
+
+void ScrollBar::setAlwaysShown(bool shown)
+{
+    m_alwaysShown = shown;
+    updateShown();
+}
+
 void ScrollBar::setMoving(bool moving)
 {
     m_moving = moving;
@@ -58,7 +73,7 @@ double ScrollBar::trackLength() const
 {
     const double length = m_orientation == Orientation::Vertical ? geometry().height
                                                                    : geometry().width;
-    return std::max(0.0, length - 2 * kPadding);
+    return std::max(0.0, length - m_startPadding - m_endPadding);
 }
 
 double ScrollBar::handleLength() const
@@ -73,7 +88,7 @@ double ScrollBar::handleStart() const
 {
     const double range = m_content - m_viewport;
     const double fraction = range > 0 ? std::clamp(m_position / range, 0.0, 1.0) : 0;
-    return kPadding + (trackLength() - handleLength()) * fraction;
+    return m_startPadding + (trackLength() - handleLength()) * fraction;
 }
 
 void ScrollBar::paint(Painter& painter)
@@ -90,7 +105,7 @@ void ScrollBar::paint(Painter& painter)
         handle = {kPadding, handleStart(), width, handleLength()};
     else
         handle = {handleStart(), kPadding, handleLength(), width};
-    painter.fillRoundedRect(handle, std::min(theme.smallRadius, width / 2), color);
+    painter.drawQuickRectangle(handle, theme.smallRadius, color);
 }
 
 void ScrollBar::pointerEnter()
@@ -129,7 +144,7 @@ void ScrollBar::pointerMove(const PointerEvent& event)
     const double travel = trackLength() - handleLength();
     if (travel <= 0)
         return;
-    const double fraction = (along(event.position) - m_dragOffset - kPadding) / travel;
+    const double fraction = (along(event.position) - m_dragOffset - m_startPadding) / travel;
     if (onPositionRequested)
         onPositionRequested(std::clamp(fraction, 0.0, 1.0) * (m_content - m_viewport));
 }
@@ -145,7 +160,7 @@ void ScrollBar::pointerRelease(const PointerEvent&)
 
 void ScrollBar::updateShown()
 {
-    const bool shown = isNeeded() && (m_moving || m_hovered || m_dragging);
+    const bool shown = isNeeded() && (m_alwaysShown || m_moving || m_hovered || m_dragging);
     auto& loop = Application::instance()->loop();
     if (shown) {
         if (m_hideTimer) {

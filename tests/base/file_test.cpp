@@ -1,0 +1,120 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "base/event_loop.h"
+#include "base/file.h"
+#include "base/file_watcher.h"
+#include "base/paths.h"
+
+using namespace cutefish::base;
+using namespace std::chrono_literals;
+
+namespace {
+
+class FileTest : public testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        char directory[] = "/tmp/file-test-XXXXXX";
+        ASSERT_NE(mkdtemp(directory), nullptr);
+        m_directory = directory;
+    }
+    void TearDown() override { std::filesystem::remove_all(m_directory); }
+
+    void runFor(std::chrono::milliseconds limit)
+    {
+        const int timer = m_loop.startTimer(limit, false, [this] { m_loop.quit(); });
+        m_loop.run();
+        m_loop.stopTimer(timer);
+    }
+
+    EventLoop m_loop;
+    std::string m_directory;
+};
+
+} // namespace
+
+TEST_F(FileTest, WritesAtomicallyAndKeepsTheMode)
+{
+    const std::string path = m_directory + "/sub/dir/file.txt";
+    ASSERT_TRUE(file::writeAtomically(path, "first"));
+    EXPECT_EQ(file::read(path), "first");
+    chmod(path.c_str(), 0600);
+    ASSERT_TRUE(file::writeAtomically(path, "second"));
+    EXPECT_EQ(file::read(path), "second");
+    struct stat info{};
+    ASSERT_EQ(stat(path.c_str(), &info), 0);
+    EXPECT_EQ(info.st_mode & 0777, 0600u);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(m_directory + "/sub/dir"),
+                            std::filesystem::directory_iterator()),
+              1);
+    EXPECT_FALSE(file::read(m_directory + "/missing"));
+}
+
+TEST_F(FileTest, WatchesAFileThroughReplacementAndRemoval)
+{
+    const std::string path = m_directory + "/watched.conf";
+    int changes = 0;
+    FileWatch watch = FileWatch::file(path, [&] {
+        ++changes;
+        m_loop.quit();
+    });
+    ASSERT_TRUE(watch.isActive());
+
+    // Created, replaced by a rename, removed.
+    ASSERT_TRUE(file::writeAtomically(path, "a"));
+    runFor(1s);
+    EXPECT_GE(changes, 1);
+    changes = 0;
+    ASSERT_TRUE(file::writeAtomically(path, "b"));
+    runFor(1s);
+    EXPECT_GE(changes, 1);
+    changes = 0;
+    std::filesystem::remove(path);
+    runFor(1s);
+    EXPECT_EQ(changes, 1);
+
+    // Another file in the directory is not this one.
+    changes = 0;
+    ASSERT_TRUE(file::writeAtomically(m_directory + "/other", "x"));
+    runFor(100ms);
+    EXPECT_EQ(changes, 0);
+
+    watch.reset();
+    ASSERT_TRUE(file::writeAtomically(path, "c"));
+    runFor(100ms);
+    EXPECT_EQ(changes, 0);
+}
+
+TEST_F(FileTest, WatchesDirectoryEntries)
+{
+    std::vector<std::string> names;
+    FileWatch watch = FileWatch::directory(m_directory, [&](const std::string& name) {
+        names.push_back(name);
+        m_loop.quit();
+    });
+    FileWatch second = FileWatch::directory(m_directory, [](const std::string&) {});
+    second.reset();
+    ASSERT_TRUE(file::writeAtomically(m_directory + "/entry", "x"));
+    runFor(1s);
+    ASSERT_FALSE(names.empty());
+    EXPECT_EQ(names.back(), "entry");
+}
+
+TEST(PathsTest, StandardDirectories)
+{
+    EXPECT_FALSE(paths::home().empty());
+    EXPECT_EQ(paths::configHome(), paths::home() + "/.config");
+    EXPECT_EQ(paths::cutefishConfig("calendar"), paths::home() + "/.config/cutefish/calendar.conf");
+    EXPECT_EQ(paths::findExecutable("sh").empty(), false);
+    EXPECT_TRUE(paths::findExecutable("no-such-program-anywhere").empty());
+}

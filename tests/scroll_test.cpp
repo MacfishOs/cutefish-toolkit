@@ -7,9 +7,11 @@
 #include <string>
 
 #include "test_views.h"
+#include "ui/header_backdrop.h"
 #include "ui/label.h"
 #include "ui/layout.h"
 #include "ui/list_view.h"
+#include "ui/painter.h"
 #include "ui/scroll_view.h"
 #include "ui/scroller.h"
 #include "ui/test_input.h"
@@ -241,4 +243,98 @@ TEST_F(ScrollTest, ListViewMakesOnlyRowsInSight)
     listView->scrollToRow(999);
     window.grab(3);
     EXPECT_EQ(listView->scrollPosition().y, 20000 - 100);
+}
+
+// A view that counts presses.
+class PressBox : public Box
+{
+public:
+    using Box::Box;
+    bool acceptsPointer() const override { return true; }
+    int presses = 0;
+
+protected:
+    void pointerPress(const PointerEvent&) override { ++presses; }
+};
+
+// The bar's strip takes presses unless the bars lie below the content; its
+// padding moves the track, so a press above the track pages up no more.
+TEST(ScrollViewTest, BarsBelowTheContentAndPadded)
+{
+    Window window;
+    auto scroll = std::make_unique<ScrollView>();
+    ScrollView* view = scroll.get();
+    PressBox* content = view->setContent<PressBox>(SizeF{200, 1000});
+    window.resize({200, 100});
+    window.setContentView(std::move(scroll));
+    window.show();
+    window.grab();
+
+    TestInput::click(window, {196, 50});
+    EXPECT_EQ(content->presses, 0);
+    view->setBarsBelowContent(true);
+    TestInput::click(window, {196, 50});
+    EXPECT_EQ(content->presses, 1);
+    view->setBarsBelowContent(false);
+    // The first click paged down.
+    view->setScrollPosition({0, 0});
+
+    // Dragging the handle from its top: the track starts 40 down.
+    view->setVerticalBarPadding(40, 4);
+    window.grab();
+    TestInput::press(window, {196, 41});
+    TestInput::movePointer(window, {196, 41 + (100 - 40 - 4 - 32) / 2.0});
+    TestInput::release(window, {196, 41 + (100 - 40 - 4 - 32) / 2.0});
+    EXPECT_NEAR(view->scrollPosition().y, 450, 1);
+}
+
+// Invisible at rest, it fades in over 16 pixels of scrolling: a blur of
+// the content under the tint, here black stripes greyed under it.
+TEST(ScrollViewTest, HeaderBackdropFadesInOverScrolledContent)
+{
+    class Stripes : public Box
+    {
+    public:
+        using Box::Box;
+
+    protected:
+        void paint(Painter& painter) override
+        {
+            for (double y = 0; y < 1000; y += 8)
+                painter.fillRect({0, y, 200, 4}, Color::rgb(0));
+        }
+    };
+
+    Window window;
+    auto root = std::make_unique<View>();
+    auto scroll = std::make_unique<ScrollView>();
+    ScrollView* view = scroll.get();
+    view->setContent<Stripes>(SizeF{200, 1000});
+    root->addChild(std::move(scroll));
+    auto* backdrop = root->addChild<HeaderBackdrop>(view);
+    window.resize({200, 100});
+    window.setContentView(std::move(root));
+    window.show();
+    window.grab();
+    view->setGeometry({0, 0, 200, 100});
+    backdrop->setGeometry({0, 0, 200, 40});
+    window.grab();
+
+    const auto row = [&window](int y) {
+        const Image image = window.grab();
+        int darkest = 255;
+        int lightest = 0;
+        for (int x = 0; x < 200; ++x) {
+            darkest = std::min(darkest, int(image.pixel(x, y).g));
+            lightest = std::max(lightest, int(image.pixel(x, y).g));
+        }
+        return std::pair{darkest, lightest};
+    };
+    // At rest the stripes show through.
+    EXPECT_EQ(row(1).first, 0);
+    view->setScrollPosition({0, 16});
+    // Blurred to an even grey, nothing as dark as a stripe.
+    const auto [darkest, lightest] = row(10);
+    EXPECT_GT(darkest, 60);
+    EXPECT_LT(lightest - darkest, 8);
 }

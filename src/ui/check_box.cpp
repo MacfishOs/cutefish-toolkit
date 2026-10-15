@@ -8,6 +8,7 @@
 
 #include "ui/icon.h"
 #include "ui/painter.h"
+#include "ui/quick_layout.h"
 #include "ui/theme.h"
 
 namespace cutefish::ui {
@@ -20,23 +21,22 @@ static constexpr double kCheckSize = 14;
 static constexpr double kRingInset = 3;
 
 // FishUI's indicator plate: the accent colour when on, the second background
-// with a faint border when off, and an inner light edge.
-static void paintPlate(Painter& painter, const RectF& rect, double radius, bool on, bool focused)
+// with a faint border when off; a focus ring and, for check boxes, an inner
+// light edge, both concentric through RoundedRectangle's inset.
+static void paintPlate(Painter& painter, const RectF& rect, double radius, bool on, bool focused, bool innerEdge)
 {
     const Theme& theme = Theme::current();
     if (focused) {
-        const RectF ring = rect.adjusted(-kRingInset, -kRingInset, kRingInset, kRingInset);
-        painter.strokeRoundedRect(ring, radius + kRingInset, theme.highlight.withAlpha(0.35),
-                                  painter.borderWidth(2));
+        painter.drawRoundedRect(rect.adjusted(-kRingInset, -kRingInset, kRingInset, kRingInset), {radius, -kRingInset},
+                                Color{0, 0, 0, 0}, 2, theme.highlight.withAlpha(0.35));
     }
-    painter.fillRoundedRect(rect, radius, on ? theme.highlight : theme.secondBackground);
     const Color border = on ? theme.highlight.darker(1.12)
                             : theme.text.withAlpha(theme.darkMode ? 0.28 : 0.2);
-    const int width = painter.borderWidth(1);
-    painter.strokeRoundedRect(rect, radius, border, width);
-    const double inset = width / painter.scale();
-    painter.strokeRoundedRect(rect.adjusted(inset, inset, -inset, -inset), std::max(0.0, radius - inset),
-                              Color::rgb(0xFFFFFF).withAlpha(on ? 0.18 : 0.06), width);
+    painter.drawRoundedRect(rect, {radius}, on ? theme.highlight : theme.secondBackground, 1, border);
+    if (innerEdge) {
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), {radius, 1}, Color{0, 0, 0, 0}, 1,
+                                Color::rgb(0xFFFFFF).withAlpha(on ? 0.18 : 0.06));
+    }
 }
 
 CheckBox::CheckBox(std::string text)
@@ -63,7 +63,7 @@ void CheckBox::paintIndicator(Painter& painter, const RectF& rect)
     painter.save();
     if (!isEnabled())
         painter.multiplyOpacity(0.45);
-    paintPlate(painter, rect, kRadius, isChecked(), hasVisibleFocus());
+    paintPlate(painter, rect, kRadius, isChecked(), hasVisibleFocus(), true);
     painter.restore();
     m_check->setOpacity(isEnabled() ? 1 : 0.45);
 }
@@ -161,12 +161,13 @@ void RadioButton::paintIndicator(Painter& painter, const RectF& rect)
     painter.save();
     if (!isEnabled())
         painter.multiplyOpacity(0.45);
-    paintPlate(painter, rect, rect.width / 2, isChecked(), hasVisibleFocus());
+    paintPlate(painter, rect, rect.width / 2, isChecked(), hasVisibleFocus(), false);
     if (isChecked()) {
+        // A plain Rectangle, anchors.centerIn the plate.
         const double dot = 8;
-        painter.fillRoundedRect({rect.x + (rect.width - dot) / 2, rect.y + (rect.height - dot) / 2,
-                                 dot, dot},
-                                dot / 2, Theme::current().highlightedText);
+        painter.drawQuickRectangle({rect.x + qml::anchorsCenter(rect.width, dot),
+                                    rect.y + qml::anchorsCenter(rect.height, dot), dot, dot},
+                                   dot / 2, Theme::current().highlightedText);
     }
     painter.restore();
 }

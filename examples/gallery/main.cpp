@@ -23,6 +23,7 @@
 #include "ui/segmented_control.h"
 #include "ui/slider.h"
 #include "ui/switch.h"
+#include "ui/text_area.h"
 #include "ui/text_field.h"
 #include "ui/theme.h"
 #include "ui/window.h"
@@ -119,6 +120,7 @@ Gallery::Gallery(Window& window)
     Slider* stepped = page->addChild<Slider>();
     stepped->setRange(0, 10);
     stepped->setStepSize(1);
+    stepped->setStepped(true);
     stepped->setValue(6);
     stepped->setLayoutHints({.fillWidth = true});
     ProgressBar* progress = page->addChild<ProgressBar>();
@@ -140,6 +142,9 @@ Gallery::Gallery(Window& window)
     TextField* field = page->addChild<TextField>();
     field->setPlaceholder("Search");
     field->setLayoutHints({.fillWidth = true});
+    TextArea* area = page->addChild<TextArea>("Notes that run on to a second line\nand a third");
+    area->setPlaceholder("Notes");
+    area->setLayoutHints({.fillWidth = true});
 
     heading(page, "Dialogs");
     Row* dialogs = row(page);

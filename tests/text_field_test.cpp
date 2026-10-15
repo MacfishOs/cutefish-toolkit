@@ -8,6 +8,7 @@
 #include "ui/clipboard.h"
 #include "ui/keys.h"
 #include "ui/layout.h"
+#include "ui/search_field.h"
 #include "ui/test_input.h"
 #include "ui/text_field.h"
 #include "ui/window.h"
@@ -203,4 +204,61 @@ TEST(TextFieldTest, RendersAtFractionalScales)
         const Image image = f.window.grab();
         EXPECT_EQ(image.width(), int(std::lround(300 * scale)));
     }
+}
+
+// TextInput.maximumLength and a validator: what does not fit or is refused
+// does not happen; textEdited is the user's alone; editingFinished on Return.
+TEST(TextFieldTest, LimitsValidatesAndReportsEdits)
+{
+    Fixture f;
+    f.field->setMaximumLength(4);
+    TestInput::typeText(f.window, "abcdef");
+    EXPECT_EQ(f.field->text(), "abcd");
+
+    f.field->setText("");
+    f.field->setMaximumLength(0);
+    f.field->setValidator([](const std::string& text) {
+        return text.find_first_not_of("0123456789") == std::string::npos;
+    });
+    int edits = 0;
+    int finished = 0;
+    f.field->onTextEdited = [&edits] { ++edits; };
+    f.field->onEditingFinished = [&finished] { ++finished; };
+    TestInput::typeText(f.window, "1a2");
+    EXPECT_EQ(f.field->text(), "12");
+    EXPECT_EQ(edits, 2);
+    f.field->setText("7");
+    EXPECT_EQ(edits, 2);
+    f.key(key::Return);
+    EXPECT_EQ(finished, 1);
+}
+
+// The clear button shows with text, clears it on a click, and the text
+// margins follow it: the glyph, the gap and the inset.
+TEST(TextFieldTest, SearchFieldClears)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    SearchField* field = column->addChild<SearchField>("Search");
+    field->setLayoutHints({.preferredWidth = 220, .preferredHeight = 30});
+    window.resize({300, 60});
+    window.setContentView(std::move(column));
+    window.show();
+    window.grab();
+    TestInput::setKeyboardFocus(window, true);
+
+    const RectF bounds = field->geometry();
+    TestInput::click(window, {bounds.x + 100, bounds.y + 15});
+    EXPECT_TRUE(field->hasFocus());
+    TestInput::typeText(window, "abc");
+    window.grab();
+    std::string changed;
+    field->onTextChanged = [&changed, field] { changed = field->text() + "!"; };
+    // The clear glyph is 14 wide, 12 from the end; its hit area reaches 7 past it.
+    TestInput::click(window, {bounds.right() - 12 - 14 - 5, bounds.y + 15});
+    EXPECT_EQ(field->text(), "");
+    EXPECT_EQ(changed, "!");
+    // Gone without text: a click there lands in the field.
+    TestInput::typeText(window, "x");
+    EXPECT_EQ(field->text(), "x");
 }

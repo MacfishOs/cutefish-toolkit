@@ -72,8 +72,8 @@ protected:
     {
         const Theme& theme = Theme::current();
         painter.drawShadow(localRect(), theme.smallRadius, kToolTipShadowSigma, Color::rgb(0).withAlpha(0.15));
-        painter.fillRoundedRect(localRect(), theme.smallRadius,
-                                theme.secondBackground.withAlpha(0.95));
+        painter.fillRoundedRect(localRect(), theme.smallRadius, theme.secondBackground.withAlpha(0.95),
+                                themeCorners());
     }
 
 private:
@@ -112,6 +112,8 @@ Window::Window()
     Application::instance()->m_windows.push_back(this);
 }
 
+static bool familyActivated(const Window* window);
+
 Window::Window(Window* parent, const PopupPlacement& placement, bool grab)
     : m_frameDamage(std::make_unique<FrameDamage>())
     , m_parent(parent)
@@ -125,11 +127,22 @@ Window::Window(Window* parent, const PopupPlacement& placement, bool grab)
     // The keyboard goes where the root's goes.
     m_keyboardFocus = parent->m_keyboardFocus;
     Application::instance()->m_windows.push_back(this);
+    m_active = familyActivated(this);
 }
 
 Window::~Window()
 {
+    // A window closed right after a resize still keeps it.
+    if (m_saveTimer) {
+        Application::instance()->loop().stopTimer(m_saveTimer);
+        m_saveTimer = 0;
+        saveSize();
+    }
     std::erase(Application::instance()->m_windows, this);
+    for (Window* window : Application::instance()->m_windows) {
+        if (window->m_transientParent == this)
+            window->m_transientParent = nullptr;
+    }
     hideToolTip();
     if (m_parent)
         std::erase(m_parent->m_grabbingPopups, this);
@@ -139,8 +152,13 @@ Window::~Window()
     for (FrameClient* client : m_frameClients)
         client->m_window = nullptr;
     // Views tell the window when they go, so it must outlive them.
+    m_overlay.reset();
     m_contentView.reset();
     m_platform.reset();
+    // The family may have lost its focused member; asked after the surface
+    // went, so the compositor's next focus is in by the answer.
+    if (m_states.activated)
+        Application::instance()->scheduleActiveUpdate();
 }
 
 void Window::setTitle(const std::string& title)
@@ -150,11 +168,13 @@ void Window::setTitle(const std::string& title)
 
 void Window::setMinimumSize(SizeF size)
 {
+    m_minimumSize = size;
     m_platform->setMinimumSize(int(std::ceil(size.width)), int(std::ceil(size.height)));
 }
 
 void Window::setMaximumSize(SizeF size)
 {
+    m_maximumSize = size;
     m_platform->setMaximumSize(int(std::floor(size.width)), int(std::floor(size.height)));
 }
 
@@ -173,9 +193,51 @@ void Window::minimize()
     m_platform->minimize();
 }
 
+// The window its transient parents and popup parents lead to.
+static const Window* familyRoot(const Window* window)
+{
+    for (;;) {
+        const Window* parent = window->transientParent() ? window->transientParent() : window->parentWindow();
+        if (!parent)
+            return window;
+        window = parent;
+    }
+}
+
+// From the compositor's activation states as they stand; isActive() takes it
+// only once a batch of configures is in.
+static bool familyActivated(const Window* window)
+{
+    const Window* root = familyRoot(window);
+    for (const Window* member : Application::instance()->windows()) {
+        if (member->states().activated && familyRoot(member) == root)
+            return true;
+    }
+    return false;
+}
+
+bool Window::isActive() const
+{
+    return m_active;
+}
+
+void Window::updateActive()
+{
+    const bool active = familyActivated(this);
+    if (active == m_active)
+        return;
+    m_active = active;
+    m_frameDamage->full = true;
+    requestPaint();
+    if (onActiveChanged)
+        onActiveChanged();
+}
+
 void Window::setTransientParent(Window* parent, bool modal)
 {
+    m_transientParent = parent;
     m_platform->setTransientParent(parent ? parent->m_platform.get() : nullptr, modal);
+    m_active = familyActivated(this);
     // Opened over the parent, it most likely shows at the parent's scale.
     if (parent && !m_configured)
         handleScaleChanged(parent->m_scale);
@@ -227,9 +289,43 @@ void Window::setBackgroundBlur(const RectF& rect, double radius)
     requestPaint();
 }
 
+// Qt Quick's Overlay: every child covers the window and places its own views.
+class OverlayView final : public View
+{
+protected:
+    void layout() override
+    {
+        for (const auto& child : children())
+            child->setGeometry(localRect());
+    }
+};
+
+View* Window::overlay()
+{
+    if (!m_overlay) {
+        m_overlay = std::make_unique<OverlayView>();
+        m_overlay->m_window = this;
+        requestLayout();
+    }
+    return m_overlay.get();
+}
+
+View* Window::viewAt(PointF point, bool input) const
+{
+    // Only views that take the pointer stop it; elsewhere it reaches the content.
+    if (m_overlay) {
+        if (View* view = m_overlay->viewAt(point, true))
+            return input ? view : m_overlay->viewAt(point, false);
+    }
+    return m_contentView ? m_contentView->viewAt(point, input) : nullptr;
+}
+
 void Window::setContentView(std::unique_ptr<View> view)
 {
     m_hovered = nullptr;
+    for (View* hovered : m_hoverChain)
+        hovered->m_hoverTracked = false;
+    m_hoverChain.clear();
     m_pressed = nullptr;
     m_contentView = std::move(view);
     if (m_contentView)
@@ -238,8 +334,23 @@ void Window::setContentView(std::unique_ptr<View> view)
     requestPaint();
 }
 
+void Window::activate()
+{
+    m_platform->activate();
+}
+
+void Window::exportHandle(std::function<void(const std::string& handle)> done)
+{
+    m_platform->exportHandle(std::move(done));
+}
+
 void Window::show()
 {
+    // As QWindow::show on a shown window: nothing, the size stays.
+    if (m_shown)
+        return;
+    m_shown = true;
+    restoreSize();
     fitContentHeight();
     m_platform->show(int(std::ceil(m_size.width)), int(std::ceil(m_size.height)));
 }
@@ -255,6 +366,15 @@ void Window::setScale(double scale)
 {
     if (m_platform->isHeadless())
         handleScaleChanged(scale);
+}
+
+SizeF Window::screenSize() const
+{
+    if (!m_platform->isHeadless())
+        return m_platform->screenSize();
+    if (m_screenSize.width <= 0 && m_parent)
+        return m_parent->screenSize();
+    return m_screenSize;
 }
 
 void Window::requestLayout()
@@ -285,7 +405,7 @@ Image Window::grab(uint64_t frameTimeNs)
     // The background is opaque, so premultiplied pixels are the unpremultiplied ones.
     const SkImageInfo info = SkImageInfo::Make(image.width(), image.height(),
                                                kBGRA_8888_SkColorType, kPremul_SkAlphaType);
-    const SkSurfaceProps properties(0, Application::instance()->text().pixelGeometry());
+    const SkSurfaceProps properties = Application::instance()->text().surfaceProps();
     const sk_sp<SkSurface> surface = SkSurfaces::WrapPixels(
         info, image.bits(), size_t(image.width()) * 4, &properties);
     if (!surface)
@@ -325,13 +445,31 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
         m_size = {double(width), double(height)};
         m_layoutNeeded = true;
         m_frameDamage->full = true;
+        if (m_interactiveResize)
+            m_resized = true;
+    } else if ((width <= 0 || height <= 0) && !m_boundsApplied && !m_restoreId.empty() && m_bounds.width > 0
+               && m_bounds.height > 0) {
+        // The first configure leaves the size to the window, which keeps a
+        // restored size inside the work area.
+        m_boundsApplied = true;
+        m_size = {std::min(m_size.width, m_bounds.width), std::min(m_size.height, m_bounds.height)};
+        m_layoutNeeded = true;
     }
+    const bool maximizedChanged = states.maximized != m_states.maximized || states.fullScreen != m_states.fullScreen;
     const bool changed = !(states == m_states);
-    // Focus rings and title colours follow the activation.
-    if (changed)
+    const bool activationChanged = states.activated != m_states.activated;
+    WindowStates others = states;
+    others.activated = m_states.activated;
+    if (!(others == m_states))
         m_frameDamage->full = true;
     m_states = states;
+    // Focus rings and title colours follow isActive(), once the whole batch
+    // of configures is in: focus passing to a dialog leaves the family active.
+    if (activationChanged)
+        Application::instance()->scheduleActiveUpdate();
     m_configured = true;
+    if (maximizedChanged)
+        saveMaximized();
     if (changed && onStatesChanged)
         onStatesChanged();
     m_needsFrame = true;
@@ -393,6 +531,7 @@ void Window::handlePointerLeave()
     m_pointerInside = false;
     hideToolTip();
     m_pressed = nullptr;
+    updateHoverChain();
     if (m_hovered) {
         View* hovered = m_hovered;
         m_hovered = nullptr;
@@ -430,6 +569,8 @@ void Window::handlePointerButton(MouseButton button, bool pressed, uint32_t modi
     interruptFrameClients(int(FrameClient::Interruption::Input));
     m_toolTipDismissed = m_toolTipOwner;
     hideToolTip();
+    if (onPointerPressed)
+        onPointerPressed(m_pointer, button);
 
     // Presses close together in time and place count up, for double clicks.
     const uint64_t now = monotonicNs();
@@ -443,7 +584,7 @@ void Window::handlePointerButton(MouseButton button, bool pressed, uint32_t modi
     m_lastPressButton = button;
 
     // A second button while one is held goes to the view holding the first.
-    View* target = m_pressed ? m_pressed : m_contentView->viewAt(m_pointer, true);
+    View* target = m_pressed ? m_pressed : viewAt(m_pointer, true);
     if (!m_pressed) {
         m_pressed = target;
         m_pressedButton = button;
@@ -481,7 +622,7 @@ void Window::handlePointerScroll(const ScrollEvent& event)
     // A new contact stops every coast in the window.
     if (event.precise && !event.stop)
         interruptFrameClients(int(FrameClient::Interruption::ScrollBegan));
-    for (View* view = m_contentView->viewAt(m_pointer, false); view; view = view->parent()) {
+    for (View* view = viewAt(m_pointer, false); view; view = view->parent()) {
         if (view->isEnabled() && view->scroll(event)) {
             if (event.precise && !event.stop)
                 m_scrollTarget = view;
@@ -498,7 +639,9 @@ void Window::handleKeyboardFocus(bool focused)
     if (!focused)
         interruptFrameClients(int(FrameClient::Interruption::Deactivated));
     updateTextInput();
-    requestPaint();
+    // The caret follows the keyboard; the rest of the window follows isActive().
+    if (m_focusView)
+        m_focusView->requestPaint();
 }
 
 void Window::handleTextInput(const TextInputEvent& event)
@@ -600,12 +743,14 @@ void Window::focusNext(bool backwards)
     const auto collect = [&chain](const auto& self, View* view) -> void {
         if (!view->isVisible() || !view->m_enabled)
             return;
-        if (view->acceptsFocus())
+        if (view->acceptsFocus() && !view->m_clickFocusOnly)
             chain.push_back(view);
         for (const auto& child : view->children())
             self(self, child.get());
     };
     collect(collect, m_contentView.get());
+    if (m_overlay)
+        collect(collect, m_overlay.get());
     if (chain.empty())
         return;
 
@@ -640,6 +785,12 @@ void Window::viewRemoved(View* view)
         m_scrollTarget = nullptr;
     if (m_hovered && view->contains(m_hovered))
         m_hovered = nullptr;
+    std::erase_if(m_hoverChain, [view](View* hovered) {
+        if (!view->contains(hovered))
+            return false;
+        hovered->m_hoverTracked = false;
+        return true;
+    });
     if (m_pressed && view->contains(m_pressed))
         m_pressed = nullptr;
     if (m_focusView && view->contains(m_focusView))
@@ -652,6 +803,11 @@ void Window::viewDestroyed(View* view)
         m_toolTipDismissed = nullptr;
     if (m_toolTipOwner == view) {
         m_toolTipOwner = nullptr;
+        m_toolTipPinned = false;
+        if (m_toolTip) {
+            damageNow(m_toolTip.get());
+            m_toolTip.reset();
+        }
         if (m_toolTipTimer) {
             Application::instance()->loop().stopTimer(m_toolTipTimer);
             m_toolTipTimer = 0;
@@ -661,15 +817,51 @@ void Window::viewDestroyed(View* view)
         m_scrollTarget = nullptr;
     if (m_hovered == view)
         m_hovered = nullptr;
+    std::erase(m_hoverChain, view);
     if (m_pressed == view)
         m_pressed = nullptr;
     if (m_focusView == view)
         m_focusView = nullptr;
 }
 
+void Window::updateHoverChain()
+{
+    std::vector<View*> chain;
+    View* deepest = m_contentView && m_pointerInside ? viewAt(m_pointer, false) : nullptr;
+    for (View* view = deepest; view; view = view->parent()) {
+        if (view->m_tracksHover && view->isEnabled() && view->localRect().contains(view->mapFromWindow(m_pointer)))
+            chain.push_back(view);
+    }
+    const std::vector<View*> previous = std::exchange(m_hoverChain, chain);
+    for (View* view : previous) {
+        if (std::find(chain.begin(), chain.end(), view) == chain.end()) {
+            view->m_hoverTracked = false;
+            view->hoverChanged();
+        }
+    }
+    for (View* view : chain) {
+        if (!view->m_hoverTracked) {
+            view->m_hoverTracked = true;
+            view->hoverChanged();
+        }
+    }
+    // Entering, a move, or the view moving under a still pointer.
+    for (View* view : std::vector<View*>(m_hoverChain)) {
+        if (std::find(m_hoverChain.begin(), m_hoverChain.end(), view) == m_hoverChain.end())
+            continue;
+        const PointerEvent event = pointerEvent(view);
+        const bool entered = std::find(previous.begin(), previous.end(), view) == previous.end();
+        if (!entered && view->m_hoverPosition == event.position)
+            continue;
+        view->m_hoverPosition = event.position;
+        view->hoverMove(event);
+    }
+}
+
 void Window::updateHover()
 {
-    View* view = m_contentView && m_pointerInside ? m_contentView->viewAt(m_pointer, true) : nullptr;
+    updateHoverChain();
+    View* view = m_contentView && m_pointerInside ? viewAt(m_pointer, true) : nullptr;
     if (view != m_hovered) {
         View* previous = m_hovered;
         m_hovered = view;
@@ -679,8 +871,10 @@ void Window::updateHover()
             view->pointerEnter();
     }
     updateCursor();
+    if (m_toolTipPinned)
+        return;
 
-    View* owner = m_contentView && m_pointerInside && !m_pressed ? m_contentView->viewAt(m_pointer, false)
+    View* owner = m_contentView && m_pointerInside && !m_pressed ? viewAt(m_pointer, false)
                                                                  : nullptr;
     while (owner && owner->toolTip().empty())
         owner = owner->parent();
@@ -700,30 +894,50 @@ void Window::scheduleToolTip(View* view)
         kToolTipDelay, false, [self = std::weak_ptr<Window*>(m_self)] {
             if (const auto window = self.lock()) {
                 (*window)->m_toolTipTimer = 0;
-                if ((*window)->m_toolTipOwner)
-                    (*window)->showToolTip((*window)->m_toolTipOwner);
+                if (View* owner = (*window)->m_toolTipOwner)
+                    (*window)->showToolTip(owner, owner->localRect(), owner->toolTip());
             }
         });
 }
 
-void Window::showToolTip(View* view)
+void Window::showToolTip(View* view, const RectF& rect, const std::string& text)
 {
-    auto tip = std::make_unique<ToolTipView>(view->toolTip());
+    auto tip = std::make_unique<ToolTipView>(text);
     tip->m_window = this;
     const SizeF size = tip->sizeHint();
-    const PointF topLeft = view->mapToWindow({});
-    const RectF& geometry = view->geometry();
-    double x = topLeft.x + (geometry.width - size.width) / 2;
+    const PointF topLeft = view->mapToWindow({rect.x, rect.y});
+    double x = topLeft.x + (rect.width - size.width) / 2;
     double y = topLeft.y - size.height - kToolTipGap;
     x = std::clamp(x, kToolTipMargin, std::max(kToolTipMargin, m_size.width - size.width - kToolTipMargin));
     // Below when there is no room above.
     if (y < kToolTipMargin)
-        y = topLeft.y + geometry.height + kToolTipGap;
+        y = topLeft.y + rect.height + kToolTipGap;
     tip->setGeometry({std::round(x), std::round(y), std::ceil(size.width), std::ceil(size.height)});
     tip->layoutTree();
+    if (m_toolTip)
+        damageNow(m_toolTip.get());
     m_toolTip = std::move(tip);
     m_toolTipOwner = view;
     m_toolTip->invalidate();
+}
+
+void Window::pinToolTip(View* view, const RectF& rect, std::string text)
+{
+    if (m_toolTipTimer) {
+        Application::instance()->loop().stopTimer(m_toolTipTimer);
+        m_toolTipTimer = 0;
+    }
+    m_toolTipPinned = true;
+    showToolTip(view, rect, text);
+    scheduleFrame();
+}
+
+void Window::unpinToolTip(View* view)
+{
+    if (m_toolTipPinned && m_toolTipOwner == view) {
+        hideToolTip();
+        m_toolTipDismissed = view;
+    }
 }
 
 void Window::hideToolTip()
@@ -733,6 +947,7 @@ void Window::hideToolTip()
         m_toolTipTimer = 0;
     }
     m_toolTipOwner = nullptr;
+    m_toolTipPinned = false;
     if (m_toolTip) {
         damageNow(m_toolTip.get());
         m_toolTip.reset();
@@ -745,7 +960,7 @@ void Window::updateCursor()
     // The view holding the pointer keeps its cursor until the release.
     CursorShape shape = CursorShape::Default;
     View* view = m_pressed ? m_pressed
-                           : (m_contentView ? m_contentView->viewAt(m_pointer, false) : nullptr);
+                           : (m_contentView ? viewAt(m_pointer, false) : nullptr);
     for (; view; view = view->parent()) {
         if (view->isEnabled() && view->cursorShape() != CursorShape::Default) {
             shape = view->cursorShape();
@@ -837,12 +1052,21 @@ void Window::prepareFrame(uint64_t frameTimeNs)
         fitContentHeight();
         m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
         m_contentView->layoutTree();
+        if (m_overlay) {
+            m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
+            m_overlay->layoutTree();
+        }
         // Geometry set by the pass itself asks for layout again.
         m_layoutNeeded = false;
         updateHover();
+    } else if (m_pointerInside) {
+        // A scroll or an animation may have moved a view under the pointer.
+        updateHoverChain();
     }
     if (m_contentView)
         collectDamage(m_contentView.get(), {});
+    if (m_overlay)
+        collectDamage(m_overlay.get(), {});
     if (m_toolTip)
         collectDamage(m_toolTip.get(), {});
 }

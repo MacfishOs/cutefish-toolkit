@@ -85,6 +85,8 @@ double Animation::ease(double t) const
         return 1 - std::pow(1 - t, 3);
     case Easing::OutSine:
         return std::sin(t * M_PI / 2);
+    case Easing::InOutQuad:
+        return t < 0.5 ? 2 * t * t : 1 - std::pow(-2 * t + 2, 2) / 2;
     }
     return t;
 }

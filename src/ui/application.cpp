@@ -9,7 +9,7 @@
 #include <system_error>
 #include <utility>
 
-#include "base/dbus_connection.h"
+#include "base/dbus.h"
 #include "base/event_loop.h"
 #include "gpu/egl_context.h"
 #include "ui/appearance.h"
@@ -31,7 +31,7 @@ Application::Application(int argc, char** argv, Platform platform)
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
 
-    m_loop = std::make_unique<EventLoop>();
+    m_loop = std::make_unique<base::EventLoop>();
     m_text = std::make_unique<TextContext>();
     if (platform == Platform::Headless)
         return;
@@ -43,15 +43,18 @@ Application::Application(int argc, char** argv, Platform platform)
     if (!m_gpu)
         std::exit(1);
 
-    m_sessionBus = DBusConnection::session(*m_loop);
+    m_sessionBus = base::dbus::Connection::session(m_loop.get());
     if (m_sessionBus)
         m_appearance = std::make_unique<AppearanceWatcher>(*m_sessionBus);
 }
 
 Application::~Application()
 {
+    // Posted tasks may own windows, whose views still need the loop, the
+    // connection and the GPU context while they are destroyed.
+    m_loop->dropPosted();
     m_appearance.reset();
-    m_sessionBus.reset();
+    m_sessionBus = nullptr;
     m_text.reset();
     m_gpu.reset();
     m_connection.reset();
@@ -82,6 +85,23 @@ void Application::themeChanged()
 {
     for (Window* window : m_windows)
         window->handleThemeChanged();
+}
+
+void Application::scheduleActiveUpdate()
+{
+    if (m_activeUpdatePending)
+        return;
+    m_activeUpdatePending = true;
+    const auto update = [this] {
+        m_activeUpdatePending = false;
+        for (Window* window : std::vector<Window*>(m_windows))
+            window->updateActive();
+    };
+    // Headless windows have no compositor to wait for.
+    if (m_connection)
+        m_connection->sync(update);
+    else
+        update();
 }
 
 void Application::quit(int exitCode)

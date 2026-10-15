@@ -15,6 +15,7 @@ namespace cutefish::ui {
 class Icon;
 class Label;
 class Menu;
+class ThemeIcon;
 
 // FishUI's combo box: the current item in a field-like box with a chevron,
 // opening a menu of the items with the current one checked.
@@ -30,6 +31,12 @@ public:
     // Does not call onActivated.
     void setCurrentIndex(int index);
     std::string currentText() const;
+    // Theme icon names (or paths) beside the items, in the box and the list,
+    // as an iconRole; one for each item.
+    void setItemIcons(std::vector<std::string> icons);
+    // Each row of the list in the font family its text names, as fontPreview.
+    void setFontPreview(bool preview) { m_fontPreview = preview; }
+    bool isMenuOpen() const;
 
     SizeF sizeHint() const override;
     bool acceptsPointer() const override { return true; }
@@ -41,6 +48,7 @@ public:
 protected:
     void layout() override;
     void paint(Painter& painter) override;
+    void enabledChanged() override;
     void pointerEnter() override;
     void pointerLeave() override;
     void pointerPress(const PointerEvent& event) override;
@@ -48,12 +56,16 @@ protected:
     bool keyPress(const KeyEvent& event) override;
 
 private:
-    void openMenu();
+    void openMenu(bool fromKeyboard);
+    void updateIcon();
 
     std::vector<std::string> m_items;
     int m_current = -1;
     Label* m_label;
     Icon* m_chevron;
+    ThemeIcon* m_icon;
+    std::vector<std::string> m_icons;
+    bool m_fontPreview = false;
     std::unique_ptr<Menu> m_menu;
     bool m_hovered = false;
     bool m_pressed = false;

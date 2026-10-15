@@ -31,6 +31,11 @@ public:
     // Lengths along the bar's direction; the position may overshoot.
     void setRange(double viewport, double content, double position);
     void setMoving(bool moving);
+    // Shown whenever the content overflows, as ScrollBar.AlwaysOn.
+    void setAlwaysShown(bool shown);
+    // Before and after the handle's track, along the bar, as ScrollBar's
+    // topPadding and bottomPadding; 1 unless set.
+    void setPadding(double start, double end);
     bool isNeeded() const { return m_content > m_viewport; }
 
     bool acceptsPointer() const override { return isNeeded(); }
@@ -59,9 +64,12 @@ private:
     double m_content = 0;
     double m_position = 0;
     bool m_moving = false;
+    bool m_alwaysShown = false;
     bool m_hovered = false;
     bool m_dragging = false;
     double m_dragOffset = 0;
+    double m_startPadding;
+    double m_endPadding;
     double m_opacity = 0;
     double m_fadeFrom = 0;
     double m_fadeTo = 0;

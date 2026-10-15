@@ -134,7 +134,7 @@ struct DataDeviceListeners
     };
 };
 
-DataDevice::DataDevice(Connection& connection, EventLoop& loop, wl_data_device_manager* manager,
+DataDevice::DataDevice(Connection& connection, base::EventLoop& loop, wl_data_device_manager* manager,
                        wl_seat* seat)
     : m_connection(connection)
     , m_loop(loop)

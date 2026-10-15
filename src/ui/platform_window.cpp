@@ -66,7 +66,7 @@ public:
         m_next = (m_next + 1) % m_buffers.size();
         Image& buffer = m_buffers[index];
         const SkImageInfo info = SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
-        const SkSurfaceProps properties(0, Application::instance()->text().pixelGeometry());
+        const SkSurfaceProps properties = Application::instance()->text().surfaceProps();
         const sk_sp<SkSurface> surface = SkSurfaces::WrapPixels(info, buffer.bits(), size_t(width) * 4,
                                                                 &properties);
         if (!surface)
@@ -108,6 +108,16 @@ std::unique_ptr<PlatformWindow> PlatformWindow::create(Window* window, PlatformW
 void PlatformWindow::notifyConfigure(int width, int height, const WindowStates& states)
 {
     m_window->handleConfigure(width, height, states);
+}
+
+void PlatformWindow::notifyConfigureBounds(int width, int height)
+{
+    m_window->handleConfigureBounds(width, height);
+}
+
+void PlatformWindow::notifyInteractiveResize(bool active)
+{
+    m_window->handleInteractiveResize(active);
 }
 
 void PlatformWindow::notifyScaleChanged(double scale)

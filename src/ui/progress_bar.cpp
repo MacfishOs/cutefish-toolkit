@@ -89,13 +89,20 @@ void BusyIndicator::setRunning(bool running)
     requestPaint();
 }
 
+void BusyIndicator::setDuration(std::chrono::milliseconds duration)
+{
+    m_duration = duration;
+    if (m_animation)
+        m_animation->setDuration(duration);
+}
+
 void BusyIndicator::paint(Painter& painter)
 {
     if (!m_running)
         return;
     if (!m_animation && window()) {
         m_animation = std::make_unique<Animation>(window());
-        m_animation->setDuration(std::chrono::milliseconds(1000));
+        m_animation->setDuration(m_duration);
         m_animation->setEasing(Animation::Easing::Linear);
         m_animation->setLoops(Animation::Infinite);
         m_animation->onUpdate = [this](double value) {

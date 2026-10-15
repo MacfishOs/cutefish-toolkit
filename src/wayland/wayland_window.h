@@ -32,7 +32,11 @@ public:
     void setMaximized(bool maximized) override;
     void setFullScreen(bool fullScreen) override;
     void minimize() override;
+    void activate() override;
+    void exportHandle(std::function<void(const std::string&)> done) override;
+    SizeF screenSize() const override;
     void setTransientParent(PlatformWindow* parent, bool modal) override;
+    void setRestoreSize(int width, int height) override;
     void show(int width, int height) override;
     void startMove() override;
     void setCursorShape(CursorShape shape) override;
@@ -58,6 +62,8 @@ private:
     void key(const KeyEvent& event, bool pressed) override;
     void pointerHold() override;
     void textInput(const TextInputEvent& event) override;
+    void configureBounds(int width, int height) override;
+    void interactiveResize(bool active) override;
 
     std::unique_ptr<ShellSurface> m_shell;
     // A popup is made on show(), when its size is known.

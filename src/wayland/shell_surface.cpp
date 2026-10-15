@@ -21,6 +21,16 @@ namespace cutefish::ui::wayland {
 
 struct ShellSurfaceListeners
 {
+    static void surfaceEnter(void* data, wl_surface*, wl_output* output)
+    {
+        static_cast<ShellSurface*>(data)->m_outputs.push_back(output);
+    }
+
+    static void surfaceLeave(void* data, wl_surface*, wl_output* output)
+    {
+        std::erase(static_cast<ShellSurface*>(data)->m_outputs, output);
+    }
+
     static void surfaceConfigure(void* data, xdg_surface*, uint32_t serial)
     {
         auto* self = static_cast<ShellSurface*>(data);
@@ -67,8 +77,9 @@ struct ShellSurfaceListeners
         static_cast<ShellSurface*>(data)->m_delegate->closeRequested();
     }
 
-    static void toplevelConfigureBounds(void*, xdg_toplevel*, int32_t, int32_t)
+    static void toplevelConfigureBounds(void* data, xdg_toplevel*, int32_t width, int32_t height)
     {
+        static_cast<ShellSurface*>(data)->m_delegate->configureBounds(width, height);
     }
 
     static void toplevelWmCapabilities(void*, xdg_toplevel*, wl_array*)
@@ -130,6 +141,7 @@ struct ShellSurfaceListeners
         self->m_delegate->discarded();
     }
 
+    static constexpr wl_surface_listener surface = {surfaceEnter, surfaceLeave};
     static constexpr xdg_surface_listener xdgSurface = {surfaceConfigure};
     static constexpr xdg_toplevel_listener xdgToplevel = {
         toplevelConfigure,
@@ -168,6 +180,7 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurf
                            const PopupPlacement& placement, int width, int height, bool grab)
     : m_connection(connection)
     , m_delegate(delegate)
+    , m_parent(parent)
 {
     createSurface();
 
@@ -185,9 +198,10 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurf
     xdg_positioner_set_offset(positioner, int(std::round(placement.offset.x)),
                               int(std::round(placement.offset.y)));
     uint32_t adjustment = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_NONE;
-    if (placement.flip)
-        adjustment |= XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X
-                | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y;
+    if (placement.flipX)
+        adjustment |= XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X;
+    if (placement.flipY)
+        adjustment |= XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y;
     if (placement.slide)
         adjustment |= XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
                 | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y;
@@ -203,11 +217,24 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurf
         xdg_popup_grab(m_xdgPopup, connection.seat(), connection.inputSerial());
 }
 
+SizeF ShellSurface::outputSize() const
+{
+    for (wl_output* output : m_outputs) {
+        const SizeF size = m_connection.outputSize(output);
+        if (size.width > 0)
+            return size;
+    }
+    if (m_parent)
+        return m_parent->outputSize();
+    return m_connection.primaryOutputSize();
+}
+
 void ShellSurface::createSurface()
 {
     m_surface = wl_compositor_create_surface(m_connection.compositor());
     // Input events find their window through the surface.
     wl_surface_set_user_data(m_surface, this);
+    wl_surface_add_listener(m_surface, &ShellSurfaceListeners::surface, this);
 
     m_viewport = wp_viewporter_get_viewport(m_connection.viewporter(), m_surface);
     m_fractionalScale = wp_fractional_scale_manager_v1_get_fractional_scale(
@@ -304,6 +331,12 @@ void ShellSurface::setParent(ShellSurface* parent, bool modal)
         else
             xdg_dialog_v1_unset_modal(m_dialog);
     }
+}
+
+void ShellSurface::setRestoreSize(int width, int height)
+{
+    if (m_xdgToplevel && m_connection.windowHints())
+        cutefish_window_hints_v1_set_restore_size(m_connection.windowHints(), m_surface, width, height);
 }
 
 void ShellSurface::startMove()

@@ -12,7 +12,8 @@ layout, controls and frame-paced animation.
 sudo apt install cmake ninja-build clang pkg-config python3 git \
     libwayland-dev wayland-protocols libegl-dev libgles-dev libxkbcommon-dev libsystemd-dev \
     libfontconfig-dev libfreetype-dev libharfbuzz-dev libicu-dev \
-    libpng-dev libjpeg-dev zlib1g-dev libexpat1-dev
+    libpng-dev libjpeg-dev zlib1g-dev libexpat1-dev \
+    libwebp-dev libtiff-dev libheif-dev libjxl-dev
 ```
 
 ### Arch Linux
@@ -20,7 +21,7 @@ sudo apt install cmake ninja-build clang pkg-config python3 git \
 ```shell
 sudo pacman -S --needed base-devel cmake ninja clang pkgconf python git \
     wayland wayland-protocols libglvnd libxkbcommon systemd-libs fontconfig freetype2 harfbuzz icu \
-    libpng libjpeg-turbo zlib expat
+    libpng libjpeg-turbo zlib expat libwebp libtiff libheif libjxl
 ```
 
 ## Build

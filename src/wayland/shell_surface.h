@@ -6,11 +6,13 @@
 #include <cstdint>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "ui/event.h"
 #include "ui/window.h"
 
 struct wl_callback;
+struct wl_output;
 struct wl_surface;
 struct wp_fractional_scale_v1;
 struct wp_presentation_feedback;
@@ -57,6 +59,12 @@ public:
         virtual void keyboardLeave() = 0;
         virtual void key(const KeyEvent& event, bool pressed) = 0;
         virtual void textInput(const TextInputEvent& event) = 0;
+
+        // The largest size the window should take, the work area's; before
+        // the configure it belongs to.
+        virtual void configureBounds(int, int) {}
+        // The user started or ended resizing the window by an edge.
+        virtual void interactiveResize(bool) {}
     };
 
     // A toplevel.
@@ -84,6 +92,12 @@ public:
     void minimize();
     // A dialog of the parent: kept above it, modal when asked.
     void setParent(ShellSurface* parent, bool modal);
+    // The size a window mapped maximized returns to; before map().
+    void setRestoreSize(int width, int height);
+
+    // The logical size of the output the surface is on, its parent's while it
+    // is on none, or the first output's, as Qt picks a window's screen.
+    SizeF outputSize() const;
 
     // The initial commit, without a buffer; the compositor answers with a configure.
     void map();
@@ -112,6 +126,9 @@ private:
     xdg_popup* m_xdgPopup = nullptr;
     xdg_dialog_v1* m_dialog = nullptr;
     wl_callback* m_frameCallback = nullptr;
+    ShellSurface* m_parent = nullptr;
+    // The outputs the surface is on, the first entered first.
+    std::vector<wl_output*> m_outputs;
     // The request of the same name hides the type in C++.
     std::unordered_set<struct wp_presentation_feedback*> m_feedbacks;
 

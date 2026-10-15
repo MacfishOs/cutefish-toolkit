@@ -1,0 +1,157 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <gtest/gtest.h>
+
+#include <cstdlib>
+#include <fstream>
+#include <string>
+
+#include "ui/label.h"
+#include "ui/layout.h"
+#include "ui/theme.h"
+#include "ui/window.h"
+
+using namespace cutefish::ui;
+
+// Numbers Qt 6.8 gives for Noto Sans in Qt Quick Text with QtRendering, as
+// FishUI's labels use it: QFontMetricsF, QTextLayout with design metrics
+// and QFontMetricsF::tightBoundingRect, measured on the test laptop at a
+// device pixel ratio of 1.5 and of 1.
+namespace {
+
+struct Measured
+{
+    Window window;
+    Label* label = nullptr;
+
+    Measured(double pixelSize, double scale, const std::string& text, int weight = 400)
+    {
+        Theme theme = Theme::current();
+        theme.fontFamily = "Noto Sans";
+        Theme::setCurrent(theme);
+        auto root = std::make_unique<Row>();
+        label = root->addChild<Label>(text);
+        label->setFontSize(pixelSize);
+        label->setWeight(weight);
+        window.setContentView(std::move(root));
+        window.resize({400, 100});
+        window.setScale(scale);
+        window.show();
+        window.grab();
+    }
+};
+
+void expectRect(const RectF& rect, RectF expected)
+{
+    EXPECT_EQ(rect.x, expected.x);
+    EXPECT_EQ(rect.y, expected.y);
+    EXPECT_EQ(rect.width, expected.width);
+    EXPECT_EQ(rect.height, expected.height);
+}
+
+} // namespace
+
+TEST(TextMetricsTest, LinesAsQtLaysThemOutWhenScaled)
+{
+    struct Size
+    {
+        double pixelSize;
+        double ascent;
+        double descent;
+        double lineHeight;
+        double xHeight;
+        double width;
+    };
+    const Size sizes[] = {
+        {11, 11.765625, 3.21875, 15, 5.890625, 81.5938},
+        {12, 12.828125, 3.515625, 17, 6.4375, 89.0},
+        {15, 16.03125, 4.390625, 21, 8.046875, 111.25},
+        {24, 25.65625, 7.03125, 33, 12.859375, 178.125},
+    };
+    for (const Size& size : sizes) {
+        Measured measured(size.pixelSize, 1.5, "System Monitor");
+        EXPECT_DOUBLE_EQ(measured.label->ascent(), size.ascent) << size.pixelSize;
+        EXPECT_DOUBLE_EQ(measured.label->descent(), size.descent) << size.pixelSize;
+        EXPECT_DOUBLE_EQ(measured.label->xHeight(), size.xHeight) << size.pixelSize;
+        EXPECT_DOUBLE_EQ(measured.label->sizeHint().height, size.lineHeight) << size.pixelSize;
+        EXPECT_NEAR(measured.label->sizeHint().width, size.width, 0.02) << size.pixelSize;
+    }
+}
+
+TEST(TextMetricsTest, PointSizesRoundToWholePixels)
+{
+    // 8 pt is 10.67 logical pixels, which Qt lays out at 11.
+    Measured measured(8 * 4.0 / 3, 1.5, "System Monitor");
+    EXPECT_DOUBLE_EQ(measured.label->ascent(), 11.765625);
+    EXPECT_NEAR(measured.label->sizeHint().width, 81.5938, 0.02);
+}
+
+TEST(TextMetricsTest, WeightsKeepTheirAdvances)
+{
+    EXPECT_NEAR(Measured(11, 1.5, "Name", 500).label->sizeHint().width, 31.5625, 0.02);
+    EXPECT_NEAR(Measured(11, 1.5, "System Monitor", 700).label->sizeHint().width, 86.9375, 0.02);
+}
+
+TEST(TextMetricsTest, TightBoundingRectsAsQtRoundsThem)
+{
+    expectRect(Measured(11, 1.5, "System Monitor").label->tightBoundingRect(), {0, -9, 83, 12});
+    expectRect(Measured(11, 1.5, "Name").label->tightBoundingRect(), {1, -8, 30, 9});
+    expectRect(Measured(11, 1.5, "H").label->tightBoundingRect(), {1, -8, 7, 8});
+    expectRect(Measured(12, 1.5, "Name").label->tightBoundingRect(), {1, -9, 34, 10});
+    expectRect(Measured(12, 1.5, "Applications").label->tightBoundingRect(), {0, -10, 70, 13});
+    expectRect(Measured(15, 1.5, "16 logical processors").label->tightBoundingRect(), {1, -12, 146, 16});
+    expectRect(Measured(24, 1.5, "Name").label->tightBoundingRect(), {2, -18, 66, 19});
+    EXPECT_EQ(Measured(11, 1.5, "Text").label->capHeight(), 8);
+}
+
+TEST(TextMetricsTest, WholePixelMetricsUnscaled)
+{
+    // Unscaled, Qt hints with fontconfig's full hinting and rounds.
+    struct Size
+    {
+        double pixelSize;
+        double ascent;
+        double descent;
+        double lineHeight;
+    };
+    for (const Size& size : {Size{11, 12, 3, 15}, Size{12, 13, 4, 17}, Size{15, 16, 4, 20}}) {
+        Measured measured(size.pixelSize, 1, "System Monitor");
+        EXPECT_DOUBLE_EQ(measured.label->ascent(), size.ascent) << size.pixelSize;
+        EXPECT_DOUBLE_EQ(measured.label->descent(), size.descent) << size.pixelSize;
+        EXPECT_DOUBLE_EQ(measured.label->sizeHint().height, size.lineHeight) << size.pixelSize;
+    }
+}
+
+TEST(TextMetricsTest, MediumWeightUsesTheMediumFace)
+{
+    // Qt picks NotoSans-Medium for weight 500.
+    EXPECT_NEAR(Measured(12, 1.5, "Today", 500).label->sizeHint().width, 34.8281, 0.02);
+}
+
+TEST(TextMetricsTest, SpansCountTheirTextOnce)
+{
+    Measured measured(24, 1.5, "");
+    measured.label->setSpans({{"October", 700, {}}, {" 2026", 0, {}}});
+    measured.window.grab();
+    // Qt's StyledText "<b>October</b> 2026".
+    EXPECT_NEAR(measured.label->sizeHint().width, 158.03, 0.05);
+}
+
+TEST(TextMetricsTest, FallbackRunsAsQtPlacesThem)
+{
+    // Text in other scripts comes from outside the repository; Qt's widths,
+    // heights and ascents for its lines at 12 px, scale 1.5.
+    std::ifstream file(std::string(getenv("HOME") ? getenv("HOME") : "") + "/p2/toolkit/text/cjk.txt");
+    if (!file)
+        GTEST_SKIP() << "no ~/p2/toolkit/text/cjk.txt";
+    const double expected[][3] = {{70.2969, 18, 13.9219}, {84.4062, 18, 13.9219}, {72.0, 18, 13.9219}};
+    std::string line;
+    for (const auto& values : expected) {
+        ASSERT_TRUE(std::getline(file, line));
+        Measured measured(12, 1.5, line);
+        EXPECT_NEAR(measured.label->sizeHint().width, values[0], 0.05) << line;
+        EXPECT_DOUBLE_EQ(measured.label->sizeHint().height, values[1]) << line;
+        EXPECT_NEAR(measured.label->baselineOffset(), values[2], 1e-4) << line;
+    }
+}

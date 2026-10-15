@@ -3,19 +3,38 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "ui/geometry.h"
+#include "ui/path.h"
 
 class SkCanvas;
 class SkImage;
+class SkPath;
 
 namespace cutefish::ui {
+
+class Image;
 
 enum class Corners {
     Circular,
     // The compositor's window corners, for large panels; controls stay circular.
     Continuous,
+};
+
+// RoundedRectangle's corners unless an item sets them: the theme's.
+Corners themeCorners();
+
+// FishUI's RoundedRectangle: a rounded rect, and the parallel curve of its
+// shape `inset` beyond it (inside when negative), which keeps frames, rings
+// and thumbnails concentric with continuous corners.
+struct RoundedShape
+{
+    double radius = 0;
+    double inset = 0;
+    Corners corners = Corners::Circular;
 };
 
 // Paints in logical coordinates onto a canvas in device pixels. Every edge
@@ -40,18 +59,39 @@ public:
     double opacity() const { return m_opacity; }
     // Intersects the clip with the rect, edges on device pixels.
     void clip(const RectF& rect);
+    // Intersects the clip with a rounded rect, antialiased, for content cut
+    // to a card's or a thumbnail's corners; the rect snapped as a shape.
+    void clipRoundedRect(const RectF& rect, double radius, Corners corners = Corners::Circular);
 
+    // Each edge on its own, as a GPU rasterises Qt Quick's plain Rectangle:
+    // halves round down. Rounded shapes and icons snap instead.
     int toDevice(double logical) const;
     Rect deviceRect(const RectF& rect) const;
     // The whole device pixels a logical border takes, at least one, as FishUI's.
     int borderWidth(double logical) const;
+    // FishUI's PixelGrid::snapped: the first edge on the next whole device
+    // pixel, and as many pixels as the rect encloses, at least one.
+    Rect snappedRect(const RectF& rect) const;
 
     void fillRect(const RectF& rect, Color color);
+    // FishUI's RoundedRectangle, which most of its controls draw with: the
+    // shape snapped, the inset and a border of logical width in whole device
+    // pixels (at least one), and its shader's coverage. The border lies
+    // inside the shape's outline.
+    void drawRoundedRect(const RectF& rect, const RoundedShape& shape, Color fill, double borderWidth = 0,
+                         Color border = {});
     void fillRoundedRect(const RectF& rect, double radius, Color color,
                          Corners corners = Corners::Circular);
+    void fillRoundedRect(const RectF& rect, double radius, const LinearGradient& gradient,
+                         Corners corners = Corners::Circular);
+    // Qt Quick's Rectangle with a radius, which FishUI's switch, slider handle
+    // and scroll bar use: antialiased where it lies, not snapped, with a border
+    // of logical width inside its outline.
+    void drawQuickRectangle(const RectF& rect, double radius, Color fill, double borderWidth = 0,
+                            Color border = {});
     // Exactly the device pixels given, for shapes centred by their own rules.
     void fillDeviceRoundedRect(const Rect& rect, double radiusPx, Color color);
-    // A border inside the rect.
+    // A border inside the rect, as RoundedRectangle's.
     void strokeRoundedRect(const RectF& rect, double radius, Color color, int widthPx = 1,
                            Corners corners = Corners::Circular);
     void fillEllipse(const RectF& rect, Color color);
@@ -65,8 +105,25 @@ public:
     void drawLine(PointF from, PointF to, Color color, double widthPx);
     // At whole device pixels.
     void drawImage(const SkImage* image, int x, int y);
+    // Scaled smoothly into the rect, its edges on device pixels, as a pixmap
+    // drawn into a smaller or larger item; averaged when shrunk.
+    void drawImage(const SkImage* image, const RectF& rect);
+    // An Image, 0xAARRGGBB words not premultiplied, the same way.
+    void drawImage(const Image& image, const RectF& rect);
+
+    // Paths are antialiased and not snapped; widths are logical.
+    void fillPath(const Path& path, Color color);
+    void fillPath(const Path& path, const LinearGradient& gradient);
+    void strokePath(const Path& path, Color color, double width, LineCap cap = LineCap::Round,
+                    LineJoin join = LineJoin::Round);
+
+    // An SVG file rasterised at the device size of the rect, which it fills;
+    // a single-colour drawing takes the tint where it has coverage.
+    void drawSvg(const std::string& file, const RectF& rect, std::optional<Color> tint = std::nullopt);
 
 private:
+    SkPath toSkPath(const Path& path) const;
+
     struct State
     {
         PointF offset;

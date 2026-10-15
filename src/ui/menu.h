@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,9 +18,9 @@ class View;
 class Window;
 struct PopupPlacement;
 
-// FishUI's menu: a popup of rows over the compositor's blur, driven by the
-// pointer or the keyboard. Choosing a row, Escape or a press elsewhere
-// closes it.
+// FishUI's DesktopMenu, or its ComboBoxMenu as a drop-down: a popup of rows
+// over the compositor's blur, driven by the pointer or the keyboard.
+// Choosing a row, Escape or a press elsewhere closes it.
 class Menu
 {
 public:
@@ -36,14 +37,26 @@ public:
     void setItemVisible(size_t index, bool visible);
     // A checked row gives every row a leading column, so the labels line up.
     void setItemChecked(size_t index, bool checked);
+    // An icon from the icon theme before the text, as MenuItem's icon.name.
+    void setItemIcon(size_t index, std::string icon);
+    // One of FishUI's glyphs before the text, tinted like it, as MenuItem's iconName.
+    void setItemGlyph(size_t index, std::string glyph);
+    // The row's text in this family, as a font list previews its fonts.
+    void setItemFontFamily(size_t index, std::string family);
     // As for a drop-down, never narrower than what it hangs off.
     void setMinimumWidth(double width) { m_minimumWidth = width; }
+    // As ComboBoxMenu rather than DesktopMenu: at most half the screen tall
+    // (240 at least) with a scroll bar while it scrolls, opened on the
+    // checked row, rows found by typing their start.
+    void setDropDown(bool dropDown) { m_dropDown = dropDown; }
     void clear();
 
     // At a point of the window, usually where the pointer is.
     void popup(Window* window, PointF position);
-    // Under the view, lined up with its left edge, as for a button that opens it.
-    void popupFor(View* view);
+    // gap pixels under the view, or under a rect of it in its coordinates,
+    // from its left edge; above it when there is more room there. Opened
+    // from the keyboard, a drop-down lights its checked row.
+    void popupFor(View* view, double gap = 3, std::optional<RectF> rect = {}, bool fromKeyboard = false);
     void close();
     bool isOpen() const { return m_window != nullptr; }
     // The popup while open, for tests.
@@ -52,13 +65,18 @@ public:
     std::function<void()> onClosed;
 
 private:
-    class Content;
-    friend class Content;
+    class Rows;
+    class Surface;
+    friend class Rows;
+    friend class Surface;
 
     struct Item
     {
         std::string text;
         std::string shortcut;
+        std::string icon;
+        std::string glyph;
+        std::string fontFamily;
         std::function<void()> action;
         bool separator = false;
         bool enabled = true;
@@ -66,12 +84,13 @@ private:
         bool checked = false;
     };
 
-    void open(Window* parent, const PopupPlacement& placement);
+    void open(Window* parent, const PopupPlacement& placement, bool fromKeyboard);
     void activate(size_t index);
 
     std::vector<Item> m_items;
     std::unique_ptr<Window> m_window;
     double m_minimumWidth = 0;
+    bool m_dropDown = false;
 };
 
 } // namespace cutefish::ui

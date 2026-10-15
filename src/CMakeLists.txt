@@ -26,10 +26,16 @@ cutefish_wayland_protocol(cursor-shape-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/cursor-shape/cursor-shape-v1.xml)
 cutefish_wayland_protocol(xdg-dialog-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/staging/xdg-dialog/xdg-dialog-v1.xml)
+cutefish_wayland_protocol(xdg-activation-v1
+    ${WAYLAND_PROTOCOLS_DATADIR}/staging/xdg-activation/xdg-activation-v1.xml)
+cutefish_wayland_protocol(xdg-foreign-unstable-v2
+    ${WAYLAND_PROTOCOLS_DATADIR}/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml)
 cutefish_wayland_protocol(text-input-unstable-v3
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/text-input/text-input-unstable-v3.xml)
 cutefish_wayland_protocol(pointer-gestures-unstable-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/pointer-gestures/pointer-gestures-unstable-v1.xml)
+cutefish_wayland_protocol(xdg-output-unstable-v1
+    ${WAYLAND_PROTOCOLS_DATADIR}/unstable/xdg-output/xdg-output-unstable-v1.xml)
 # cursor-shape-v1 refers to the tablet tool interface.
 cutefish_wayland_protocol(tablet-unstable-v2
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/tablet/tablet-unstable-v2.xml)
@@ -39,8 +45,9 @@ cutefish_wayland_protocol(cutefish-window-hints-v1
 cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 
+add_subdirectory(base)
+
 set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
-    base/event_loop.h
     ui/animation.h
     ui/application.h
     ui/button.h
@@ -51,23 +58,31 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/event.h
     ui/frame_client.h
     ui/geometry.h
+    ui/file_chooser.h
+    ui/header_backdrop.h
     ui/header_button.h
     ui/icon.h
     ui/image.h
+    ui/image_view.h
     ui/keys.h
     ui/label.h
     ui/layout.h
     ui/list_view.h
     ui/menu.h
     ui/painter.h
+    ui/path.h
     ui/progress_bar.h
+    ui/quick_layout.h
     ui/scroll_view.h
+    ui/search_field.h
     ui/segmented_control.h
     ui/slider.h
     ui/switch.h
     ui/test_input.h
+    ui/text_area.h
     ui/text_field.h
     ui/theme.h
+    ui/toast.h
     ui/toggle_control.h
     ui/view.h
     ui/window.h
@@ -75,8 +90,6 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
 )
 
 add_library(cutefish-toolkit SHARED
-    base/dbus_connection.cpp
-    base/event_loop.cpp
     gpu/egl_context.cpp
     wayland/connection.cpp
     wayland/data_device.cpp
@@ -95,32 +108,48 @@ add_library(cutefish-toolkit SHARED
     ui/editable_text.cpp
     ui/frame_client.cpp
     ui/geometry.cpp
+    ui/file_chooser.cpp
+    ui/header_backdrop.cpp
     ui/header_button.cpp
     ui/icon.cpp
     ui/icon_loader.cpp
     ui/image.cpp
+    ui/image_decoder.cpp
+    ui/image_view.cpp
     ui/label.cpp
+    ui/line_breaks.cpp
     ui/layout.cpp
     ui/list_view.cpp
     ui/menu.cpp
     ui/painter.cpp
+    ui/path.cpp
     ui/platform_window.cpp
     ui/progress_bar.cpp
+    ui/quick_layer.cpp
+    ui/quick_layout.cpp
+    ui/quick_rectangle.cpp
     ui/rounded_path.cpp
+    ui/rounded_shape.cpp
     ui/scroll_bar.cpp
     ui/scroll_view.cpp
     ui/scroller.cpp
+    ui/search_field.cpp
     ui/segmented_control.cpp
     ui/slider.cpp
     ui/switch.cpp
     ui/test_input.cpp
+    ui/text_area.cpp
     ui/text_field.cpp
     ui/text_context.cpp
+    ui/text_lines.cpp
     ui/theme.cpp
+    ui/thumbnail_cache.cpp
+    ui/toast.cpp
     ui/toggle_control.cpp
     ui/view.cpp
     ui/window.cpp
     ui/window_compositing.cpp
+    ui/window_restore.cpp
     ui/window_header.cpp
     ${xdg-shell_SOURCES}
     ${viewporter_SOURCES}
@@ -130,6 +159,9 @@ add_library(cutefish-toolkit SHARED
     ${pointer-gestures-unstable-v1_SOURCES}
     ${text-input-unstable-v3_SOURCES}
     ${xdg-dialog-v1_SOURCES}
+    ${xdg-activation-v1_SOURCES}
+    ${xdg-foreign-unstable-v2_SOURCES}
+    ${xdg-output-unstable-v1_SOURCES}
     ${tablet-unstable-v2_SOURCES}
     ${cutefish-window-hints-v1_SOURCES}
     ${cutefish-surface-blur-v1_SOURCES}
@@ -163,6 +195,8 @@ target_include_directories(cutefish-toolkit
 )
 
 target_link_libraries(cutefish-toolkit
+    PUBLIC
+        cutefish-toolkit-base
     PRIVATE
         skia
         PkgConfig::WaylandClient
@@ -170,6 +204,7 @@ target_link_libraries(cutefish-toolkit
         PkgConfig::Fontconfig
         PkgConfig::Xkbcommon
         PkgConfig::Systemd
+        PkgConfig::ImageCodecs
 )
 
 install(TARGETS cutefish-toolkit EXPORT CutefishToolkitTargets

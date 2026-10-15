@@ -15,7 +15,7 @@ struct xkb_context;
 struct xkb_keymap;
 struct xkb_state;
 
-namespace cutefish::ui {
+namespace cutefish::base {
 class EventLoop;
 }
 
@@ -29,7 +29,7 @@ struct KeyboardListeners;
 class Keyboard
 {
 public:
-    Keyboard(EventLoop& loop, wl_keyboard* keyboard);
+    Keyboard(base::EventLoop& loop, wl_keyboard* keyboard);
     ~Keyboard();
 
     Keyboard(const Keyboard&) = delete;
@@ -50,7 +50,7 @@ private:
     void repeatKey();
     void stopRepeat();
 
-    EventLoop& m_loop;
+    base::EventLoop& m_loop;
     wl_keyboard* m_keyboard;
     xkb_context* m_context = nullptr;
     xkb_keymap* m_keymap = nullptr;

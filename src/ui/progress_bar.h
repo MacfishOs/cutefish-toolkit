@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 
 #include "ui/view.h"
@@ -45,6 +46,8 @@ public:
 
     void setRunning(bool running);
     bool isRunning() const { return m_running; }
+    // One turn; 1000 ms unless set.
+    void setDuration(std::chrono::milliseconds duration);
 
     SizeF sizeHint() const override { return {22, 22}; }
 
@@ -54,6 +57,7 @@ protected:
 private:
     bool m_running = true;
     double m_angle = 0;
+    std::chrono::milliseconds m_duration{1000};
     std::unique_ptr<Animation> m_animation;
 };
 

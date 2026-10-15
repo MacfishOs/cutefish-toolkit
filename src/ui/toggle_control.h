@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "ui/view.h"
@@ -22,6 +23,10 @@ public:
     void setText(std::string text);
     const std::string& text() const;
 
+    // Per side, as the control's leftPadding, topPadding and so on; FishUI's
+    // unless set.
+    void setPadding(Margins padding);
+
     bool isChecked() const { return m_checked; }
     // Changes the state without calling onToggled.
     void setChecked(bool checked);
@@ -34,11 +39,19 @@ public:
     std::function<void(bool checked)> onToggled;
 
 protected:
-    ToggleControl(std::string text, SizeF indicator, double padding);
+    // A switch's padding is horizontal only without text, and its indicator
+    // then centres; the others keep it on all sides and at the left.
+    enum class Kind {
+        Switch,
+        Button,
+    };
+
+    ToggleControl(std::string text, SizeF indicator, double padding, Kind kind = Kind::Button);
 
     bool isPressed() const { return m_pressed; }
     bool isHovered() const { return m_hovered; }
     RectF indicatorRect() const;
+    Margins padding() const;
     // The user's action; a radio button only turns on.
     virtual void toggle();
     virtual void checkedChanged(bool animated);
@@ -46,6 +59,7 @@ protected:
 
     void layout() override;
     void paint(Painter& painter) override;
+    void enabledChanged() override;
     void pointerEnter() override;
     void pointerLeave() override;
     void pointerPress(const PointerEvent& event) override;
@@ -57,6 +71,8 @@ private:
     Label* m_label;
     SizeF m_indicator;
     double m_padding;
+    Kind m_kind;
+    std::optional<Margins> m_customPadding;
     bool m_checked = false;
     bool m_pressed = false;
     bool m_hovered = false;

@@ -1,23 +1,53 @@
 find_package(GTest REQUIRED)
 include(GoogleTest)
 
+# Linked against the base library alone, which proves it needs no display.
+add_executable(cutefish-toolkit-base-tests
+    base/dbus_test.cpp
+    base/desktop_entry_test.cpp
+    base/event_loop_test.cpp
+    base/file_test.cpp
+    base/json_test.cpp
+    base/locale_test.cpp
+    base/mime_test.cpp
+    base/process_test.cpp
+    base/settings_test.cpp
+    base/thread_pool_test.cpp
+    base/timer_test.cpp
+    base/user_directory_test.cpp
+)
+
+target_link_libraries(cutefish-toolkit-base-tests PRIVATE cutefish-toolkit-base GTest::gtest_main)
+
+gtest_discover_tests(cutefish-toolkit-base-tests)
+
 add_executable(cutefish-toolkit-tests
     main.cpp
     animation_test.cpp
     color_test.cpp
     controls_test.cpp
-    event_loop_test.cpp
+    frame_cost_test.cpp
+    image_view_test.cpp
     input_test.cpp
+    label_test.cpp
     layout_test.cpp
+    line_breaks_test.cpp
     menu_test.cpp
+    painter_test.cpp
     pixel_test.cpp
+    quick_layout_test.cpp
     scroll_test.cpp
+    text_area_test.cpp
     text_field_test.cpp
+    text_metrics_test.cpp
     window_test.cpp
+    window_restore_test.cpp
     compositing_test.cpp
     test_views.h
 )
 
-target_link_libraries(cutefish-toolkit-tests PRIVATE cutefish-toolkit GTest::gtest)
+# The image tests write their files with the codecs' own encoders.
+pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libwebp libtiff-4 libjxl)
+target_link_libraries(cutefish-toolkit-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::ImageTestEncoders)
 
 gtest_discover_tests(cutefish-toolkit-tests)

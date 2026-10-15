@@ -7,8 +7,10 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkSurface.h"
 
+#include "ui/application.h"
 #include "ui/layer.h"
 #include "ui/painter.h"
+#include "ui/text_context.h"
 #include "ui/theme.h"
 #include "ui/view.h"
 #include "ui/window.h"
@@ -191,6 +193,8 @@ void Window::damageAll()
     };
     if (m_contentView)
         markLayers(markLayers, m_contentView.get());
+    if (m_overlay)
+        markLayers(markLayers, m_overlay.get());
     if (m_toolTip)
         markLayers(markLayers, m_toolTip.get());
     scheduleFrame();
@@ -220,9 +224,8 @@ void Window::updateLayers(View* view, PointF origin, SkCanvas* target)
     }
     if (!layer.surface || layer.bounds.size() != bounds.size()
         || layer.surface->recordingContext() != target->recordingContext()) {
-        // Without a pixel geometry text is greyscale, which a transparent
-        // texture needs.
-        const SkSurfaceProps properties(0, kUnknown_SkPixelGeometry);
+        // A transparent texture needs greyscale text.
+        const SkSurfaceProps properties = Application::instance()->text().surfaceProps(false);
         const SkImageInfo info = target->imageInfo()
                                      .makeWH(bounds.width(), bounds.height())
                                      .makeAlphaType(kPremul_SkAlphaType);
@@ -312,6 +315,8 @@ void View::paintContent(Painter& painter, const SkRegion* region)
 void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
 {
     updateLayers(m_contentView.get(), {}, canvas);
+    if (m_overlay)
+        updateLayers(m_overlay.get(), {}, canvas);
     if (m_toolTip)
         updateLayers(m_toolTip.get(), {}, canvas);
 
@@ -319,6 +324,8 @@ void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
         target->clear(m_backgroundColor.value_or(Theme::current().background).argb());
         Painter painter(target, m_scale);
         m_contentView->paintTree(painter, region);
+        if (m_overlay)
+            m_overlay->paintTree(painter, region);
         if (m_toolTip)
             m_toolTip->paintTree(painter, region);
     };

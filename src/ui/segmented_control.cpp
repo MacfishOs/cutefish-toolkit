@@ -4,8 +4,11 @@
 #include "ui/segmented_control.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
+#include "base/event_loop.h"
+#include "ui/application.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
@@ -13,59 +16,154 @@
 
 namespace cutefish::ui {
 
-// FishUI's TabButton: a medium icon and a small spacing tall.
-static constexpr double kHeight = 38;
-static constexpr double kPadding = 2;
+// FishUI's SegmentedControl: 32 high inside a padding of 2, the plate 2
+// inside its button. Its TabBar: a TabButton high, a medium icon and a small
+// spacing, without padding.
+static constexpr double kSegmentedHeight = 32;
+static constexpr double kTabHeight = 38;
+static constexpr double kSegmentedPadding = 2;
+static constexpr double kPlateInset = 2;
+static constexpr std::chrono::milliseconds kPressDelay{50};
+
+class SegmentedControl::Segment : public View
+{
+public:
+    Segment(SegmentedControl* control, std::string text)
+        : m_control(control)
+        , m_label(addChild<Label>(std::move(text)))
+    {
+        // TabButton's contentItem is a plain Text, coloured rather than faded.
+        m_label->setFadesWhenDisabled(false);
+        m_label->setTextAlignment(Label::TextAlignment::Center);
+        m_label->setVerticallyCentered(true);
+    }
+
+    Label* label() const { return m_label; }
+    bool acceptsFocus() const override { return true; }
+
+protected:
+    void layout() override { m_label->setGeometry(localRect()); }
+
+    bool keyPress(const KeyEvent& event) override
+    {
+        if (event.key != key::Space || event.modifiers != NoModifier)
+            return false;
+        m_control->setPressed(index());
+        return true;
+    }
+
+    bool keyRelease(const KeyEvent& event) override
+    {
+        if (event.key != key::Space || m_control->m_pressed != index())
+            return false;
+        m_control->setPressed(-1);
+        m_control->pick(index());
+        return true;
+    }
+
+    void focusOut() override
+    {
+        if (m_control->m_pressed == index())
+            m_control->setPressed(-1);
+    }
+
+private:
+    int index() const
+    {
+        const auto& segments = m_control->m_segments;
+        return int(std::find(segments.begin(), segments.end(), this) - segments.begin());
+    }
+
+    SegmentedControl* m_control;
+    Label* m_label;
+};
 
 SegmentedControl::SegmentedControl(std::vector<std::string> items, Style style)
     : m_style(style)
+    , m_contentHeight(style == Style::Segmented ? kSegmentedHeight : kTabHeight)
 {
     setItems(std::move(items));
 }
 
+SegmentedControl::~SegmentedControl()
+{
+    if (m_pressTimer)
+        Application::instance()->loop().stopTimer(m_pressTimer);
+}
+
 void SegmentedControl::setItems(std::vector<std::string> items)
 {
-    for (Label* label : m_labels)
-        takeChild(label);
-    m_labels.clear();
+    for (Segment* segment : m_segments)
+        takeChild(segment);
+    m_segments.clear();
     for (std::string& item : items) {
-        Label* label = addChild<Label>(std::move(item));
-        label->setTextAlignment(Label::TextAlignment::Center);
-        label->setVerticallyCentered(true);
-        m_labels.push_back(label);
+        Segment* segment = addChild<Segment>(this, std::move(item));
+        segment->label()->setFontSize(m_fontSize);
+        m_segments.push_back(segment);
     }
-    m_current = std::clamp(m_current, 0, std::max(0, int(m_labels.size()) - 1));
+    m_current = std::clamp(m_current, 0, std::max(0, int(m_segments.size()) - 1));
+    m_pressed = -1;
     updateColors();
     requestLayout();
 }
 
 void SegmentedControl::setCurrentIndex(int index)
 {
-    if (index < 0 || index >= int(m_labels.size()) || index == m_current)
+    if (index < 0 || index >= int(m_segments.size()) || index == m_current)
         return;
     m_current = index;
     requestPaint();
 }
 
-SizeF SegmentedControl::sizeHint() const
+void SegmentedControl::setContentHeight(double height)
 {
-    double widest = 0;
-    for (const Label* label : m_labels)
-        widest = std::max(widest, label->sizeHint().width);
-    const double item = widest + 2 * Theme::current().largeSpacing;
-    return {item * double(m_labels.size()) + 2 * kPadding, kHeight};
+    m_contentHeight = height;
+    requestLayout();
 }
 
+void SegmentedControl::setFontSize(double size)
+{
+    m_fontSize = size;
+    for (Segment* segment : m_segments)
+        segment->label()->setFontSize(size);
+    requestLayout();
+}
+
+void SegmentedControl::setTrackColor(std::optional<Color> color)
+{
+    m_trackColor = color;
+    requestPaint();
+}
+
+double SegmentedControl::padding() const
+{
+    return m_style == Style::Segmented ? kSegmentedPadding : 0;
+}
+
+double SegmentedControl::implicitItemWidth(size_t index) const
+{
+    return index < m_segments.size() ? m_segments[index]->label()->sizeHint().width : 0;
+}
+
+SizeF SegmentedControl::sizeHint() const
+{
+    double width = 0;
+    for (size_t i = 0; i < m_segments.size(); ++i)
+        width += implicitItemWidth(i);
+    return {width + 2 * padding() + Theme::current().smallSpacing, m_contentHeight + 2 * padding()};
+}
+
+// QQuickTabBar gives buttons without a width of their own equal shares.
 RectF SegmentedControl::itemRect(size_t index) const
 {
-    const RectF inner = localRect().adjusted(kPadding, kPadding, -kPadding, -kPadding);
-    const double width = m_labels.empty() ? 0 : inner.width / double(m_labels.size());
+    const RectF inner = localRect().adjusted(padding(), padding(), -padding(), -padding());
+    const double width = m_segments.empty() ? 0 : inner.width / double(m_segments.size());
     return {inner.x + width * double(index), inner.y, width, inner.height};
 }
 
 int SegmentedControl::itemAt(PointF point) const
 {
-    for (size_t i = 0; i < m_labels.size(); ++i) {
+    for (size_t i = 0; i < m_segments.size(); ++i) {
         if (itemRect(i).contains(point))
             return int(i);
     }
@@ -74,8 +172,8 @@ int SegmentedControl::itemAt(PointF point) const
 
 void SegmentedControl::layout()
 {
-    for (size_t i = 0; i < m_labels.size(); ++i)
-        m_labels[i]->setGeometry(itemRect(i));
+    for (size_t i = 0; i < m_segments.size(); ++i)
+        m_segments[i]->setGeometry(itemRect(i));
 }
 
 void SegmentedControl::paint(Painter& painter)
@@ -83,43 +181,78 @@ void SegmentedControl::paint(Painter& painter)
     const Theme& theme = Theme::current();
     const RectF bounds = localRect();
     const Color plate = theme.darkMode ? theme.secondBackground.lighter(2) : theme.secondBackground;
+    const double tabRadius = theme.smallRadius + 2;
     if (m_style == Style::Segmented) {
-        painter.fillRoundedRect(bounds, bounds.height / 2,
-                                theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.06)
-                                               : Color::rgb(0x000000).withAlpha(0.04));
+        const Color track = theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.06) : Color::rgb(0x000000).withAlpha(0.04);
+        painter.drawRoundedRect(bounds, {bounds.height / 2}, m_trackColor.value_or(track));
     } else {
-        painter.fillRoundedRect(bounds, theme.smallRadius + kPadding, theme.alternateBackground);
+        painter.drawRoundedRect(bounds, {tabRadius, 0, themeCorners()}, theme.alternateBackground);
     }
-    if (m_current < 0 || m_current >= int(m_labels.size()))
+    if (m_current < 0 || m_current >= int(m_segments.size()))
         return;
 
-    const RectF highlight = itemRect(size_t(m_current));
+    const RectF item = itemRect(size_t(m_current));
     if (m_style == Style::Segmented) {
-        painter.drawShadow(highlight, highlight.height / 2, 1.5,
-                           Color::rgb(0).withAlpha(theme.darkMode ? 0.18 : 0.12));
-        painter.fillRoundedRect(highlight, highlight.height / 2, plate);
+        // A plain Rectangle with a DropShadow layer: Gaussian deviation (radius + 1) / 3.33.
+        const RectF highlight = item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset);
+        painter.drawShadow(highlight, highlight.height / 2, 1.2,
+                           Color::rgb(0).withAlpha(theme.darkMode ? 0.18 : 0.12), {0, 1});
+        painter.drawQuickRectangle(highlight, highlight.height / 2, plate);
     } else {
-        // Concentric with the bar: its radius less the inset.
+        // Concentric with the bar through the inset.
         if (theme.darkMode)
-            painter.drawShadow(highlight, theme.smallRadius, 1, Color::rgb(0).withAlpha(0.11));
-        painter.fillRoundedRect(highlight, theme.smallRadius, plate);
+            painter.drawShadow(item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset), theme.smallRadius,
+                               0.9, Color::rgb(0).withAlpha(0.11));
+        painter.drawRoundedRect(item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset),
+                                {tabRadius, kPlateInset, themeCorners()}, plate);
     }
+}
+
+void SegmentedControl::enabledChanged()
+{
+    updateColors();
 }
 
 void SegmentedControl::updateColors()
 {
     const Theme& theme = Theme::current();
-    for (size_t i = 0; i < m_labels.size(); ++i) {
-        if (int(i) == m_pressed)
-            m_labels[i]->setColor(theme.text.withAlpha(0.5));
+    for (size_t i = 0; i < m_segments.size(); ++i) {
+        // TabButton: disabledTextColor, half the text colour while pressed.
+        Label* label = m_segments[i]->label();
+        if (!isEnabled())
+            label->setColor(theme.disabledText);
+        else if (int(i) == m_pressed && m_pressShown)
+            label->setColor(theme.text.withAlpha(0.5));
         else
-            m_labels[i]->setColor(std::nullopt);
+            label->setColor(std::nullopt);
     }
+}
+
+void SegmentedControl::setPressed(int index)
+{
+    if (index == m_pressed)
+        return;
+    m_pressed = index;
+    // A quick click shows no pressed label, as Qt's TabButtons in a TabBar
+    // show none; a held press does.
+    m_pressShown = false;
+    if (m_pressTimer) {
+        Application::instance()->loop().stopTimer(m_pressTimer);
+        m_pressTimer = 0;
+    }
+    if (index >= 0) {
+        m_pressTimer = Application::instance()->loop().startTimer(kPressDelay, false, [this] {
+            m_pressTimer = 0;
+            m_pressShown = true;
+            updateColors();
+        });
+    }
+    updateColors();
 }
 
 void SegmentedControl::pick(int index)
 {
-    if (index < 0 || index >= int(m_labels.size()) || index == m_current)
+    if (index < 0 || index >= int(m_segments.size()) || index == m_current)
         return;
     m_current = index;
     requestPaint();
@@ -131,32 +264,18 @@ void SegmentedControl::pointerPress(const PointerEvent& event)
 {
     if (event.button != MouseButton::Left)
         return;
-    m_pressed = itemAt(event.position);
-    updateColors();
+    const int index = itemAt(event.position);
+    if (index >= 0)
+        m_segments[size_t(index)]->setFocus(FocusReason::Mouse);
+    setPressed(index);
 }
 
 void SegmentedControl::pointerRelease(const PointerEvent& event)
 {
     const int pressed = m_pressed;
-    m_pressed = -1;
-    updateColors();
+    setPressed(-1);
     if (pressed >= 0 && itemAt(event.position) == pressed)
         pick(pressed);
-}
-
-bool SegmentedControl::keyPress(const KeyEvent& event)
-{
-    if (event.modifiers != NoModifier)
-        return false;
-    if (event.key == key::Left) {
-        pick(m_current - 1);
-        return true;
-    }
-    if (event.key == key::Right) {
-        pick(m_current + 1);
-        return true;
-    }
-    return false;
 }
 
 } // namespace cutefish::ui

@@ -9,6 +9,7 @@
 #include "ui/layout.h"
 #include "ui/test_input.h"
 #include "ui/theme.h"
+#include "ui/toast.h"
 #include "ui/window.h"
 #include "ui/window_header.h"
 
@@ -59,6 +60,55 @@ TEST(WindowTest, ConfirmDialogAnswersOnce)
     TestInput::typeKey(*window, key::Escape);
     EXPECT_EQ(rejected, 1);
     EXPECT_EQ(accepted, 0);
+}
+
+// As FishUI's ConfirmDialog: Return confirms even while a destructive
+// dialog's Cancel has the focus; Space presses the focused button.
+TEST(WindowTest, ConfirmDialogReturnConfirms)
+{
+    Window parent;
+    parent.resize({400, 300});
+    parent.setContentView(std::make_unique<View>());
+    parent.show();
+
+    for (const bool space : {false, true}) {
+        ConfirmDialog dialog(&parent, "Remove the file?", "It cannot be brought back.");
+        dialog.setDestructive(true);
+        int accepted = 0;
+        int rejected = 0;
+        dialog.onAccepted = [&accepted] { ++accepted; };
+        dialog.onRejected = [&rejected] { ++rejected; };
+        dialog.show();
+        Window* window = dialog.window();
+        window->grab();
+        TestInput::setKeyboardFocus(*window, true);
+        TestInput::typeKey(*window, space ? key::Space : key::Return);
+        EXPECT_EQ(accepted, space ? 0 : 1);
+        EXPECT_EQ(rejected, space ? 1 : 0);
+    }
+}
+
+TEST(WindowTest, ConfirmDialogTextChangesWhileShown)
+{
+    Window parent;
+    parent.resize({400, 300});
+    parent.setContentView(std::make_unique<View>());
+    parent.show();
+
+    ConfirmDialog dialog(&parent, "Pairing");
+    dialog.show();
+    Window* window = dialog.window();
+    window->grab();
+    const double height = window->size().height;
+    dialog.setText("Confirm that the code 123456 shows on the other device.");
+    window->grab();
+    EXPECT_GT(window->size().height, height);
+    dialog.setTitle("Pairing with the keyboard");
+    const View* texts = window->contentView()->children().front().get();
+    EXPECT_EQ(static_cast<const Label*>(texts->children().front().get())->text(), "Pairing with the keyboard");
+    dialog.setText({});
+    window->grab();
+    EXPECT_EQ(window->size().height, height);
 }
 
 TEST(WindowTest, DialogTakesTheHeightOfItsContent)
@@ -147,4 +197,65 @@ TEST(WindowTest, DialogFitsTextLinesAtFractionalScale)
     const double bottom = content->geometry().y + content->children().back()->geometry().bottom();
     EXPECT_GE(window->size().height - bottom, 16);
     EXPECT_LT(window->size().height - bottom, 17);
+}
+
+// As QWindow::isActive: a window stays active while its dialog has the focus.
+TEST(WindowTest, ParentStaysActiveWhileItsDialogIsFocused)
+{
+    Window parent;
+    parent.resize({200, 100});
+    parent.show();
+    Window dialog;
+    dialog.setTransientParent(&parent, true);
+    dialog.resize({100, 50});
+    dialog.show();
+    Window other;
+    other.resize({100, 50});
+    other.show();
+
+    // Headless windows show activated.
+    TestInput::configure(dialog, 100, 50, {});
+    TestInput::configure(other, 100, 50, {});
+    TestInput::configure(parent, 200, 100, {.activated = true});
+    EXPECT_TRUE(parent.isActive());
+    EXPECT_TRUE(dialog.isActive());
+    EXPECT_FALSE(other.isActive());
+
+    TestInput::configure(parent, 200, 100, {});
+    TestInput::configure(dialog, 100, 50, {.activated = true});
+    EXPECT_TRUE(parent.isActive());
+    EXPECT_TRUE(dialog.isActive());
+
+    TestInput::configure(dialog, 100, 50, {});
+    TestInput::configure(other, 100, 50, {.activated = true});
+    EXPECT_FALSE(parent.isActive());
+    EXPECT_FALSE(dialog.isActive());
+    EXPECT_TRUE(other.isActive());
+}
+
+// FishUI's Toast: over the content at the bottom centre once faded in.
+TEST(WindowTest, ToastShowsOverTheContent)
+{
+    Window window;
+    window.resize({400, 300});
+    window.setContentView(std::make_unique<View>());
+    window.show();
+    window.grab();
+    const Image before = window.grab(1'000'000'000);
+
+    Toast toast(&window);
+    toast.show("Saved");
+    window.grab(1'000'000'000 + 500'000'000);
+    const Image shown = window.grab(1'000'000'000 + 600'000'000);
+    int changed = 0;
+    for (int y = 0; y < 300; ++y) {
+        for (int x = 0; x < 400; ++x) {
+            if (shown.pixel(x, y).argb() != before.pixel(x, y).argb()) {
+                ++changed;
+                // Only near the bottom, centred.
+                EXPECT_GT(y, 200);
+            }
+        }
+    }
+    EXPECT_GT(changed, 0);
 }

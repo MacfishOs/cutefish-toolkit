@@ -36,11 +36,13 @@ public:
 protected:
     void layout() override;
     void paint(Painter& painter) override;
+    void enabledChanged() override;
     void pointerEnter() override;
     void pointerLeave() override;
     void pointerPress(const PointerEvent& event) override;
     void pointerRelease(const PointerEvent& event) override;
     bool keyPress(const KeyEvent& event) override;
+    bool keyRelease(const KeyEvent& event) override;
 
 private:
     Color actionColor() const;
@@ -101,6 +103,9 @@ public:
     ConfirmDialog(Window* parent, std::string title, std::string text = {});
     ~ConfirmDialog();
 
+    // Also while shown, as ConfirmDialog's bound title and text.
+    void setTitle(std::string title);
+    void setText(std::string text);
     void setConfirmText(std::string text);
     void setCancelText(std::string text);
     void setDestructive(bool destructive);
@@ -123,6 +128,8 @@ private:
     bool m_destructive = false;
     bool m_cancelVisible = true;
     std::unique_ptr<Window> m_window;
+    Label* m_titleLabel = nullptr;
+    Label* m_textLabel = nullptr;
 };
 
 } // namespace cutefish::ui

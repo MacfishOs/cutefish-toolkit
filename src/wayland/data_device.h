@@ -15,7 +15,7 @@ struct wl_data_offer;
 struct wl_data_source;
 struct wl_seat;
 
-namespace cutefish::ui {
+namespace cutefish::base {
 class EventLoop;
 }
 
@@ -28,7 +28,7 @@ struct DataDeviceListeners;
 class DataDevice
 {
 public:
-    DataDevice(Connection& connection, EventLoop& loop, wl_data_device_manager* manager,
+    DataDevice(Connection& connection, base::EventLoop& loop, wl_data_device_manager* manager,
                wl_seat* seat);
     ~DataDevice();
 
@@ -44,7 +44,7 @@ private:
     void dropOffer(wl_data_offer* offer);
 
     Connection& m_connection;
-    EventLoop& m_loop;
+    base::EventLoop& m_loop;
     wl_data_device_manager* m_manager;
     wl_data_device* m_device = nullptr;
     // Announced offers and their MIME types, until they become the selection or go.

@@ -14,6 +14,7 @@ namespace cutefish::ui {
 
 class View;
 class Window;
+struct WindowStates;
 
 // Drives a window as the window system would, so tests can work views
 // without a compositor. Positions are in window coordinates.
@@ -29,6 +30,11 @@ public:
     static void scroll(Window& window, PointF position, const ScrollEvent& event);
     // Fingers coming to rest on the touchpad.
     static void hold(Window& window);
+    // A configure from the compositor; a zero size leaves the choice to the window.
+    static void configure(Window& window, int width, int height, const WindowStates& states);
+    static void configureBounds(Window& window, int width, int height);
+    // The user dragging an edge to the size.
+    static void resizeInteractively(Window& window, SizeF size);
 
     static void setKeyboardFocus(Window& window, bool focused);
     static void pressKey(Window& window, const KeyEvent& event);

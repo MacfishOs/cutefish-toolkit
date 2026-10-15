@@ -58,6 +58,23 @@ void TestInput::hold(Window& window)
     window.handleHold();
 }
 
+void TestInput::configure(Window& window, int width, int height, const WindowStates& states)
+{
+    window.handleConfigure(width, height, states);
+}
+
+void TestInput::configureBounds(Window& window, int width, int height)
+{
+    window.handleConfigureBounds(width, height);
+}
+
+void TestInput::resizeInteractively(Window& window, SizeF size)
+{
+    window.handleInteractiveResize(true);
+    window.handleConfigure(int(size.width), int(size.height), window.states());
+    window.handleInteractiveResize(false);
+}
+
 void TestInput::setKeyboardFocus(Window& window, bool focused)
 {
     window.handleKeyboardFocus(focused);

@@ -19,12 +19,17 @@ namespace cutefish::ui {
 static constexpr double kMinimumWidth = 3 * 32 + 12;
 static constexpr double kHeight = 35;
 static constexpr double kChevron = 16;
+static constexpr double kIcon = 22;
+// FishUI.Units.smallSpacing / 2 between the box and its list.
+static constexpr double kMenuGap = 3;
 
 ComboBox::ComboBox(std::vector<std::string> items)
     : m_label(addChild<Label>())
     , m_chevron(addChild<Icon>("chevron-down", kChevron))
+    , m_icon(addChild<ThemeIcon>(std::string(), kIcon))
 {
     m_label->setVerticallyCentered(true);
+    m_icon->setVisible(false);
     setItems(std::move(items));
 }
 
@@ -35,6 +40,7 @@ void ComboBox::setItems(std::vector<std::string> items)
     m_items = std::move(items);
     m_current = m_items.empty() ? -1 : std::clamp(m_current, 0, int(m_items.size()) - 1);
     m_label->setText(currentText());
+    updateIcon();
     requestLayout();
 }
 
@@ -44,6 +50,28 @@ void ComboBox::setCurrentIndex(int index)
         return;
     m_current = index;
     m_label->setText(currentText());
+    updateIcon();
+}
+
+void ComboBox::setItemIcons(std::vector<std::string> icons)
+{
+    m_icons = std::move(icons);
+    updateIcon();
+}
+
+void ComboBox::updateIcon()
+{
+    const std::string icon = m_current >= 0 && size_t(m_current) < m_icons.size() ? m_icons[size_t(m_current)]
+                                                                                   : std::string();
+    if (icon.empty() != !m_icon->isVisible())
+        requestLayout();
+    m_icon->setIconName(icon);
+    m_icon->setVisible(!icon.empty());
+}
+
+bool ComboBox::isMenuOpen() const
+{
+    return m_menu && m_menu->isOpen();
 }
 
 std::string ComboBox::currentText() const
@@ -70,9 +98,19 @@ void ComboBox::layout()
     const double padding = theme.largeSpacing;
     const RectF bounds = localRect();
     m_chevron->setGeometry({bounds.width - padding - kChevron, 0, kChevron, bounds.height});
-    m_label->setGeometry({padding, 0, std::max(0.0, bounds.width - 2 * padding - kChevron
-                                                        - theme.mediumSpacing),
+    // The current item's icon, as the box's IconItem beside the text.
+    const double iconSpace = m_icon->isVisible() ? kIcon + theme.mediumSpacing : 0;
+    m_icon->setGeometry({padding, (bounds.height - kIcon) / 2, kIcon, kIcon});
+    m_label->setGeometry({padding + iconSpace, 0,
+                          std::max(0.0, bounds.width - 2 * padding - kChevron - theme.mediumSpacing - iconSpace),
                           bounds.height});
+    // FishUI's ComboBox greys its text and arrow when disabled; the label
+    // fades on its own, the arrow as far.
+    const bool enabled = isEnabled();
+    m_label->setColor(enabled ? theme.text : theme.disabledText);
+    m_chevron->setColor(enabled ? theme.text : theme.disabledText);
+    m_chevron->setOpacity(enabled ? 1 : 0.6);
+    m_icon->setOpacity(enabled ? 1 : 0.6);
 }
 
 void ComboBox::paint(Painter& painter)
@@ -84,18 +122,27 @@ void ComboBox::paint(Painter& painter)
         color = theme.darkMode ? color.lighter(1.1) : color.darker(1.2);
     else if (enabled && m_hovered)
         color = theme.darkMode ? color.lighter(1.2) : color.darker(1.1);
-    painter.fillRoundedRect(localRect(), theme.smallRadius, color);
     const bool open = m_menu && m_menu->isOpen();
-    if (enabled && (hasFocus() || open))
-        painter.strokeRoundedRect(localRect(), theme.smallRadius, theme.highlight,
-                                  painter.borderWidth(1));
+    painter.drawRoundedRect(localRect(), {theme.smallRadius, 0, themeCorners()}, color, 1,
+                            enabled && (hasFocus() || open) ? theme.highlight : color);
 }
 
-void ComboBox::openMenu()
+void ComboBox::enabledChanged()
 {
+    requestLayout();
+    requestPaint();
+}
+
+void ComboBox::openMenu(bool fromKeyboard)
+{
+    if (isMenuOpen()) {
+        m_menu->close();
+        return;
+    }
     if (m_items.empty() || !window())
         return;
     m_menu = std::make_unique<Menu>();
+    m_menu->setDropDown(true);
     for (size_t i = 0; i < m_items.size(); ++i) {
         const size_t index = m_menu->addItem(m_items[i], [this, i] {
             setCurrentIndex(int(i));
@@ -103,10 +150,14 @@ void ComboBox::openMenu()
                 onActivated(int(i));
         });
         m_menu->setItemChecked(index, int(i) == m_current);
+        if (i < m_icons.size())
+            m_menu->setItemIcon(index, m_icons[i]);
+        if (m_fontPreview)
+            m_menu->setItemFontFamily(index, m_items[i]);
     }
     m_menu->setMinimumWidth(geometry().width);
     m_menu->onClosed = [this] { requestPaint(); };
-    m_menu->popupFor(this);
+    m_menu->popupFor(this, kMenuGap, std::nullopt, fromKeyboard);
     requestPaint();
 }
 
@@ -128,7 +179,7 @@ void ComboBox::pointerPress(const PointerEvent& event)
         return;
     m_pressed = true;
     requestPaint();
-    openMenu();
+    openMenu(false);
 }
 
 void ComboBox::pointerRelease(const PointerEvent&)
@@ -142,24 +193,14 @@ bool ComboBox::keyPress(const KeyEvent& event)
     if (event.modifiers != NoModifier)
         return false;
     switch (event.key) {
+    // FishUI's ComboBox opens its menu on these rather than stepping the current item.
+    case key::Up:
+    case key::Down:
+    case key::F4:
     case key::Space:
     case key::Return:
     case key::KeypadEnter:
-        openMenu();
-        return true;
-    case key::Up:
-        if (m_current > 0) {
-            setCurrentIndex(m_current - 1);
-            if (onActivated)
-                onActivated(m_current);
-        }
-        return true;
-    case key::Down:
-        if (m_current + 1 < int(m_items.size())) {
-            setCurrentIndex(m_current + 1);
-            if (onActivated)
-                onActivated(m_current);
-        }
+        openMenu(true);
         return true;
     default:
         return false;

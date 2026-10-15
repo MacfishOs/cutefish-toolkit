@@ -77,9 +77,12 @@ void ScrollView::setContentView(std::unique_ptr<View> view)
         takeChild(m_content);
     m_content = view.get();
     addChild(std::move(view));
-    // Under the scroll bars.
-    raiseChild(m_verticalBar);
-    raiseChild(m_horizontalBar);
+    if (m_barsBelow) {
+        raiseChild(m_content);
+    } else {
+        raiseChild(m_verticalBar);
+        raiseChild(m_horizontalBar);
+    }
 }
 
 void ScrollView::setScrollDirections(bool horizontal, bool vertical)
@@ -94,6 +97,31 @@ void ScrollView::setElastic(bool elastic)
     d->elastic = elastic;
     if (d->instance)
         d->instance->setElastic(elastic);
+}
+
+void ScrollView::setVerticalBarPadding(double top, double bottom)
+{
+    m_verticalBar->setPadding(top, bottom);
+}
+
+void ScrollView::setVerticalBarPolicy(BarPolicy policy)
+{
+    m_verticalPolicy = policy;
+    m_verticalBar->setAlwaysShown(policy == BarPolicy::AlwaysOn);
+    requestLayout();
+}
+
+void ScrollView::setBarsBelowContent(bool below)
+{
+    m_barsBelow = below;
+    if (below) {
+        if (m_content)
+            raiseChild(m_content);
+    } else {
+        raiseChild(m_verticalBar);
+        raiseChild(m_horizontalBar);
+    }
+    requestPaint();
 }
 
 void ScrollView::setPaged(bool paged)
@@ -142,6 +170,7 @@ void ScrollView::applyPosition(PointF position)
     positionChanged();
     if (onScrolled)
         onScrolled();
+    scrolled.emit();
 }
 
 void ScrollView::updateBars()
@@ -172,7 +201,7 @@ void ScrollView::layout()
                                 bounds.height});
     m_horizontalBar->setGeometry({0, bounds.height - ScrollBar::thickness, bounds.width,
                                   ScrollBar::thickness});
-    m_verticalBar->setVisible(m_vertical);
+    m_verticalBar->setVisible(m_vertical && m_verticalPolicy != BarPolicy::AlwaysOff);
     m_horizontalBar->setVisible(m_horizontal);
 
     // A resize keeps the position inside the content, unless it is

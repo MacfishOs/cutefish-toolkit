@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/signal.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -39,6 +40,19 @@ public:
     void setElastic(bool elastic);
     // Settles on whole viewport-sized pages.
     void setPaged(bool paged);
+    // The vertical bar's track starts and ends this far in, as a ScrollBar's
+    // topPadding and bottomPadding, e.g. to stop under a floating header.
+    void setVerticalBarPadding(double top, double bottom);
+    // The content takes presses over the bars, as a ScrollBar with z: -1,
+    // for rows whose handles reach into the bar's strip.
+    void setBarsBelowContent(bool below);
+    // As ScrollBar's policy: AsNeeded shows while scrolling.
+    enum class BarPolicy {
+        AsNeeded,
+        AlwaysOn,
+        AlwaysOff,
+    };
+    void setVerticalBarPolicy(BarPolicy policy);
 
     // The content's offset under the viewport's top left.
     PointF scrollPosition() const { return m_position; }
@@ -49,6 +63,8 @@ public:
     SizeF contentSize() const { return m_contentSize; }
 
     std::function<void()> onScrolled;
+    // The same, for any number of listeners.
+    base::Signal<> scrolled;
 
 protected:
     void layout() override;
@@ -71,6 +87,8 @@ private:
     SizeF m_contentSize;
     bool m_horizontal = false;
     bool m_vertical = true;
+    bool m_barsBelow = false;
+    BarPolicy m_verticalPolicy = BarPolicy::AsNeeded;
 };
 
 } // namespace cutefish::ui

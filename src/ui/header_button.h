@@ -22,6 +22,20 @@ public:
     const std::string& artwork() const { return m_artwork; }
     // One of FishUI's glyphs instead of window artwork, such as "chevron-left".
     void setGlyph(std::string name, double size = 16);
+    // The pressed plate while set, as while the button's menu is open.
+    void setChecked(bool checked);
+    bool isChecked() const { return m_checked; }
+    // The hovered plate without the pointer, as for a drop target.
+    void setHighlighted(bool highlighted);
+
+    // The plate's alpha over the header tint, hovered and pressed.
+    struct PlateAlphas
+    {
+        double hovered;
+        double pressed;
+    };
+    // FishUI's 0.11/0.21 in light and 0.12/0.06 in dark unless set.
+    void setPlateAlphas(PlateAlphas light, PlateAlphas dark);
 
     SizeF sizeHint() const override { return {m_size, m_size}; }
     bool acceptsPointer() const override { return true; }
@@ -44,6 +58,10 @@ private:
     double m_size;
     bool m_hovered = false;
     bool m_pressed = false;
+    bool m_checked = false;
+    bool m_highlighted = false;
+    PlateAlphas m_light = {0.11, 0.21};
+    PlateAlphas m_dark = {0.12, 0.06};
 };
 
 } // namespace cutefish::ui

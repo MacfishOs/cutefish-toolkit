@@ -4,12 +4,13 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <vector>
 
 #include "base/event_loop.h"
 
-using namespace cutefish::ui;
+using namespace cutefish::base;
 using namespace std::chrono_literals;
 
 TEST(EventLoopTest, PostFromAnotherThreadWakesTheLoop)
@@ -58,4 +59,19 @@ TEST(EventLoopTest, PostedTasksMayPostMore)
     loop.post(task);
     loop.run();
     EXPECT_EQ(depth, 5);
+}
+
+TEST(EventLoopTest, DroppingPostedTasksMayStopTimers)
+{
+    auto loop = std::make_unique<EventLoop>();
+    const int timer = loop->startTimer(1s, false, [] {});
+    EventLoop* raw = loop.get();
+    // Owned by the task, as a window a closing dialog posts for deletion.
+    auto stopper = std::shared_ptr<int>(new int(0), [raw, timer](int* value) {
+        raw->stopTimer(timer);
+        delete value;
+    });
+    loop->post([stopper] {});
+    stopper.reset();
+    loop.reset();
 }

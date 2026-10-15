@@ -25,10 +25,19 @@ enum class MouseButton {
     Middle,
 };
 
+// QPointingDevice's type. A Wayland pointer is a TouchPad, as Qt's
+// Wayland platform reports it; a mouse is never told apart.
+enum class PointerDevice {
+    Mouse,
+    TouchPad,
+    TouchScreen,
+};
+
 struct PointerEvent
 {
     // In the receiving view's coordinates.
     PointF position;
+    PointerDevice device = PointerDevice::TouchPad;
     MouseButton button = MouseButton::Left;
     uint32_t modifiers = NoModifier;
     // 2 for the second press of a double click, and so on.
@@ -39,6 +48,8 @@ struct KeyEvent
 {
     // An xkb keysym, see ui/keys.h. Shift+Tab arrives as Tab with Shift.
     uint32_t key = 0;
+    // The evdev code of the physical key, whatever the layout; 0 when none.
+    uint32_t keycode = 0;
     // The UTF-8 text the key produces; empty for keys that produce none.
     std::string text;
     uint32_t modifiers = NoModifier;

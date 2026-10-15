@@ -126,7 +126,7 @@ struct KeyboardListeners
     };
 };
 
-Keyboard::Keyboard(EventLoop& loop, wl_keyboard* keyboard)
+Keyboard::Keyboard(base::EventLoop& loop, wl_keyboard* keyboard)
     : m_loop(loop)
     , m_keyboard(keyboard)
     , m_context(xkb_context_new(XKB_CONTEXT_NO_FLAGS))
@@ -191,6 +191,7 @@ bool Keyboard::translate(uint32_t keycode, bool compose, KeyEvent* event)
         text[0] = 0;
 
     event->key = symbol == XKB_KEY_ISO_Left_Tab ? XKB_KEY_Tab : xkb_keysym_to_lower(symbol);
+    event->keycode = keycode - 8;
     event->text = text;
     event->modifiers = m_modifiers;
     event->repeat = false;

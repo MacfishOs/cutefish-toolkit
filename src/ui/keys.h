@@ -26,6 +26,7 @@ inline constexpr uint32_t Insert = 0xff63;
 inline constexpr uint32_t Menu = 0xff67;
 inline constexpr uint32_t KeypadEnter = 0xff8d;
 inline constexpr uint32_t F1 = 0xffbe;
+inline constexpr uint32_t F4 = 0xffc1;
 inline constexpr uint32_t Delete = 0xffff;
 
 constexpr uint32_t letter(char c)

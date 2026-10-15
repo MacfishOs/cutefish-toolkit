@@ -39,6 +39,21 @@ struct LayoutHints
     // Negative: from the size hint.
     double preferredWidth = -1;
     double preferredHeight = -1;
+
+    // For QuickLayout, as Qt Quick Layouts' Layout.*: negative is unset.
+    double minimumWidth = -1;
+    double minimumHeight = -1;
+    double maximumWidth = -1;
+    double maximumHeight = -1;
+    // Default is left and vertically centred.
+    Alignment horizontalAlignment = Alignment::Default;
+    Alignment verticalAlignment = Alignment::Default;
+    Margins margins;
+    // A QML item's own width and height, which a Qt Quick Layout takes as
+    // the preferred size only when the implicit size is not positive: a
+    // spacer `Item { width: 1 }`, not a field's `height: 40`.
+    double fallbackWidth = -1;
+    double fallbackHeight = -1;
 };
 
 // A node of a window's retained tree. Geometry is in logical pixels,
@@ -112,6 +127,10 @@ public:
     // Focus that came from the keyboard, which controls draw.
     bool hasVisibleFocus() const;
     void setFocus(FocusReason reason = FocusReason::Other);
+    // Out of the Tab chain, focused by a press or from code only, as
+    // focusPolicy: Qt.ClickFocus.
+    void setClickFocusOnly(bool clickOnly) { m_clickFocusOnly = clickOnly; }
+    bool isClickFocusOnly() const { return m_clickFocusOnly; }
 
     virtual CursorShape cursorShape() const { return CursorShape::Default; }
 
@@ -141,12 +160,27 @@ public:
     // to the topmost one under the pointer, which keeps it until the release.
     virtual bool acceptsPointer() const { return false; }
 
+    // Hover as a HoverHandler has it in Qt Quick: the view is hovered while
+    // the pointer is within it, whatever is above it inside it, and hears
+    // where the pointer is (hoverMove) on entering, on every move, and when
+    // a layout or a scroll moves it under a still pointer. It takes no
+    // presses. Off by default.
+    void setTracksHover(bool tracks);
+    bool tracksHover() const { return m_tracksHover; }
+    bool isHovered() const { return m_hoverTracked; }
+
 protected:
     virtual void pointerEnter() {}
     virtual void pointerLeave() {}
     virtual void pointerPress(const PointerEvent&) {}
     virtual void pointerMove(const PointerEvent&) {}
     virtual void pointerRelease(const PointerEvent&) {}
+    // With setTracksHover: isHovered() changed, and the pointer's place in it.
+    virtual void hoverChanged() {}
+    virtual void hoverMove(const PointerEvent&) {}
+
+    // The view, or a parent of it, was enabled or disabled.
+    virtual void enabledChanged() {}
 
     virtual void focusIn(FocusReason) {}
     virtual void focusOut() {}
@@ -166,6 +200,7 @@ protected:
     virtual void paint(Painter&) {}
 
 private:
+    friend class HeaderBackdrop;
     friend class TestInput;
     friend class Window;
 
@@ -198,6 +233,11 @@ private:
     LayoutHints m_layoutHints;
     bool m_visible = true;
     bool m_enabled = true;
+    bool m_clickFocusOnly = false;
+    bool m_tracksHover = false;
+    bool m_hoverTracked = false;
+    // Where hoverMove last put the pointer, in the view.
+    PointF m_hoverPosition;
     bool m_clipsChildren = false;
     double m_opacity = 1;
     Transform m_transform;

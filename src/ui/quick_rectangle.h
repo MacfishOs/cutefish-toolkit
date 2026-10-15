@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include "ui/geometry.h"
+
+class SkCanvas;
+
+namespace cutefish::ui {
+
+// Qt Quick's antialiased Rectangle with a radius, as its scene graph draws
+// it: the corners as ceil(r·π/6) chords (3 to 18), the edges ramped across
+// about a device pixel by vertices the vertex shader pushes apart, and
+// triangles filled where they cover pixel centres. rect is in logical
+// pixels, already offset; the border lies inside the outline.
+void drawQuickRoundedRectangle(SkCanvas* canvas, const RectF& rect, double radius, double scale, Color fill,
+                               double borderWidth, Color border, float opacity);
+
+} // namespace cutefish::ui

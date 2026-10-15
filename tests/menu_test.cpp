@@ -69,9 +69,47 @@ TEST(MenuTest, RowsFollowFishUIMetrics)
     f.menu.popupFor(f.anchor);
     Window* popup = f.menu.window();
     popup->grab();
-    // Three rows of 30, one separator of 5, five pixels above and below.
-    EXPECT_EQ(popup->size().height, 3 * 30 + 5 + 2 * 5);
+    // Three rows of 30, one separator of 5, a pixel between each, five
+    // pixels above and below.
+    EXPECT_EQ(popup->size().height, 3 * 30 + 5 + 3 + 2 * 5);
     EXPECT_GE(popup->size().width, 146 + 2 * 3);
+}
+
+// ComboBoxMenu: half the screen tall at most, opened centred on the checked
+// row, nothing lit from the pointer; the arrows go on from the checked row
+// and stop at the ends; typing finds a row.
+TEST(MenuTest, DropDownScrollsToItsCheckedRow)
+{
+    Window window;
+    window.setScreenSize({1280, 800});
+    window.setContentView(std::make_unique<View>());
+    window.resize({400, 300});
+    window.show();
+    Menu menu;
+    menu.setDropDown(true);
+    std::vector<std::string> chosen;
+    for (int i = 0; i < 40; ++i) {
+        const std::string text = (i == 30 ? "Zulu " : "Row ") + std::to_string(i);
+        const size_t index = menu.addItem(text, [&chosen, text] { chosen.push_back(text); });
+        menu.setItemChecked(index, i == 20);
+    }
+    menu.popup(&window, {10, 10});
+    Window* popup = menu.window();
+    popup->grab();
+    // (800 - 12) / 2, rounded.
+    EXPECT_EQ(popup->size().height, 394);
+    TestInput::setKeyboardFocus(*popup, true);
+    TestInput::typeKey(*popup, key::Down);
+    TestInput::typeKey(*popup, key::Return);
+    EXPECT_EQ(chosen, (std::vector<std::string>{"Row 21"}));
+
+    menu.popup(&window, {10, 10});
+    popup = menu.window();
+    popup->grab();
+    TestInput::setKeyboardFocus(*popup, true);
+    TestInput::typeKey(*popup, key::letter('z'), NoModifier, "z");
+    TestInput::typeKey(*popup, key::Return);
+    EXPECT_EQ(chosen.back(), "Zulu 30");
 }
 
 TEST(MenuTest, ClickChoosesTheRowUnderThePointer)

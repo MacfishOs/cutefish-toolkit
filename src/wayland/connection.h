@@ -4,7 +4,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "ui/event.h"
 
@@ -13,6 +17,7 @@ struct cutefish_window_hints_v1;
 struct wl_compositor;
 struct wl_data_device_manager;
 struct wl_display;
+struct wl_output;
 struct wl_pointer;
 struct wl_registry;
 struct wl_seat;
@@ -22,13 +27,19 @@ struct wp_cursor_shape_manager_v1;
 struct wp_fractional_scale_manager_v1;
 struct wp_presentation;
 struct wp_viewporter;
+struct xdg_activation_token_v1;
+struct xdg_activation_v1;
 struct xdg_wm_base;
+struct zxdg_exported_v2;
+struct zxdg_exporter_v2;
 struct xdg_wm_dialog_v1;
 struct zwp_pointer_gesture_hold_v1;
 struct zwp_pointer_gestures_v1;
 struct zwp_text_input_manager_v3;
+struct zxdg_output_manager_v1;
+struct zxdg_output_v1;
 
-namespace cutefish::ui {
+namespace cutefish::base {
 class EventLoop;
 }
 
@@ -45,7 +56,7 @@ struct ConnectionListeners;
 class Connection
 {
 public:
-    static std::unique_ptr<Connection> open(EventLoop& loop);
+    static std::unique_ptr<Connection> open(base::EventLoop& loop);
     ~Connection();
 
     Connection(const Connection&) = delete;
@@ -68,6 +79,19 @@ public:
     uint32_t inputSerial() const { return m_inputSerial; }
 
     DataDevice* dataDevice() const { return m_dataDevice.get(); }
+
+    // Runs once the compositor has answered everything sent so far, as Qt's
+    // requestWaylandSync, so a batch of focus changes reads as one.
+    void sync(std::function<void()> done);
+
+    // A handle another client can parent its windows to, as
+    // "wayland:<handle>", once the compositor gave one; kept while the
+    // window lives.
+    void exportToplevel(ShellSurface* shell, std::function<void(const std::string& handle)> done);
+
+    // xdg-activation for the window, as Qt's requestActivate asks it: a token
+    // for the last input and the focused window, then the activation.
+    void activate(ShellSurface* shell, const std::string& appId);
     TextInput* textInput() const { return m_textInput.get(); }
 
     // Applies while the pointer is over the window's surface.
@@ -77,13 +101,24 @@ public:
 
     void flush();
 
+    // An output's logical size, as xdg-output gives it and Qt takes for the
+    // screen's geometry; empty until known.
+    SizeF outputSize(wl_output* output) const;
+    // The first output's, for a window that is on none yet.
+    SizeF primaryOutputSize() const;
+
+    // The token for an activation came; for the listener.
+    void activationDone(xdg_activation_token_v1* token, const char* tokenString);
+    // The compositor named an exported window; for the listener.
+    void exported(zxdg_exported_v2* exported, const char* handle);
+
 private:
     friend struct ConnectionListeners;
 
-    Connection(EventLoop& loop, wl_display* display);
+    Connection(base::EventLoop& loop, wl_display* display);
     bool initialize();
 
-    EventLoop& m_loop;
+    base::EventLoop& m_loop;
     wl_display* m_display = nullptr;
     wl_registry* m_registry = nullptr;
     wl_compositor* m_compositor = nullptr;
@@ -95,6 +130,29 @@ private:
     cutefish_window_hints_v1* m_windowHints = nullptr;
     cutefish_surface_blur_v1* m_surfaceBlur = nullptr;
     xdg_wm_dialog_v1* m_dialogManager = nullptr;
+    xdg_activation_v1* m_activation = nullptr;
+    // Tokens on their way, and the window each is for.
+    std::vector<std::pair<xdg_activation_token_v1*, ShellSurface*>> m_activations;
+    zxdg_exporter_v2* m_exporter = nullptr;
+    struct Export
+    {
+        ShellSurface* shell;
+        zxdg_exported_v2* exported;
+        std::string handle;
+        std::vector<std::function<void(const std::string&)>> waiting;
+    };
+    std::vector<Export> m_exports;
+    zxdg_output_manager_v1* m_outputManager = nullptr;
+    struct Output
+    {
+        uint32_t name;
+        wl_output* output;
+        zxdg_output_v1* xdgOutput;
+        SizeF logicalSize;
+    };
+    std::vector<Output> m_outputs;
+    void watchOutput(Output& output);
+    static void releaseOutput(const Output& output);
     wl_seat* m_seat = nullptr;
     wl_pointer* m_pointer = nullptr;
     wp_cursor_shape_device_v1* m_cursorShapeDevice = nullptr;

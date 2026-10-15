@@ -34,6 +34,19 @@ public:
     EchoMode echoMode() const;
     void setReadOnly(bool readOnly);
     bool isReadOnly() const;
+    // TextInput.maximumLength, in UTF-16 units as Qt counts; 0 for none.
+    // Typing and pasting stop at it.
+    void setMaximumLength(size_t length);
+    // An edit the validator refuses does not happen, as with a QValidator
+    // that finds the text Invalid.
+    void setValidator(std::function<bool(const std::string& text)> validator);
+    // Logical pixels; 0 follows the theme.
+    void setFontSize(double size);
+    // Around the text, left and right; FishUI's large spacing unless set.
+    void setTextMargins(double left, double right);
+    // The rounded background and its border; off for a field drawn into
+    // something else, as a background: null TextField.
+    void setFrameVisible(bool visible);
 
     size_t cursorPosition() const;
     void setCursorPosition(size_t position);
@@ -56,9 +69,14 @@ public:
     bool acceptsFocus() const override { return true; }
     CursorShape cursorShape() const override { return CursorShape::Text; }
 
+    // Any change of the text, from the user or from code.
     std::function<void()> onTextChanged;
+    // Changes the user made, as textEdited.
+    std::function<void()> onTextEdited;
     // Return or Enter.
     std::function<void()> onAccepted;
+    // Return, Enter or losing the focus, as editingFinished.
+    std::function<void()> onEditingFinished;
 
 protected:
     void paint(Painter& painter) override;
@@ -67,16 +85,20 @@ protected:
     void pointerRelease(const PointerEvent& event) override;
     void focusIn(FocusReason reason) override;
     void focusOut() override;
+    void enabledChanged() override;
     bool keyPress(const KeyEvent& event) override;
     bool acceptsTextInput() const override;
     TextInputState textInputState() const override;
     void textInput(const TextInputEvent& event) override;
+    // Before onTextChanged.
+    virtual void textChanged() {}
 
 private:
     struct Private;
 
     void showContextMenu(PointF position);
-    void edited();
+    // After the user's edit; false when it was refused and undone.
+    bool edited();
     void moved();
 
     std::unique_ptr<Private> d;
