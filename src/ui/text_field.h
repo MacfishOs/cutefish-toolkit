@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ui/view.h"
@@ -47,6 +48,33 @@ public:
     // The rounded background and its border; off for a field drawn into
     // something else, as a background: null TextField.
     void setFrameVisible(bool visible);
+    // Qt Quick's bare TextInput, with the frame off and no margins:
+    // FishUI fades a disabled field to half; a TextInput does not.
+    void setFadesWhenDisabled(bool fades);
+    // The text and the caret, in every state; unset follows the theme.
+    void setTextColor(std::optional<Color> color);
+    void setPlaceholderColor(std::optional<Color> color);
+    // TextInput's selectionColor and selectedTextColor; unset, the theme's
+    // highlight colours.
+    void setSelectionColors(std::optional<Color> background, std::optional<Color> text);
+    // A family as Label::setFontFamily takes it; empty follows the theme.
+    void setFontFamily(std::string family);
+    // What a password shows for each character; U+2022 unless set.
+    void setPasswordCharacter(std::string character);
+    // Logical; drawn as whole device pixels, at least one. Unset, one device
+    // pixel per whole scale.
+    void setCaretWidth(double width);
+    // QStyleHints::cursorFlashTime: the caret is shown and hidden for half
+    // of it each, as Qt's coarse timer runs it (5% early); 1000 unless set.
+    void setCursorFlashTime(int milliseconds);
+    // TextInput.selectByMouse: off, a press only moves the cursor.
+    void setSelectByMouse(bool select);
+    // Off, copy, cut and paste do nothing, from keys or the menu.
+    void setClipboardEnabled(bool enabled);
+    // The menu on a right press; embedded windows never show one.
+    void setContextMenuEnabled(bool enabled);
+    // Empties the field, as TextInput.clear().
+    void clear();
 
     size_t cursorPosition() const;
     void setCursorPosition(size_t position);

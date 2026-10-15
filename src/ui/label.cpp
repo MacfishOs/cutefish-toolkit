@@ -9,6 +9,8 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFontStyle.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkSurface.h"
 #include "include/core/SkTypeface.h"
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/include/ParagraphBuilder.h"
@@ -29,6 +31,8 @@ namespace cutefish::ui {
 // Wide enough that nothing wraps while measuring.
 static constexpr double kUnboundedWidth = 1e6;
 static constexpr const char* kEllipsis = "…";
+// Ganesh draws text from 162 device pixels as distance fields; a pixel of margin.
+static constexpr double kDistanceFieldTextSize = 161;
 
 Label::Label(std::string text)
     : m_text(std::move(text))
@@ -290,6 +294,11 @@ bool Label::isElided() const
 
 void Label::paint(Painter& painter)
 {
+    paintText(painter, {}, std::nullopt);
+}
+
+void Label::paintText(Painter& painter, PointF shift, std::optional<Color> color)
+{
     if (m_text.empty())
         return;
     const double scale = painter.scale();
@@ -307,9 +316,9 @@ void Label::paint(Painter& painter)
     const double offset = textOffset(textHeight(lines));
 
     const Theme& theme = Theme::current();
-    const Color color = m_color.value_or(theme.text);
+    const Color textColor = color.value_or(m_color.value_or(theme.text));
     const bool wrapped = m_wrapped && text == m_wrapped.get() && !m_wrappedElided;
-    const bool spans = !m_spans.empty() && (text == m_paragraph.get() || wrapped);
+    const bool spans = !color && !m_spans.empty() && (text == m_paragraph.get() || wrapped);
     const auto colorAt = [&](size_t utf8Offset) -> SkColor {
         if (wrapped) {
             // Back from the text with the newlines put in.
@@ -322,11 +331,11 @@ void Label::paint(Painter& painter)
             size_t start = 0;
             for (const Span& span : m_spans) {
                 if (utf8Offset < start + span.text.size())
-                    return span.color.value_or(color).argb();
+                    return span.color.value_or(textColor).argb();
                 start += span.text.size();
             }
         }
-        return color.argb();
+        return textColor.argb();
     };
 
     SkCanvas* canvas = painter.canvas();
@@ -346,14 +355,40 @@ void Label::paint(Painter& painter)
                                                SkScalar((painter.offset().y + bottom + margin) * scale));
         canvas->saveLayerAlphaf(&bounds, float(opacity));
     }
-    canvas->save();
+    const double align = m_alignment == TextAlignment::Left ? 0 : m_alignment == TextAlignment::Center ? 0.5 : 1;
     // Glyphs go where Qt puts them, in logical pixels from the label's
     // unsnapped origin; their baselines land on device pixels.
-    canvas->translate(SkScalar(painter.offset().x * scale), SkScalar(painter.offset().y * scale));
-    canvas->scale(SkScalar(scale), SkScalar(scale));
-    const double align = m_alignment == TextAlignment::Left ? 0 : m_alignment == TextAlignment::Center ? 0.5 : 1;
-    paintTextLines(canvas, text, lines, {0, offset}, geometry().width, align, roundsAdvances(), colorAt);
-    canvas->restore();
+    const auto paintText = [&](SkCanvas* target) {
+        target->save();
+        target->translate(SkScalar(painter.offset().x * scale), SkScalar(painter.offset().y * scale));
+        target->scale(SkScalar(scale), SkScalar(scale));
+        paintTextLines(target, text, lines, {shift.x, offset + shift.y}, geometry().width, align, roundsAdvances(),
+                       colorAt);
+        target->restore();
+    };
+    // Ganesh draws glyphs this large as unhinted distance fields; the raster
+    // backend's hinted masks, drawn aside, keep GPU frames like CPU ones.
+    if (canvas->recordingContext() && pixelSize() * scale >= kDistanceFieldTextSize) {
+        const double margin = pixelSize();
+        const double right = std::max(width, geometry().width);
+        const double bottom = std::max(geometry().height, offset + textHeight(lines)) + std::abs(shift.y);
+        const SkIRect area = SkRect::MakeLTRB(SkScalar((painter.offset().x - margin) * scale),
+                                              SkScalar((painter.offset().y - margin) * scale),
+                                              SkScalar((painter.offset().x + right + margin) * scale),
+                                              SkScalar((painter.offset().y + bottom + margin) * scale))
+                                 .roundOut();
+        const SkSurfaceProps properties = canvas->getBaseProps();
+        const sk_sp<SkSurface> raster = SkSurfaces::Raster(
+            SkImageInfo::MakeN32Premul(area.width(), area.height()), &properties);
+        if (raster) {
+            raster->getCanvas()->clear(SK_ColorTRANSPARENT);
+            raster->getCanvas()->translate(SkScalar(-area.x()), SkScalar(-area.y()));
+            paintText(raster->getCanvas());
+            canvas->drawImage(raster->makeImageSnapshot(), SkScalar(area.x()), SkScalar(area.y()));
+        }
+    } else {
+        paintText(canvas);
+    }
     if (faded)
         canvas->restore();
 }

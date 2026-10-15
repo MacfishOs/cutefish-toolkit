@@ -52,6 +52,9 @@ public:
 
     const sk_sp<skia::textlayout::FontCollection>& fontCollection() const { return m_fontCollection; }
     const sk_sp<SkUnicode>& unicode() const { return m_unicode; }
+    // Forgets fallback fonts and matched families, after fonts or the
+    // appearance's font changed.
+    void clearFontCaches();
 
     const std::string& family() const { return m_family; }
     // BCP 47, for picking the Han variant among fallback fonts.
@@ -75,6 +78,9 @@ public:
     // medium hinting.
     QtFontMetrics metrics(const SkTypeface* typeface, double pixelSize, double scale) const;
     bool roundsMetrics(double scale) const;
+    // Off, text lays out unrounded at every scale, scale 1 included, as Qt's
+    // offscreen platform lays it out for the compositor's panels.
+    void setHintedLayout(bool hinted) { m_hintedLayout = hinted; }
     // Glyph bounds and advances as Qt's FreeType engine reports them for
     // QFontMetricsF::tightBoundingRect.
     bool hintsGlyphMetrics(double scale) const { return roundsMetrics(scale); }
@@ -119,6 +125,7 @@ private:
     SkFontHinting m_fontconfigHinting = SkFontHinting::kSlight;
     SkFontHinting m_hinting = SkFontHinting::kSlight;
     bool m_subpixelPositioning = true;
+    bool m_hintedLayout = true;
     SkPixelGeometry m_pixelGeometry = kUnknown_SkPixelGeometry;
 };
 

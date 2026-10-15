@@ -51,3 +51,16 @@ pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libwebp lib
 target_link_libraries(cutefish-toolkit-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::ImageTestEncoders)
 
 gtest_discover_tests(cutefish-toolkit-tests)
+
+# One Application per process: the embedded platform gets its own binary.
+add_executable(cutefish-toolkit-embedded-tests
+    embedded/main.cpp
+    embedded/embedded_window_test.cpp
+    embedded/embedded_controls_test.cpp
+    embedded/embedded_gpu_test.cpp
+)
+
+target_link_libraries(cutefish-toolkit-embedded-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::Xkbcommon
+    PkgConfig::Egl PkgConfig::GlesV2)
+
+gtest_discover_tests(cutefish-toolkit-embedded-tests)

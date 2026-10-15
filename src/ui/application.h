@@ -39,6 +39,11 @@ public:
         Wayland,
         // No compositor and no GPU: windows render only when grabbed, for tests.
         Headless,
+        // Inside a process that owns the screen, such as the compositor:
+        // EmbeddedWindows render into memory when the host asks, input comes
+        // from the host, and nothing connects to Wayland, a GPU or D-Bus.
+        // The host drives loop() through its descriptor.
+        Embedded,
     };
 
     Application(int argc, char** argv, Platform platform = Platform::Wayland);
@@ -58,6 +63,7 @@ public:
     const std::string& applicationId() const { return m_applicationId; }
 
     base::EventLoop& loop() const { return *m_loop; }
+    bool hasConnection() const { return m_connection != nullptr; }
     // Wayland only.
     wayland::Connection& connection() const { return *m_connection; }
     gpu::EglContext& gpu() const { return *m_gpu; }
@@ -71,6 +77,7 @@ public:
     void quit(int exitCode = 0);
 
 private:
+    friend class EmbeddedWindow;
     friend struct Theme;
     friend class Window;
 

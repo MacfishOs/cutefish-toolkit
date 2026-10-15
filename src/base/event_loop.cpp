@@ -201,35 +201,54 @@ void EventLoop::removePrepareHook(int id)
 int EventLoop::run()
 {
     m_running = true;
-    epoll_event events[32];
-
     while (m_running) {
         runPosted();
-        // A hook may remove hooks.
-        const auto hooks = m_prepareHooks;
-        for (const auto& [id, hook] : hooks)
-            hook();
+        runPrepareHooks();
         if (!m_running)
             break;
-
-        const int count = epoll_wait(m_epoll, events, 32, hasPosted() ? 0 : -1);
-        if (count < 0) {
-            if (errno == EINTR)
-                continue;
-            perror("epoll_wait");
+        if (!dispatchEvents(hasPosted() ? 0 : -1))
             return 1;
-        }
-
-        for (int i = 0; i < count; ++i) {
-            const auto it = m_watches.find(int(events[i].data.u64));
-            if (it == m_watches.end())
-                continue;
-            const auto watch = it->second;
-            if (watch->callback)
-                watch->callback(events[i].events);
-        }
     }
     return m_exitCode;
+}
+
+void EventLoop::dispatch()
+{
+    runPosted();
+    dispatchEvents(0);
+    runPosted();
+    // Flushes what the work above queued, as before a wait.
+    runPrepareHooks();
+}
+
+void EventLoop::runPrepareHooks()
+{
+    // A hook may remove hooks.
+    const auto hooks = m_prepareHooks;
+    for (const auto& [id, hook] : hooks)
+        hook();
+}
+
+bool EventLoop::dispatchEvents(int timeout)
+{
+    epoll_event events[32];
+    const int count = epoll_wait(m_epoll, events, 32, timeout);
+    if (count < 0) {
+        if (errno == EINTR)
+            return true;
+        perror("epoll_wait");
+        return false;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        const auto it = m_watches.find(int(events[i].data.u64));
+        if (it == m_watches.end())
+            continue;
+        const auto watch = it->second;
+        if (watch->callback)
+            watch->callback(events[i].events);
+    }
+    return true;
 }
 
 void EventLoop::quit(int exitCode)

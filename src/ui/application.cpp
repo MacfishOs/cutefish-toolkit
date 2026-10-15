@@ -33,7 +33,8 @@ Application::Application(int argc, char** argv, Platform platform)
 
     m_loop = std::make_unique<base::EventLoop>();
     m_text = std::make_unique<TextContext>();
-    if (platform == Platform::Headless)
+    m_text->setHintedLayout(platform != Platform::Embedded);
+    if (platform != Platform::Wayland)
         return;
 
     m_connection = wayland::Connection::open(*m_loop);

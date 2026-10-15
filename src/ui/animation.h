@@ -21,6 +21,8 @@ public:
         OutCubic,
         OutSine,
         InOutQuad,
+        OutQuad,
+        InQuad,
     };
 
     static constexpr int Infinite = -1;

@@ -80,6 +80,12 @@ public:
     int run();
     void quit(int exitCode = 0);
 
+    // For a loop run inside another one, such as a host's Qt loop: the
+    // descriptor turns readable whenever there is work, timers and posted
+    // tasks included, and dispatch() does that work without blocking.
+    int fd() const { return m_epoll; }
+    void dispatch();
+
 private:
     struct Watch
     {
@@ -90,6 +96,9 @@ private:
 
     void runPosted();
     bool hasPosted();
+    void runPrepareHooks();
+    // False when waiting failed.
+    bool dispatchEvents(int timeout);
 
     EventLoop* m_previous = nullptr;
     LoopHandle m_handle;

@@ -138,7 +138,7 @@ public:
 
     double scale() const { return m_scale; }
     bool hasKeyboardFocus() const { return m_keyboardFocus; }
-    // Headless windows only; on screen the compositor sets the scale.
+    // Headless and embedded windows only; on screen the compositor sets the scale.
     void setScale(double scale);
     // The logical size of the screen the window is on, as Qt's screen
     // geometry under Wayland (no work area); empty when unknown.
@@ -190,6 +190,7 @@ private:
     // Repaints and notifies when isActive() differs from what was notified.
     void updateActive();
 
+    friend class EmbeddedWindow;
     friend class FrameClient;
     friend class PlatformWindow;
     friend class TestInput;
@@ -230,6 +231,8 @@ private:
     void postRender();
     void render();
     void prepareFrame(uint64_t frameTimeNs);
+    // Lays the views out when something asked for it; false when nothing did.
+    bool layoutIfNeeded();
     // Everything inside the region, or everything without one.
     void paintContent(SkCanvas* canvas, const SkRegion* region);
     void updateHover();

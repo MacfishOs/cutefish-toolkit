@@ -703,6 +703,34 @@ sk_sp<SkImage> IconLoader::svg(const std::string& path, int width, int height, c
     return image;
 }
 
+sk_sp<SkImage> IconLoader::pixmap(const std::string& name, int pixels)
+{
+    if (pixels <= 0)
+        return nullptr;
+    const std::string key = "pixmap:" + Theme::current().iconTheme + "/" + name + "@" + std::to_string(pixels);
+    if (sk_sp<SkImage> image = cached(key))
+        return image;
+    const std::string path = name.starts_with('/') ? name : themeIconPath(name, pixels, 1);
+    if (path.empty())
+        return nullptr;
+    sk_sp<SkImage> image;
+    if (path.ends_with(".svg")) {
+        image = rasterise(path, pixels, nullptr);
+    } else if (sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str())) {
+        // QPixmapIconEngine scales a larger picture down and leaves a smaller one.
+        if (std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data))) {
+            auto [decoded, result] = codec->getImage();
+            if (decoded && (decoded->width() > pixels || decoded->height() > pixels))
+                image = rasterise(path, pixels, nullptr);
+            else
+                image = decoded;
+        }
+    }
+    if (image)
+        store(key, image);
+    return image;
+}
+
 sk_sp<SkImage> IconLoader::themeIcon(const std::string& name, int size, int iconScale, int pixels)
 {
     const std::string key = "theme:" + Theme::current().iconTheme + "/" + name + "@" + std::to_string(size) + "x"

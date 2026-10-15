@@ -55,6 +55,8 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/clipboard.h
     ui/combo_box.h
     ui/dialog_window.h
+    ui/embedded_gpu.h
+    ui/embedded_window.h
     ui/event.h
     ui/frame_client.h
     ui/geometry.h
@@ -62,6 +64,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/header_backdrop.h
     ui/header_button.h
     ui/icon.h
+    ui/icon_image.h
     ui/image.h
     ui/image_view.h
     ui/keys.h
@@ -77,6 +80,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/search_field.h
     ui/segmented_control.h
     ui/slider.h
+    ui/styled_label.h
     ui/switch.h
     ui/test_input.h
     ui/text_area.h
@@ -106,12 +110,15 @@ add_library(cutefish-toolkit SHARED
     ui/combo_box.cpp
     ui/dialog_window.cpp
     ui/editable_text.cpp
+    ui/embedded_gpu.cpp
+    ui/embedded_window.cpp
     ui/frame_client.cpp
     ui/geometry.cpp
     ui/file_chooser.cpp
     ui/header_backdrop.cpp
     ui/header_button.cpp
     ui/icon.cpp
+    ui/icon_image.cpp
     ui/icon_loader.cpp
     ui/image.cpp
     ui/image_decoder.cpp
@@ -136,6 +143,7 @@ add_library(cutefish-toolkit SHARED
     ui/search_field.cpp
     ui/segmented_control.cpp
     ui/slider.cpp
+    ui/styled_label.cpp
     ui/switch.cpp
     ui/test_input.cpp
     ui/text_area.cpp
@@ -181,6 +189,14 @@ target_sources(cutefish-toolkit PRIVATE ${CUTEFISH_TOOLKIT_EMBEDDED})
 
 add_library(Cutefish::Toolkit ALIAS cutefish-toolkit)
 
+# Only the toolkit's own symbols: Skia's inline functions and the
+# generated protocol code stay out of the processes that load it, the
+# compositor's included.
+target_link_options(cutefish-toolkit PRIVATE
+    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cutefish-toolkit.map)
+set_property(TARGET cutefish-toolkit APPEND PROPERTY
+    LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cutefish-toolkit.map)
+
 set_target_properties(cutefish-toolkit PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
@@ -201,6 +217,7 @@ target_link_libraries(cutefish-toolkit
         skia
         PkgConfig::WaylandClient
         PkgConfig::Egl
+        PkgConfig::GlesV2
         PkgConfig::Fontconfig
         PkgConfig::Xkbcommon
         PkgConfig::Systemd

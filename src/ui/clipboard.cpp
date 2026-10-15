@@ -9,13 +9,13 @@
 
 namespace cutefish::ui {
 
-// Headless applications share a clipboard within the process.
+// Without a compositor connection the clipboard stays within the process.
 static std::string s_headlessText;
 
 void Clipboard::setText(const std::string& text)
 {
     Application* application = Application::instance();
-    if (application->platform() == Application::Platform::Headless) {
+    if (!application->hasConnection()) {
         s_headlessText = text;
         return;
     }
@@ -26,7 +26,7 @@ void Clipboard::setText(const std::string& text)
 void Clipboard::requestText(std::function<void(std::string text)> callback)
 {
     Application* application = Application::instance();
-    if (application->platform() == Application::Platform::Headless) {
+    if (!application->hasConnection()) {
         callback(s_headlessText);
         return;
     }

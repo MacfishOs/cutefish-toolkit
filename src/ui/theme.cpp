@@ -4,6 +4,7 @@
 #include "ui/theme.h"
 
 #include "ui/application.h"
+#include "ui/text_context.h"
 
 namespace cutefish::ui {
 
@@ -45,7 +46,10 @@ const Theme& Theme::current()
 
 void Theme::setCurrent(const Theme& theme)
 {
+    const bool fontChanged = theme.fontFamily != s_current.fontFamily;
     s_current = theme;
+    if (Application* application = Application::instance(); application && fontChanged)
+        application->text().clearFontCaches();
     ++s_generation;
     if (Application* application = Application::instance())
         application->themeChanged();

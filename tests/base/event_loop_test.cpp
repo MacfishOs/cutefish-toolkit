@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <memory>
+#include <poll.h>
 #include <thread>
 #include <vector>
 
@@ -74,4 +75,38 @@ TEST(EventLoopTest, DroppingPostedTasksMayStopTimers)
     loop->post([stopper] {});
     stopper.reset();
     loop.reset();
+}
+
+// As a host's loop drives it: wait on the descriptor, then dispatch.
+static bool waitReadable(int fd, int timeoutMs)
+{
+    pollfd entry{fd, POLLIN, 0};
+    return poll(&entry, 1, timeoutMs) == 1 && (entry.revents & POLLIN);
+}
+
+TEST(EventLoopTest, DispatchesFromAnotherLoop)
+{
+    EventLoop loop;
+    EXPECT_FALSE(waitReadable(loop.fd(), 0));
+    // Nothing waits in dispatch(), even with nothing to do.
+    loop.dispatch();
+
+    bool fired = false;
+    loop.startTimer(5ms, false, [&fired] { fired = true; });
+    ASSERT_TRUE(waitReadable(loop.fd(), 1000));
+    loop.dispatch();
+    EXPECT_TRUE(fired);
+    EXPECT_FALSE(waitReadable(loop.fd(), 0));
+
+    int ran = 0;
+    std::thread thread([&loop, &ran] { loop.post([&ran] { ++ran; }); });
+    thread.join();
+    ASSERT_TRUE(waitReadable(loop.fd(), 1000));
+    loop.dispatch();
+    EXPECT_EQ(ran, 1);
+
+    // A task a task posts runs in the same dispatch.
+    loop.post([&loop, &ran] { loop.post([&ran] { ++ran; }); });
+    loop.dispatch();
+    EXPECT_EQ(ran, 2);
 }

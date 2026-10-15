@@ -1,0 +1,123 @@
+// SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <vector>
+
+#include "ui/event.h"
+#include "ui/geometry.h"
+#include "ui/window.h"
+
+namespace cutefish::ui {
+
+class EmbeddedGpu;
+class EmbeddedPlatformWindow;
+
+// A window inside a process that owns the screen, such as the compositor,
+// on Application::Platform::Embedded. It has no surface of its own: the host
+// gives it a size, a scale and the keyboard, feeds it input, renders it when
+// it composites and draws the pixels and the cursor itself. Nothing here
+// blocks or starts a thread.
+class EmbeddedWindow : public Window
+{
+public:
+    // Pixels of the last render, kept by the window until the next render or
+    // a change of size or scale.
+    struct Frame
+    {
+        // RGBA8888, premultiplied, row by row: QImage's
+        // Format_RGBA8888_Premultiplied. Null before the first render.
+        const uint8_t* pixels = nullptr;
+        // round(logical size * scale) on each axis.
+        int width = 0;
+        int height = 0;
+        size_t stride = 0;
+        // Device pixels that changed since the render before; empty when
+        // none did. The whole frame after a change of size or scale.
+        std::vector<Rect> damage;
+    };
+
+    EmbeddedWindow();
+    // Window's destructor is not virtual: destroy it as an EmbeddedWindow.
+    ~EmbeddedWindow();
+
+    // The logical size; fractional sizes are kept as they are. The window
+    // shows from the first size on.
+    void setSize(SizeF size);
+    // The keyboard is the host's to give: keys reach the window either way,
+    // but carets blink and text fields show focus only while it has it.
+    void setKeyboardFocus(bool focused);
+    // isActive(): focus rings and other active looks.
+    void setActive(bool active);
+
+    // Lays the views out now rather than at the next render, e.g. to read a
+    // view's place before the first frame.
+    void updateLayout();
+
+    // True when a render would draw something new: a change, an animation
+    // running, a pending layout.
+    bool needsRender() const;
+    // Called once whenever a render becomes wanted, until the host renders;
+    // also after a render while animations run. It may come from inside any
+    // call into the toolkit, the input calls included.
+    std::function<void()> onRenderRequested;
+
+    // Lays out, ticks animations at the frame time and repaints what changed,
+    // into memory the window owns. The frame time is nanoseconds on
+    // CLOCK_MONOTONIC (now when 0); animations step by the times given.
+    const Frame& render(uint64_t frameTimeNs = 0);
+    const Frame& frame() const { return m_frame; }
+
+    // A GL_TEXTURE_2D of the host's with 8-bit RGBA texels, exactly
+    // pixelWidth() by pixelHeight(), on the context the EmbeddedGpu was made on.
+    struct GpuTexture
+    {
+        uint32_t id = 0;
+        int width = 0;
+        int height = 0;
+        // It still holds what the last render into it drew, and nothing
+        // rendered elsewhere since: only the damage is repainted.
+        bool keepsLastFrame = false;
+    };
+    // As render(), with Skia on the GPU into the host's texture, its first
+    // row the frame's top as an upload of Frame::pixels would put it. The
+    // frame's pixels are null. Null when nothing was drawn: the context is
+    // not current or was lost, or the texture's size is not the frame's;
+    // render() on the CPU then. See EmbeddedGpu for the GL state contract.
+    const Frame* render(EmbeddedGpu& gpu, const GpuTexture& texture, uint64_t frameTimeNs = 0);
+    // round(logical size * scale): the frame's size in pixels.
+    int pixelWidth() const;
+    int pixelHeight() const;
+
+    // Pointer input in the window's logical coordinates. Moves outside the
+    // window still go to a view holding a press.
+    void pointerEnter(PointF position);
+    void pointerMove(PointF position);
+    void pointerLeave();
+    void pointerButton(MouseButton button, bool pressed, uint32_t modifiers = NoModifier);
+    void scroll(const ScrollEvent& event);
+    // A key as the host's xkb state gives it: the keysym of
+    // xkb_state_key_get_one_sym, its xkb_state_key_get_utf8 text and the
+    // modifiers in effect. Letters are taken in lower case, ISO_Left_Tab as
+    // Tab, and control characters drop out of the text, as on Wayland. The
+    // host repeats keys itself, with repeat set.
+    void key(const KeyEvent& event, bool pressed);
+
+    // What the pointer asks for over the view under it, or the view holding
+    // a press.
+    CursorShape cursorShape() const { return m_reportedShape; }
+    std::function<void(CursorShape shape)> onCursorShapeChanged;
+
+private:
+    EmbeddedPlatformWindow* platform() const;
+    // Damage and the next request, after either render.
+    void finishFrame();
+
+    Frame m_frame;
+    CursorShape m_reportedShape = CursorShape::Default;
+};
+
+} // namespace cutefish::ui

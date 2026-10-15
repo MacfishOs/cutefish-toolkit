@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkPaint.h"
@@ -34,13 +35,14 @@ static constexpr double kMinimumWidth = 200;
 static constexpr double kHeight = 35;
 // FishUI's focus ring, outside the field.
 static constexpr double kFocusRing = 2;
-// QQuickTextInput's coarse timer of half the cursor flash time fires up to 5% early.
-static constexpr auto kBlinkInterval = std::chrono::milliseconds(475);
+// QQuickTextInput blinks on a coarse timer of half the cursor flash time,
+// which fires up to 5% early: 475 ms for Qt's 1000.
+static constexpr int kCursorFlashTime = 1000;
 // Wide enough that a single line never wraps.
 static constexpr double kUnboundedWidth = 1e6;
-// U+25CF BLACK CIRCLE, Qt's password mask character.
-static constexpr const char* kPasswordDot = "●";
-static constexpr size_t kPasswordDotSize = 3;
+// U+2022 BULLET, one per grapheme at the field's font size, as
+// gfx::RenderText::kPasswordReplacementChar.
+static constexpr const char* kPasswordDot = "\u2022";
 // The surrounding text an input method gets around the cursor.
 static constexpr size_t kSurroundingLimit = 4000;
 
@@ -84,6 +86,18 @@ struct TextField::Private
     size_t savedCursor = 0;
     std::function<bool(const std::string&)> validator;
     double fontSize = 0;
+    std::string family;
+    std::optional<Color> textColor;
+    std::optional<Color> placeholderColor;
+    std::optional<Color> selectionColor;
+    std::optional<Color> selectedTextColor;
+    std::string mask = kPasswordDot;
+    double caretWidth = 0;
+    int cursorFlashTime = kCursorFlashTime;
+    bool fadesWhenDisabled = true;
+    bool selectByMouse = true;
+    bool clipboardEnabled = true;
+    bool contextMenuEnabled = true;
     double leftMargin = -1;
     double rightMargin = -1;
     bool frameVisible = true;
@@ -119,7 +133,7 @@ struct TextField::Private
         if (echo == EchoMode::Password) {
             std::string dots;
             for (size_t at = 0; at < edit.text().size(); at = edit.nextGrapheme(at))
-                dots += kPasswordDot;
+                dots += mask;
             return dots;
         }
         if (preedit.empty())
@@ -135,7 +149,7 @@ struct TextField::Private
             size_t graphemes = 0;
             for (size_t at = 0; at < offset; at = edit.nextGrapheme(at))
                 ++graphemes;
-            return graphemes * kPasswordDotSize;
+            return graphemes * mask.size();
         }
         return offset <= edit.cursor() ? offset : offset + preedit.size();
     }
@@ -144,7 +158,7 @@ struct TextField::Private
     {
         if (echo == EchoMode::Password) {
             size_t at = 0;
-            for (size_t dots = offset / kPasswordDotSize; dots > 0 && at < edit.text().size(); --dots)
+            for (size_t dots = offset / std::max<size_t>(1, mask.size()); dots > 0 && at < edit.text().size(); --dots)
                 at = edit.nextGrapheme(at);
             return at;
         }
@@ -172,8 +186,8 @@ struct TextField::Private
 
         const TextContext& context = Application::instance()->text();
         const Theme& theme = Theme::current();
-        const Color color = enabled ? theme.text : theme.disabledText;
-        const textlayout::TextStyle normal = context.style(fontSize, 400, color);
+        const Color color = textColor.value_or(enabled ? theme.text : theme.disabledText);
+        const textlayout::TextStyle normal = context.style(fontSize, 400, color, family);
         textlayout::ParagraphStyle style;
         style.setTextStyle(normal);
         style.setMaxLines(1);
@@ -201,7 +215,7 @@ struct TextField::Private
             const size_t start = toDisplay(edit.selectionStart());
             const size_t end = toDisplay(edit.selectionEnd());
             textlayout::TextStyle selected = normal;
-            selected.setColor(theme.highlightedText.argb());
+            selected.setColor(selectedTextColor.value_or(theme.highlightedText).argb());
             add(0, start);
             builder->pushStyle(selected);
             add(start, end);
@@ -224,7 +238,8 @@ struct TextField::Private
         if (placeholderParagraph && placeholderTheme == Theme::generation())
             return placeholderParagraph.get();
         const TextContext& context = Application::instance()->text();
-        const textlayout::TextStyle style = context.style(fontSize, 400, Theme::current().text.withAlpha(0.4));
+        const textlayout::TextStyle style = context.style(
+            fontSize, 400, placeholderColor.value_or(Theme::current().text.withAlpha(0.4)), family);
         textlayout::ParagraphStyle paragraphStyle;
         paragraphStyle.setTextStyle(style);
         paragraphStyle.setApplyRoundingHack(false);
@@ -345,6 +360,81 @@ void TextField::setFrameVisible(bool visible)
     requestPaint();
 }
 
+void TextField::setFadesWhenDisabled(bool fades)
+{
+    d->fadesWhenDisabled = fades;
+    enabledChanged();
+}
+
+void TextField::setTextColor(std::optional<Color> color)
+{
+    d->textColor = color;
+    d->dirty = true;
+    requestPaint();
+}
+
+void TextField::setPlaceholderColor(std::optional<Color> color)
+{
+    d->placeholderColor = color;
+    d->placeholderParagraph.reset();
+    requestPaint();
+}
+
+void TextField::setSelectionColors(std::optional<Color> background, std::optional<Color> text)
+{
+    d->selectionColor = background;
+    d->selectedTextColor = text;
+    d->dirty = true;
+    requestPaint();
+}
+
+void TextField::setFontFamily(std::string family)
+{
+    d->family = std::move(family);
+    d->dirty = true;
+    d->placeholderParagraph.reset();
+    requestLayout();
+    requestPaint();
+}
+
+void TextField::setPasswordCharacter(std::string character)
+{
+    d->mask = character.empty() ? std::string(kPasswordDot) : std::move(character);
+    d->dirty = true;
+    requestPaint();
+}
+
+void TextField::setCaretWidth(double width)
+{
+    d->caretWidth = width;
+    requestPaint();
+}
+
+void TextField::setCursorFlashTime(int milliseconds)
+{
+    d->cursorFlashTime = milliseconds > 0 ? milliseconds : kCursorFlashTime;
+}
+
+void TextField::setSelectByMouse(bool select)
+{
+    d->selectByMouse = select;
+}
+
+void TextField::setClipboardEnabled(bool enabled)
+{
+    d->clipboardEnabled = enabled;
+}
+
+void TextField::setContextMenuEnabled(bool enabled)
+{
+    d->contextMenuEnabled = enabled;
+}
+
+void TextField::clear()
+{
+    setText({});
+}
+
 void TextField::setPlaceholder(std::string placeholder)
 {
     d->placeholder = std::move(placeholder);
@@ -416,7 +506,7 @@ const std::string& TextField::preedit() const
 
 void TextField::cut()
 {
-    if (d->readOnly || d->echo == EchoMode::Password || !d->edit.hasSelection())
+    if (!d->clipboardEnabled || d->readOnly || d->echo == EchoMode::Password || !d->edit.hasSelection())
         return;
     copy();
     d->edit.deleteBackward(false);
@@ -425,14 +515,14 @@ void TextField::cut()
 
 void TextField::copy()
 {
-    if (d->echo == EchoMode::Password || !d->edit.hasSelection())
+    if (!d->clipboardEnabled || d->echo == EchoMode::Password || !d->edit.hasSelection())
         return;
     Clipboard::setText(d->edit.selectedText());
 }
 
 void TextField::paste()
 {
-    if (d->readOnly)
+    if (!d->clipboardEnabled || d->readOnly)
         return;
     Clipboard::requestText([self = std::weak_ptr<TextField*>(d->self)](std::string text) {
         const auto field = self.lock();
@@ -448,7 +538,8 @@ void TextField::paste()
 
 void TextField::undo()
 {
-    if (d->readOnly || !d->edit.canUndo())
+    // Earlier passwords stay out of reach, as QLineControl keeps them.
+    if (d->readOnly || d->echo == EchoMode::Password || !d->edit.canUndo())
         return;
     d->edit.undo();
     edited();
@@ -456,7 +547,7 @@ void TextField::undo()
 
 void TextField::redo()
 {
-    if (d->readOnly || !d->edit.canRedo())
+    if (d->readOnly || d->echo == EchoMode::Password || !d->edit.canRedo())
         return;
     d->edit.redo();
     edited();
@@ -501,7 +592,9 @@ void TextField::paint(Painter& painter)
     const double width = content.width;
 
     // Keep the caret in sight, and no empty space past the end of the text.
-    const double caretWidth = std::max(1.0, std::round(scale)) / scale;
+    const double caretPixels = d->caretWidth > 0 ? std::max(1.0, std::round(d->caretWidth * scale))
+                                                 : std::max(1.0, std::round(scale));
+    const double caretWidth = caretPixels / scale;
     const double caret = d->caretX(d->caretDisplayOffset());
     const double textWidth = text->getMaxIntrinsicWidth();
     if (caret - d->scrollX > width - caretWidth)
@@ -513,7 +606,7 @@ void TextField::paint(Painter& painter)
     // Qt Quick's TextInput: one line box, centred in the field, unsnapped.
     const TextContext& context = Application::instance()->text();
     const double pixelSize = d->pixelSize();
-    const TextLineBox line = textLineBoxes(text, context.typeface(400).get(), pixelSize, scale).front();
+    const TextLineBox line = textLineBoxes(text, context.typeface(400, d->family).get(), pixelSize, scale).front();
     const double originX = content.x - d->scrollX;
     const double lineTop = (bounds.height - line.height) / 2;
     const PointF offset = painter.offset();
@@ -535,7 +628,7 @@ void TextField::paint(Painter& painter)
     }
     if (focused && d->preedit.empty() && d->edit.hasSelection()) {
         SkPaint selection;
-        selection.setColor(theme.highlight.argb());
+        selection.setColor(d->selectionColor.value_or(theme.highlight).argb());
         const size_t start = utf16Index(d->display, d->toDisplay(d->edit.selectionStart()));
         const size_t end = utf16Index(d->display, d->toDisplay(d->edit.selectionEnd()));
         for (const textlayout::TextBox& box : text->getRectsForRange(
@@ -564,10 +657,10 @@ void TextField::paint(Painter& painter)
     const Window* window = this->window();
     if (focused && window && window->hasKeyboardFocus() && d->caretVisible) {
         SkPaint paint;
-        paint.setColor(theme.text.argb());
+        paint.setColor(d->textColor.value_or(theme.text).argb());
         const SkPoint top = device(originX + caret, lineTop);
         const SkPoint bottom = device(originX + caret, lineTop + line.height);
-        canvas->drawRect(SkRect::MakeXYWH(top.fX, top.fY, SkScalar(std::max(1.0, std::round(scale))),
+        canvas->drawRect(SkRect::MakeXYWH(top.fX, top.fY, SkScalar(caretPixels),
                                           bottom.fY - top.fY),
                          paint);
     }
@@ -579,13 +672,15 @@ void TextField::paint(Painter& painter)
 void TextField::enabledChanged()
 {
     // FishUI's TextField: half opaque, its text in the disabled colour.
-    setOpacity(isEnabled() ? 1 : 0.5);
+    setOpacity(isEnabled() || !d->fadesWhenDisabled ? 1 : 0.5);
 }
 
 void TextField::pointerPress(const PointerEvent& event)
 {
     if (event.button == MouseButton::Right) {
-        showContextMenu(event.position);
+        // An embedded window shows no popups.
+        if (d->contextMenuEnabled && Application::instance()->platform() != Application::Platform::Embedded)
+            showContextMenu(event.position);
         return;
     }
     if (event.button != MouseButton::Left)
@@ -597,8 +692,16 @@ void TextField::pointerPress(const PointerEvent& event)
         d->dirty = true;
     }
     const size_t offset = d->fromDisplay(d->displayOffsetAt(x));
+    if (!d->selectByMouse) {
+        d->edit.setCursor(offset);
+        moved();
+        return;
+    }
     d->selecting = true;
+    // An obscured text is one word.
     d->granularity = std::clamp(event.clickCount, 1, 3);
+    if (d->echo == EchoMode::Password && d->granularity == 2)
+        d->granularity = 3;
     if (d->granularity == 3) {
         d->edit.selectAll();
     } else if (d->granularity == 2) {
@@ -659,6 +762,9 @@ bool TextField::keyPress(const KeyEvent& event)
     const bool control = modifiers & ControlModifier;
     const bool command = modifiers & (ControlModifier | AltModifier | SuperModifier);
     EditableText& edit = d->edit;
+    // Word moves and deletes take a password whole, as Chromium's obscured
+    // text does, so they tell nothing of its words.
+    const bool obscured = d->echo == EchoMode::Password;
 
     const auto move = [this, &edit, shift](size_t position) {
         edit.setCursor(position, shift);
@@ -696,11 +802,15 @@ bool TextField::keyPress(const KeyEvent& event)
     case key::Left:
         if (!shift && edit.hasSelection() && !control)
             return move(edit.selectionStart());
+        if (control && obscured)
+            return move(0);
         return move(control ? edit.previousWordStart(edit.cursor())
                             : edit.previousGrapheme(edit.cursor()));
     case key::Right:
         if (!shift && edit.hasSelection() && !control)
             return move(edit.selectionEnd());
+        if (control && obscured)
+            return move(edit.text().size());
         return move(control ? edit.nextWordEnd(edit.cursor()) : edit.nextGrapheme(edit.cursor()));
     case key::Home:
         return move(0);
@@ -709,13 +819,19 @@ bool TextField::keyPress(const KeyEvent& event)
     case key::BackSpace:
         if (d->readOnly)
             return true;
-        edit.deleteBackward(control);
+        if (control && obscured && !edit.hasSelection())
+            edit.erase(0, edit.cursor());
+        else
+            edit.deleteBackward(control);
         edited();
         return true;
     case key::Delete:
         if (d->readOnly)
             return true;
-        edit.deleteForward(control);
+        if (control && obscured && !edit.hasSelection())
+            edit.erase(edit.cursor(), edit.text().size());
+        else
+            edit.deleteForward(control);
         edited();
         return true;
     case key::Return:
@@ -766,7 +882,7 @@ TextInputState TextField::textInputState() const
     // The state follows an edit before it is painted; lay the new text out first.
     textlayout::Paragraph* paragraph = d->layout(isEnabled());
     const double x = padding + d->caretX(d->caretDisplayOffset()) - d->scrollX;
-    const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(400).get(),
+    const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(400, d->family).get(),
                                         d->pixelSize(), scale)
                               .front()
                               .height;
@@ -869,7 +985,8 @@ void TextField::moved()
         loop.stopTimer(d->blinkTimer);
     d->blinkTimer = 0;
     if (hasFocus()) {
-        d->blinkTimer = loop.startTimer(kBlinkInterval, true, [this] {
+        const auto interval = std::chrono::microseconds(int64_t(d->cursorFlashTime) * 1000 / 2 * 95 / 100);
+        d->blinkTimer = loop.startTimer(interval, true, [this] {
             d->caretVisible = !d->caretVisible;
             requestPaint();
         });

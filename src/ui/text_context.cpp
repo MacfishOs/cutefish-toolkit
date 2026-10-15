@@ -7,10 +7,15 @@
 #include <clocale>
 #include <cmath>
 #include <cstdint>
+#include <map>
+#include <mutex>
+#include <tuple>
 #include <fontconfig/fontconfig.h>
 #include <vector>
 
+#include "include/core/SkData.h"
 #include "include/core/SkFontMgr.h"
+#include "include/core/SkStream.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkTypeface.h"
 #include "include/ports/SkFontMgr_fontconfig.h"
@@ -24,6 +29,92 @@
 namespace cutefish::ui {
 
 // "zh_CN.UTF-8" becomes "zh-CN"; "C" and "POSIX" name no language.
+namespace {
+
+// The system font manager with its character fallback remembered. SkParagraph
+// keeps fallbacks only for one layout, so every layout asked fontconfig again
+// for each character the requested fonts lack (about 2 ms per layout of a
+// field of U+25CF); Chromium's FontCache keeps them across layouts.
+class FallbackCachingFontMgr final : public SkFontMgr
+{
+public:
+    explicit FallbackCachingFontMgr(sk_sp<SkFontMgr> fonts)
+        : m_fonts(std::move(fonts))
+    {
+    }
+
+    void clear()
+    {
+        std::lock_guard lock(m_mutex);
+        m_fallbacks.clear();
+    }
+
+protected:
+    int onCountFamilies() const override { return m_fonts->countFamilies(); }
+    void onGetFamilyName(int index, SkString* name) const override { m_fonts->getFamilyName(index, name); }
+    sk_sp<SkFontStyleSet> onCreateStyleSet(int index) const override { return m_fonts->createStyleSet(index); }
+    sk_sp<SkFontStyleSet> onMatchFamily(const char family[]) const override { return m_fonts->matchFamily(family); }
+
+    sk_sp<SkTypeface> onMatchFamilyStyle(const char family[], const SkFontStyle& style) const override
+    {
+        return m_fonts->matchFamilyStyle(family, style);
+    }
+
+    // Everything the answer depends on is in the key; misses are kept too.
+    sk_sp<SkTypeface> onMatchFamilyStyleCharacter(const char family[], const SkFontStyle& style,
+                                                  const char* bcp47[], int bcp47Count,
+                                                  SkUnichar character) const override
+    {
+        std::string languages;
+        for (int i = 0; i < bcp47Count; ++i)
+            languages.append(bcp47[i]).push_back(',');
+        Key key{family ? family : "", style.weight(), style.width(), int(style.slant()), languages, character};
+        std::lock_guard lock(m_mutex);
+        const auto found = m_fallbacks.find(key);
+        if (found != m_fallbacks.end())
+            return found->second;
+        sk_sp<SkTypeface> typeface = m_fonts->matchFamilyStyleCharacter(family, style, bcp47, bcp47Count,
+                                                                        character);
+        m_fallbacks.emplace(std::move(key), typeface);
+        return typeface;
+    }
+
+    sk_sp<SkTypeface> onMakeFromData(sk_sp<SkData> data, int index) const override
+    {
+        return m_fonts->makeFromData(std::move(data), index);
+    }
+
+    sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset> stream, int index) const override
+    {
+        return m_fonts->makeFromStream(std::move(stream), index);
+    }
+
+    sk_sp<SkTypeface> onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset> stream,
+                                           const SkFontArguments& arguments) const override
+    {
+        return m_fonts->makeFromStream(std::move(stream), arguments);
+    }
+
+    sk_sp<SkTypeface> onMakeFromFile(const char path[], int index) const override
+    {
+        return m_fonts->makeFromFile(path, index);
+    }
+
+    sk_sp<SkTypeface> onLegacyMakeTypeface(const char family[], SkFontStyle style) const override
+    {
+        return m_fonts->legacyMakeTypeface(family, style);
+    }
+
+private:
+    using Key = std::tuple<std::string, int, int, int, std::string, SkUnichar>;
+
+    sk_sp<SkFontMgr> m_fonts;
+    mutable std::mutex m_mutex;
+    mutable std::map<Key, sk_sp<SkTypeface>> m_fallbacks;
+};
+
+} // namespace
+
 static std::string localeName()
 {
     const char* name = std::setlocale(LC_CTYPE, nullptr);
@@ -41,7 +132,8 @@ static std::string localeName()
 TextContext::TextContext()
     : m_locale(localeName())
 {
-    m_fontManager = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+    m_fontManager = sk_make_sp<FallbackCachingFontMgr>(
+        SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType()));
     m_fontCollection = sk_make_sp<skia::textlayout::FontCollection>();
     m_fontCollection->setDefaultFontManager(m_fontManager);
     m_fontCollection->enableFontFallback();
@@ -51,6 +143,12 @@ TextContext::TextContext()
 }
 
 TextContext::~TextContext() = default;
+
+void TextContext::clearFontCaches()
+{
+    static_cast<FallbackCachingFontMgr*>(m_fontManager.get())->clear();
+    m_fontCollection->clearCaches();
+}
 
 double TextContext::pixelSize(double logicalSize)
 {
@@ -190,7 +288,7 @@ static int64_t divFix(int64_t a, int64_t b)
 
 bool TextContext::roundsMetrics(double scale) const
 {
-    return scale == 1 && (m_fontconfigHinting == SkFontHinting::kNormal || m_fontconfigHinting == SkFontHinting::kFull);
+    return scale == 1 && m_hintedLayout && (m_fontconfigHinting == SkFontHinting::kNormal || m_fontconfigHinting == SkFontHinting::kFull);
 }
 
 QtFontMetrics TextContext::metrics(const SkTypeface* typeface, double pixelSize, double scale) const

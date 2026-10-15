@@ -31,10 +31,13 @@ static SkIRect intersection(const SkIRect& a, const SkIRect& b)
 // Repaints the target inside the clip; `paint` culls by the region it gets.
 // The GPU clips. The raster backend antialiases edges a clip crosses
 // differently, so it paints unclipped aside and copies the clip in, to
-// match full repaints.
+// match full repaints. The scratch reaches only as far as the clip, from the
+// origin: shaders evaluated at other coordinates differ by a level.
 template<typename Paint>
 static void repaint(SkCanvas* target, const SkRegion& clip, const Paint& paint)
 {
+    if (clip.isEmpty())
+        return;
     if (target->recordingContext()) {
         target->save();
         target->clipRegion(clip);
@@ -42,8 +45,10 @@ static void repaint(SkCanvas* target, const SkRegion& clip, const Paint& paint)
         target->restore();
         return;
     }
+    const SkIRect bounds = clip.getBounds();
     const SkSurfaceProps properties = target->getBaseProps();
-    const sk_sp<SkSurface> scratch = SkSurfaces::Raster(target->imageInfo(), &properties);
+    const sk_sp<SkSurface> scratch = SkSurfaces::Raster(
+        target->imageInfo().makeWH(bounds.right(), bounds.bottom()), &properties);
     if (!scratch)
         return;
     paint(scratch->getCanvas());

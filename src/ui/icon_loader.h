@@ -35,6 +35,11 @@ public:
     sk_sp<SkImage> themeIcon(const std::string& name, int size, double scale);
     // The theme searched at size and the integer scale, rasterised at pixels.
     sk_sp<SkImage> themeIcon(const std::string& name, int size, int iconScale, int pixels);
+    // What QIcon::fromTheme(name), or QIcon(path) for an absolute path, gives
+    // as a pixmap `pixels` square at a device pixel ratio of 1: drawings at
+    // that size, larger pictures scaled down, smaller ones as they are; null
+    // when nothing is found.
+    sk_sp<SkImage> pixmap(const std::string& name, int pixels);
     // The file the theme lookup settles on, for tests.
     std::string themeIconPath(const std::string& name, int size, double scale);
     // An SVG file filling the size, tinted when a tint is given.

@@ -106,6 +106,8 @@ public:
 
 protected:
     void paint(Painter& painter) override;
+    // The text moved by a logical offset, all of it in the colour when one is given.
+    void paintText(Painter& painter, PointF shift, std::optional<Color> color);
 
 private:
     void invalidate();

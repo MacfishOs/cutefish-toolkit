@@ -182,6 +182,16 @@ bool View::hasVisibleFocus() const
     return hasFocus() && window->m_focusReason == FocusReason::Keyboard && window->isActive();
 }
 
+void View::setCursorShape(CursorShape shape)
+{
+    if (uint8_t(shape) == m_cursorShape)
+        return;
+    m_cursorShape = uint8_t(shape);
+    // A still pointer takes the new shape at once.
+    if (Window* window = this->window(); window && window->m_pointerInside)
+        window->updateCursor();
+}
+
 void View::setFocus(FocusReason reason)
 {
     if (Window* window = this->window())

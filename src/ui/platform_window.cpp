@@ -9,6 +9,7 @@
 #include "include/core/SkSurface.h"
 
 #include "ui/application.h"
+#include "ui/embedded_platform_window.h"
 #include "ui/text_context.h"
 #include "ui/window.h"
 #include "wayland/wayland_window.h"
@@ -98,6 +99,9 @@ std::unique_ptr<PlatformWindow> PlatformWindow::create(Window* window, PlatformW
 {
     if (Application::instance()->platform() == Application::Platform::Headless)
         return std::make_unique<HeadlessWindow>(window);
+    // Popups included: an embedded host draws what it is given and nothing else.
+    if (Application::instance()->platform() == Application::Platform::Embedded)
+        return std::make_unique<EmbeddedPlatformWindow>(window);
     if (parent) {
         return std::make_unique<wayland::WaylandWindow>(
             window, static_cast<wayland::WaylandWindow*>(parent), placement, grab);

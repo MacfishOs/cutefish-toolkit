@@ -43,6 +43,10 @@ public:
 
     // Headless windows have no frame clock; they draw only when grabbed.
     virtual bool isHeadless() const = 0;
+    // Rendered when the host process asks, see EmbeddedWindow.
+    virtual bool isEmbedded() const { return false; }
+    // Embedded only: tells the host a frame is wanted.
+    virtual void requestRender() {}
 
     virtual void setTitle(const std::string& title) = 0;
     virtual void setAppId(const std::string& appId) = 0;

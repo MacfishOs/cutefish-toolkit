@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -132,7 +133,9 @@ public:
     void setClickFocusOnly(bool clickOnly) { m_clickFocusOnly = clickOnly; }
     bool isClickFocusOnly() const { return m_clickFocusOnly; }
 
-    virtual CursorShape cursorShape() const { return CursorShape::Default; }
+    // As a MouseArea's cursorShape; views may also decide by overriding cursorShape().
+    void setCursorShape(CursorShape shape);
+    virtual CursorShape cursorShape() const { return CursorShape(m_cursorShape); }
 
     // Tells the input method that textInputState() changed.
     void updateTextInput();
@@ -236,6 +239,8 @@ private:
     bool m_clickFocusOnly = false;
     bool m_tracksHover = false;
     bool m_hoverTracked = false;
+    // A byte, in the padding the installed applications were built with.
+    uint8_t m_cursorShape = uint8_t(CursorShape::Default);
     // Where hoverMove last put the pointer, in the view.
     PointF m_hoverPosition;
     bool m_clipsChildren = false;

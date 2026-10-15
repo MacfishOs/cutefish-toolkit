@@ -364,13 +364,13 @@ void Window::startMove()
 
 void Window::setScale(double scale)
 {
-    if (m_platform->isHeadless())
+    if (m_platform->isHeadless() || m_platform->isEmbedded())
         handleScaleChanged(scale);
 }
 
 SizeF Window::screenSize() const
 {
-    if (!m_platform->isHeadless())
+    if (!m_platform->isHeadless() && !m_platform->isEmbedded())
         return m_platform->screenSize();
     if (m_screenSize.width <= 0 && m_parent)
         return m_parent->screenSize();
@@ -475,7 +475,9 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
     m_needsFrame = true;
     // Answered without waiting for a frame callback: the compositor waits
     // for the commit that acks it.
-    if (!m_platform->isHeadless())
+    if (m_platform->isEmbedded())
+        scheduleRender();
+    else if (!m_platform->isHeadless())
         postRender();
 }
 
@@ -978,6 +980,11 @@ void Window::scheduleRender()
     // A paint asked for while rendering is drawn on the next frame.
     if (!m_configured || m_framePending || m_rendering || m_platform->isHeadless())
         return;
+    // The host renders when it composites next.
+    if (m_platform->isEmbedded()) {
+        m_platform->requestRender();
+        return;
+    }
     postRender();
 }
 
@@ -1014,8 +1021,8 @@ bool Window::renderFrame(uint64_t frameTimeNs)
     if (!presented)
         return false;
 
-    // Headless windows hear of no frame callbacks.
-    m_framePending = !m_platform->isHeadless();
+    // Headless and embedded windows hear of no frame callbacks.
+    m_framePending = !m_platform->isHeadless() && !m_platform->isEmbedded();
     ++m_statistics.rendered;
     if (!m_statistics.firstSwapNs)
         m_statistics.firstSwapNs = monotonicNs();
@@ -1048,16 +1055,7 @@ void Window::prepareFrame(uint64_t frameTimeNs)
             client->tick(frameTimeNs);
     }
 
-    if (m_layoutNeeded && m_contentView) {
-        fitContentHeight();
-        m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
-        m_contentView->layoutTree();
-        if (m_overlay) {
-            m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
-            m_overlay->layoutTree();
-        }
-        // Geometry set by the pass itself asks for layout again.
-        m_layoutNeeded = false;
+    if (layoutIfNeeded()) {
         updateHover();
     } else if (m_pointerInside) {
         // A scroll or an animation may have moved a view under the pointer.
@@ -1069,6 +1067,22 @@ void Window::prepareFrame(uint64_t frameTimeNs)
         collectDamage(m_overlay.get(), {});
     if (m_toolTip)
         collectDamage(m_toolTip.get(), {});
+}
+
+bool Window::layoutIfNeeded()
+{
+    if (!m_layoutNeeded || !m_contentView)
+        return false;
+    fitContentHeight();
+    m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
+    m_contentView->layoutTree();
+    if (m_overlay) {
+        m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
+        m_overlay->layoutTree();
+    }
+    // Geometry set by the pass itself asks for layout again.
+    m_layoutNeeded = false;
+    return true;
 }
 
 void Window::addFrameClient(FrameClient* client)
