@@ -23,6 +23,7 @@ struct wl_data_device_manager;
 struct wl_display;
 struct wl_output;
 struct wl_pointer;
+struct wl_touch;
 struct wl_registry;
 struct wl_seat;
 struct wl_surface;
@@ -91,7 +92,8 @@ public:
     zxdg_importer_v2* importer() const { return m_importer; }
     wl_seat* seat() const { return m_seat; }
 
-    // The serial of the last button press, for move and resize requests.
+    // The serial of the last button press or touch down, for move and resize
+    // requests.
     uint32_t buttonSerial() const { return m_buttonSerial; }
     // The serial of the last key or button press, for the clipboard.
     uint32_t inputSerial() const { return m_inputSerial; }
@@ -207,6 +209,7 @@ private:
     wp_cursor_shape_device_v1* m_cursorShapeDevice = nullptr;
     zwp_pointer_gestures_v1* m_pointerGestures = nullptr;
     zwp_pointer_gesture_hold_v1* m_hold = nullptr;
+    wl_touch* m_touch = nullptr;
     std::unique_ptr<Keyboard> m_keyboard;
     wl_data_device_manager* m_dataDeviceManager = nullptr;
     std::unique_ptr<DataDevice> m_dataDevice;
@@ -215,6 +218,8 @@ private:
     zwp_text_input_manager_v3* m_textInputManager = nullptr;
     std::unique_ptr<TextInput> m_textInput;
     ShellSurface* m_pointerFocus = nullptr;
+    // The surface each touch point went down on; up and motion do not name it.
+    std::vector<std::pair<int32_t, ShellSurface*>> m_touchFocus;
     uint32_t m_enterSerial = 0;
     uint32_t m_buttonSerial = 0;
     uint32_t m_inputSerial = 0;

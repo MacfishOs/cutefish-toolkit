@@ -63,6 +63,12 @@ public:
         // Fingers came to rest on the touchpad.
         virtual void pointerHold() = 0;
 
+        // Touch points in surface-local logical pixels.
+        virtual void touchDown(int32_t, double, double) {}
+        virtual void touchMotion(int32_t, double, double) {}
+        virtual void touchUp(int32_t) {}
+        virtual void touchCancel() {}
+
         virtual void keyboardEnter() = 0;
         virtual void keyboardLeave() = 0;
         virtual void key(const KeyEvent& event, bool pressed) = 0;

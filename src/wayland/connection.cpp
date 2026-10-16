@@ -237,6 +237,16 @@ struct ConnectionListeners
             self->m_pointerFocus = nullptr;
         }
 
+        const bool hasTouch = capabilities & WL_SEAT_CAPABILITY_TOUCH;
+        if (hasTouch && !self->m_touch) {
+            self->m_touch = wl_seat_get_touch(seat);
+            wl_touch_add_listener(self->m_touch, &touch, self);
+        } else if (!hasTouch && self->m_touch) {
+            wl_touch_release(self->m_touch);
+            self->m_touch = nullptr;
+            self->m_touchFocus.clear();
+        }
+
         const bool hasKeyboard = capabilities & WL_SEAT_CAPABILITY_KEYBOARD;
         if (hasKeyboard && !self->m_keyboard) {
             self->m_keyboard = std::make_unique<Keyboard>(self->m_loop, wl_seat_get_keyboard(seat));
@@ -374,6 +384,69 @@ struct ConnectionListeners
         self->m_scrollPending = true;
     }
 
+    static ShellSurface* touchFocus(Connection* self, int32_t id)
+    {
+        for (const auto& [pointId, shell] : self->m_touchFocus) {
+            if (pointId == id)
+                return shell;
+        }
+        return nullptr;
+    }
+
+    static void touchDown(void* data, wl_touch*, uint32_t serial, uint32_t, wl_surface* surface,
+                          int32_t id, wl_fixed_t x, wl_fixed_t y)
+    {
+        auto* self = static_cast<Connection*>(data);
+        ShellSurface* shell = shellSurfaceFor(surface);
+        if (!shell)
+            return;
+        self->m_buttonSerial = serial;
+        self->m_inputSerial = serial;
+        self->m_touchFocus.emplace_back(id, shell);
+        shell->delegate()->touchDown(id, wl_fixed_to_double(x), wl_fixed_to_double(y));
+    }
+
+    static void touchUp(void* data, wl_touch*, uint32_t, uint32_t, int32_t id)
+    {
+        auto* self = static_cast<Connection*>(data);
+        ShellSurface* shell = touchFocus(self, id);
+        std::erase_if(self->m_touchFocus, [id](const auto& point) { return point.first == id; });
+        if (shell)
+            shell->delegate()->touchUp(id);
+    }
+
+    static void touchMotion(void* data, wl_touch*, uint32_t, int32_t id, wl_fixed_t x, wl_fixed_t y)
+    {
+        auto* self = static_cast<Connection*>(data);
+        if (ShellSurface* shell = touchFocus(self, id))
+            shell->delegate()->touchMotion(id, wl_fixed_to_double(x), wl_fixed_to_double(y));
+    }
+
+    static void touchFrame(void*, wl_touch*)
+    {
+    }
+
+    static void touchCancel(void* data, wl_touch*)
+    {
+        auto* self = static_cast<Connection*>(data);
+        std::vector<ShellSurface*> cancelled;
+        for (const auto& point : self->m_touchFocus) {
+            if (std::find(cancelled.begin(), cancelled.end(), point.second) == cancelled.end())
+                cancelled.push_back(point.second);
+        }
+        self->m_touchFocus.clear();
+        for (ShellSurface* shell : cancelled)
+            shell->delegate()->touchCancel();
+    }
+
+    static void touchShape(void*, wl_touch*, int32_t, wl_fixed_t, wl_fixed_t)
+    {
+    }
+
+    static void touchOrientation(void*, wl_touch*, int32_t, wl_fixed_t)
+    {
+    }
+
     static void holdBegin(void*, zwp_pointer_gesture_hold_v1*, uint32_t, uint32_t,
                           wl_surface* surface, uint32_t)
     {
@@ -405,6 +478,15 @@ struct ConnectionListeners
         pointerAxisDiscrete,
         pointerAxisValue120,
         nullptr,
+    };
+    static constexpr wl_touch_listener touch = {
+        touchDown,
+        touchUp,
+        touchMotion,
+        touchFrame,
+        touchCancel,
+        touchShape,
+        touchOrientation,
     };
 };
 
@@ -511,6 +593,8 @@ Connection::~Connection()
         wp_cursor_shape_device_v1_destroy(m_cursorShapeDevice);
     if (m_pointer)
         wl_pointer_release(m_pointer);
+    if (m_touch)
+        wl_touch_release(m_touch);
     if (m_seat)
         wl_seat_release(m_seat);
     if (m_windowHints)
@@ -779,6 +863,7 @@ void Connection::forget(ShellSurface* shell)
     }
     if (m_pointerFocus == shell)
         m_pointerFocus = nullptr;
+    std::erase_if(m_touchFocus, [shell](const auto& point) { return point.second == shell; });
     if (m_keyboard)
         m_keyboard->forget(shell);
     if (m_textInput)

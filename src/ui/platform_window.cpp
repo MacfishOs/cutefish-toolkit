@@ -210,6 +210,26 @@ void PlatformWindow::notifyHold()
     m_window->handleHold();
 }
 
+void PlatformWindow::notifyTouchDown(int32_t id, double x, double y)
+{
+    m_window->handleTouchDown(id, x, y);
+}
+
+void PlatformWindow::notifyTouchMotion(int32_t id, double x, double y)
+{
+    m_window->handleTouchMotion(id, x, y);
+}
+
+void PlatformWindow::notifyTouchUp(int32_t id)
+{
+    m_window->handleTouchUp(id);
+}
+
+void PlatformWindow::notifyTouchCancel()
+{
+    m_window->handleTouchCancel();
+}
+
 void PlatformWindow::notifyTextInput(const TextInputEvent& event)
 {
     m_window->handleTextInput(event);

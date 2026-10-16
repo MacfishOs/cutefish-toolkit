@@ -102,6 +102,10 @@ private:
     void keyboardLeave() override;
     void key(const KeyEvent& event, bool pressed) override;
     void pointerHold() override;
+    void touchDown(int32_t id, double x, double y) override;
+    void touchMotion(int32_t id, double x, double y) override;
+    void touchUp(int32_t id) override;
+    void touchCancel() override;
     void textInput(const TextInputEvent& event) override;
     void configureBounds(int width, int height) override;
     void interactiveResize(bool active) override;

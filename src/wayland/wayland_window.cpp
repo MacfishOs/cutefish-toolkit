@@ -442,6 +442,26 @@ void WaylandWindow::pointerHold()
     notifyHold();
 }
 
+void WaylandWindow::touchDown(int32_t id, double x, double y)
+{
+    notifyTouchDown(id, x, y);
+}
+
+void WaylandWindow::touchMotion(int32_t id, double x, double y)
+{
+    notifyTouchMotion(id, x, y);
+}
+
+void WaylandWindow::touchUp(int32_t id)
+{
+    notifyTouchUp(id);
+}
+
+void WaylandWindow::touchCancel()
+{
+    notifyTouchCancel();
+}
+
 
 void WaylandWindow::textInput(const TextInputEvent& event)
 {

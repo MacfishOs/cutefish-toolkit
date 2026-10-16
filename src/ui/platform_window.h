@@ -127,6 +127,10 @@ protected:
     void notifyKeyboardLeave();
     void notifyKey(const KeyEvent& event, bool pressed);
     void notifyHold();
+    void notifyTouchDown(int32_t id, double x, double y);
+    void notifyTouchMotion(int32_t id, double x, double y);
+    void notifyTouchUp(int32_t id);
+    void notifyTouchCancel();
     void notifyTextInput(const TextInputEvent& event);
     uint32_t notifyDragEnter(double x, double y, DropOffer* offer, uint32_t modifiers);
     uint32_t notifyDragMotion(double x, double y, uint32_t modifiers);
