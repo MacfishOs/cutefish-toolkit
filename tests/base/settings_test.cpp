@@ -12,8 +12,8 @@
 
 using namespace cutefish::base;
 
-// What QSettings (Qt 6.8) writes for the values below, byte for byte.
-static constexpr const char* kQtFile = R"([General]
+// The reference file for the values below, byte for byte.
+static constexpr const char* kReferenceFile = R"([General]
 top=plain
 
 [Deep]
@@ -105,10 +105,10 @@ TEST_F(SettingsTest, WritesWhatQSettingsWrites)
         settings.setValue("Deep/a/b", "nested");
         settings.setValue("Values/empty", "");
     }
-    EXPECT_EQ(file::read(path("our.conf")), kQtFile);
+    EXPECT_EQ(file::read(path("our.conf")), kReferenceFile);
 }
 
-// Empty items keep their place, as QSettings (Qt 6.11) writes and reads them.
+// Empty items keep their place, written and read.
 TEST_F(SettingsTest, ListsKeepEmptyItems)
 {
     const std::vector<std::string> names{"", "", "Music"};
@@ -129,7 +129,7 @@ TEST_F(SettingsTest, ListsKeepEmptyItems)
 
 TEST_F(SettingsTest, ReadsWhatQSettingsWrites)
 {
-    ASSERT_TRUE(file::writeAtomically(path("qt.conf"), kQtFile));
+    ASSERT_TRUE(file::writeAtomically(path("qt.conf"), kReferenceFile));
     const Settings settings(path("qt.conf"));
     EXPECT_EQ(settings.stringValue("top"), "plain");
     EXPECT_EQ(settings.intValue("General/inGroup"), 1);

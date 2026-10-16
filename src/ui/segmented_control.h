@@ -13,9 +13,9 @@
 
 namespace cutefish::ui {
 
-// A row of equal buttons, one of them current: FishUI's segmented control, a
-// pill, or its tab bar, a rounded box. Each button is a Tab stop of its own;
-// Space presses it and picks it on release, as a TabButton.
+// A row of equal buttons, one of them current: a segmented control, a pill, or
+// its tab bar, a rounded box. Each button is a Tab stop of its own; Space
+// presses it and picks it on release.
 class SegmentedControl : public View
 {
 public:
@@ -32,20 +32,20 @@ public:
     int currentIndex() const { return m_current; }
     // Does not call onCurrentChanged.
     void setCurrentIndex(int index);
-    // The buttons' height inside the padding, as QML's contentHeight: 32 for
-    // a segmented control, a TabButton's 38 for a tab bar.
+    // The buttons' height inside the padding: 32 for a segmented control, 38
+    // for a tab bar.
     void setContentHeight(double height);
     // Logical pixels; 0 follows the theme.
     void setFontSize(double size);
-    // The segmented track; unset is FishUI's translucent one.
+    // The segmented track; unset is the translucent one.
     void setTrackColor(std::optional<Color> color);
     // Around the buttons: 2 for a segmented control, none for a tab bar.
     double padding() const;
-    // A button's own width, its label's, as a TabButton's implicitWidth.
+    // A button's own width, its label's.
     double implicitItemWidth(size_t index) const;
 
-    // As T.TabBar's implicit size: the buttons' own widths, the padding and a
-    // small spacing; the buttons share the width given equally.
+    // The buttons' own widths, the padding and a small spacing; the buttons
+    // share the width given equally.
     SizeF sizeHint() const override;
     bool acceptsPointer() const override { return true; }
 
@@ -79,7 +79,7 @@ private:
     std::optional<Color> m_trackColor;
 };
 
-// FishUI's tab bar.
+// A tab bar.
 class TabBar : public SegmentedControl
 {
 public:

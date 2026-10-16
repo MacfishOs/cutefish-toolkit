@@ -66,7 +66,7 @@ TEST_F(WindowRestoreTest, KeepsTheSizeTheUserLeftAndMaximized)
 
         TestInput::resizeInteractively(window, {700, 500});
         runFor(400ms);
-        // QSettings' format, which the Qt shell reads.
+        // The INI format base::Settings writes, which other programs read.
         EXPECT_EQ(base::file::read(m_path), "[WindowSize]\nMain=@Size(700 500)\n");
 
         window.setMaximized(true);

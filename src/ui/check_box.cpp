@@ -8,7 +8,7 @@
 
 #include "ui/icon.h"
 #include "ui/painter.h"
-#include "ui/quick_layout.h"
+#include "ui/cell_layout.h"
 #include "ui/theme.h"
 
 namespace cutefish::ui {
@@ -20,7 +20,7 @@ static constexpr double kCheckSize = 14;
 // The focus ring, three pixels outside the indicator.
 static constexpr double kRingInset = 3;
 
-// FishUI's indicator plate: the accent colour when on, the second background
+// The indicator plate: the accent colour when on, the second background
 // with a faint border when off; a focus ring and, for check boxes, an inner
 // light edge, both concentric through RoundedRectangle's inset.
 static void paintPlate(Painter& painter, const RectF& rect, double radius, bool on, bool focused, bool innerEdge)
@@ -163,10 +163,10 @@ void RadioButton::paintIndicator(Painter& painter, const RectF& rect)
         painter.multiplyOpacity(0.45);
     paintPlate(painter, rect, rect.width / 2, isChecked(), hasVisibleFocus(), false);
     if (isChecked()) {
-        // A plain Rectangle, anchors.centerIn the plate.
+        // A plain rectangle, centred in the plate.
         const double dot = 8;
-        painter.drawQuickRectangle({rect.x + qml::anchorsCenter(rect.width, dot),
-                                    rect.y + qml::anchorsCenter(rect.height, dot), dot, dot},
+        painter.drawSmoothRectangle({rect.x + rounding::centeredStart(rect.width, dot),
+                                    rect.y + rounding::centeredStart(rect.height, dot), dot, dot},
                                    dot / 2, Theme::current().highlightedText);
     }
     painter.restore();

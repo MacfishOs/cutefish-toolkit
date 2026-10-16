@@ -9,8 +9,8 @@
 
 namespace cutefish::ui {
 
-// A Label with Qt Quick Text's style: the text drawn first in the style
-// colour one logical pixel down (Text.Raised) or up (Text.Sunken), then
+// A Label with a raised or sunken style: the text drawn first in the style
+// colour one logical pixel down (Raised) or up (Sunken), then
 // the text over it. Layout and size are a Label's.
 class StyledLabel : public Label
 {
@@ -30,6 +30,8 @@ public:
 
 protected:
     void paint(Painter& painter) override;
+    // Text with a style, as with a shadow, is greyscale on this stack.
+    bool usesSubpixel() const override { return m_style == Style::Normal && Label::usesSubpixel(); }
 
 private:
     Style m_style = Style::Normal;

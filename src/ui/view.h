@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,10 @@ class SkRegion;
 
 namespace cutefish::ui {
 
+class Bitmap;
+class DropOffer;
+struct DragEvent;
+struct DragSource;
 struct Layer;
 class Painter;
 class Window;
@@ -41,7 +46,7 @@ struct LayoutHints
     double preferredWidth = -1;
     double preferredHeight = -1;
 
-    // For QuickLayout, as Qt Quick Layouts' Layout.*: negative is unset.
+    // For CellLayout: negative is unset.
     double minimumWidth = -1;
     double minimumHeight = -1;
     double maximumWidth = -1;
@@ -50,11 +55,21 @@ struct LayoutHints
     Alignment horizontalAlignment = Alignment::Default;
     Alignment verticalAlignment = Alignment::Default;
     Margins margins;
-    // A QML item's own width and height, which a Qt Quick Layout takes as
-    // the preferred size only when the implicit size is not positive: a
-    // spacer `Item { width: 1 }`, not a field's `height: 40`.
+    // An explicit width and height, which CellLayout takes as the preferred
+    // size only when the implicit size is not positive: a spacer 1 wide, not
+    // a field 40 high.
     double fallbackWidth = -1;
     double fallbackHeight = -1;
+};
+
+// How a window lays its text out: the scale, and whether advances and line
+// metrics are hinted onto whole pixels (Window::hintedTextLayout()).
+struct TextLayoutMode
+{
+    double scale = 1;
+    bool hinted = true;
+
+    bool operator==(const TextLayoutMode&) const = default;
 };
 
 // A node of a window's retained tree. Geometry is in logical pixels,
@@ -74,6 +89,13 @@ public:
 
     View* parent() const { return m_parent; }
     Window* window() const;
+    // How the view's text lays out: as its window's, or out of a window as
+    // the nearest setTextLayoutMode() up the tree says, else scale 1 hinted.
+    TextLayoutMode textLayoutMode() const;
+    // Text in this tree, while it is in no window, lays out as in a window of
+    // this mode, so content measures as drawn before its window exists; a
+    // popup's mode is its parent window's.
+    void setTextLayoutMode(TextLayoutMode mode);
 
     template<typename T, typename... Args>
     T* addChild(Args&&... args)
@@ -99,6 +121,9 @@ public:
     // Children paint only inside this view.
     bool clipsChildren() const { return m_clipsChildren; }
     void setClipsChildren(bool clips);
+    // With clipsChildren, the clip's corners rounded by this radius
+    // (antialiased), as a pill when it is half the height.
+    void setChildClipRadius(double radius);
 
     // Applies to the view and its children.
     double opacity() const { return m_opacity; }
@@ -128,12 +153,17 @@ public:
     // Focus that came from the keyboard, which controls draw.
     bool hasVisibleFocus() const;
     void setFocus(FocusReason reason = FocusReason::Other);
-    // Out of the Tab chain, focused by a press or from code only, as
-    // focusPolicy: Qt.ClickFocus.
+    // Out of the Tab chain, focused by a press or from code only.
     void setClickFocusOnly(bool clickOnly) { m_clickFocusOnly = clickOnly; }
     bool isClickFocusOnly() const { return m_clickFocusOnly; }
 
-    // As a MouseArea's cursorShape; views may also decide by overriding cursorShape().
+    // Inside a WindowHeader, a press on the view that moves past the drag
+    // distance moves the window, as a press on the header itself does; the
+    // view then hears a release outside itself. Header buttons do.
+    void setMovesWindow(bool moves) { m_movesWindow = moves; }
+    bool movesWindow() const { return m_movesWindow; }
+
+    // The pointer's shape over the view; views may also decide by overriding cursorShape().
     void setCursorShape(CursorShape shape);
     virtual CursorShape cursorShape() const { return CursorShape(m_cursorShape); }
 
@@ -155,6 +185,10 @@ public:
 
     void requestLayout();
     void requestPaint();
+    // The view and its children drawn alone, as for a drag image: device
+    // pixels at the scale (the window's when 0), transparent around them.
+    // Layers are drawn flat, without their transforms.
+    Bitmap grab(double scale = 0);
 
     PointF mapFromWindow(PointF point) const;
     PointF mapToWindow(PointF point) const;
@@ -163,14 +197,18 @@ public:
     // to the topmost one under the pointer, which keeps it until the release.
     virtual bool acceptsPointer() const { return false; }
 
-    // Hover as a HoverHandler has it in Qt Quick: the view is hovered while
-    // the pointer is within it, whatever is above it inside it, and hears
-    // where the pointer is (hoverMove) on entering, on every move, and when
-    // a layout or a scroll moves it under a still pointer. It takes no
-    // presses. Off by default.
+    // The view is hovered while the pointer is within it, whatever is above it
+    // inside it, and hears where the pointer is (hoverMove) on entering, on
+    // every move, and when a layout or a scroll moves it under a still pointer.
+    // It takes no presses. Off by default.
     void setTracksHover(bool tracks);
     bool tracksHover() const { return m_tracksHover; }
     bool isHovered() const { return m_hoverTracked; }
+
+    // Hands the window's pointer to a drag of the source, from the press the
+    // view holds: the view hears no release. False when nothing can drag,
+    // as on Wayland so far.
+    bool startDrag(DragSource source);
 
 protected:
     virtual void pointerEnter() {}
@@ -198,11 +236,27 @@ protected:
     virtual TextInputState textInputState() const { return {}; }
     virtual void textInput(const TextInputEvent&) {}
 
+    // Drops, as views::View has them: a drag goes to the topmost view under
+    // it, or the nearest parent, whose canDrop() takes the offer. It hears
+    // dragEnter(), then dragUpdate() on every move, which returns the action
+    // it would take (one DropAction), then dragLeave() or drop(), which
+    // returns the action taken.
+    virtual bool canDrop(const DropOffer&) const { return false; }
+    virtual void dragEnter(const DragEvent&) {}
+    virtual uint32_t dragUpdate(const DragEvent&) { return 0; }
+    virtual void dragLeave() {}
+    virtual uint32_t drop(const DragEvent&) { return 0; }
+
+    // Touchpad gestures, to the view under the pointer, then up through its
+    // parents; the view that takes a begin gets the rest of that gesture.
+    virtual bool gesture(const GestureEvent&) { return false; }
+
     // Positions the children once this view has its geometry.
     virtual void layout() {}
     virtual void paint(Painter&) {}
 
 private:
+    friend class BlurredCopy;
     friend class HeaderBackdrop;
     friend class TestInput;
     friend class Window;
@@ -210,6 +264,8 @@ private:
     void layoutTree();
     // Culls what lies outside the region, in the target's device pixels.
     void paintTree(Painter& painter, const SkRegion* region);
+    // The view and its children as they paint, layers drawn flat, for grab().
+    static void paintFlat(View* view, Painter& painter);
     // The view and its children as painted into its layer.
     void paintContent(Painter& painter, const SkRegion* region);
     bool needsLayer() const { return m_layered || !m_transform.isIdentity(); }
@@ -231,6 +287,7 @@ private:
     std::string m_toolTip;
     View* m_parent = nullptr;
     Window* m_window = nullptr;
+    std::optional<TextLayoutMode> m_textLayoutMode;
     std::vector<std::unique_ptr<View>> m_children;
     RectF m_geometry;
     LayoutHints m_layoutHints;
@@ -239,11 +296,13 @@ private:
     bool m_clickFocusOnly = false;
     bool m_tracksHover = false;
     bool m_hoverTracked = false;
+    bool m_movesWindow = false;
     // A byte, in the padding the installed applications were built with.
     uint8_t m_cursorShape = uint8_t(CursorShape::Default);
     // Where hoverMove last put the pointer, in the view.
     PointF m_hoverPosition;
     bool m_clipsChildren = false;
+    double m_childClipRadius = 0;
     double m_opacity = 1;
     Transform m_transform;
     bool m_layered = false;

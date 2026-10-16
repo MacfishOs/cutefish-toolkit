@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 
 #include "ui/view.h"
 
@@ -12,7 +13,7 @@ namespace cutefish::ui {
 
 class Animation;
 
-// FishUI's progress bar: a pill track filled in the accent colour. An
+// A progress bar: a pill track filled in the accent colour. An
 // indeterminate bar sends a third of its length across, back and forth.
 class ProgressBar : public View
 {
@@ -37,7 +38,7 @@ private:
     std::unique_ptr<Animation> m_animation;
 };
 
-// FishUI's busy indicator: the refresh glyph turning once a second.
+// A busy indicator: the refresh glyph turning once a second.
 class BusyIndicator : public View
 {
 public:
@@ -48,6 +49,10 @@ public:
     bool isRunning() const { return m_running; }
     // One turn; 1000 ms unless set.
     void setDuration(std::chrono::milliseconds duration);
+    // Unset follows the theme's text colour.
+    void setColor(std::optional<Color> color);
+    // The current turn, in degrees clockwise.
+    double angle() const { return m_angle; }
 
     SizeF sizeHint() const override { return {22, 22}; }
 
@@ -58,6 +63,7 @@ private:
     bool m_running = true;
     double m_angle = 0;
     std::chrono::milliseconds m_duration{1000};
+    std::optional<Color> m_color;
     std::unique_ptr<Animation> m_animation;
 };
 

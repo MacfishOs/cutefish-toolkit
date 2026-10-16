@@ -11,6 +11,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <pwd.h>
 #include <sstream>
@@ -31,6 +33,7 @@
 #include "modules/svg/include/SkSVGDOM.h"
 #include "modules/svg/include/SkSVGSVG.h"
 
+#include "base/thread_pool.h"
 #include "ui/embedded_files.h"
 #include "ui/theme.h"
 
@@ -105,7 +108,87 @@ static std::optional<std::pair<size_t, size_t>> attributeValue(const std::string
     return std::nullopt;
 }
 
-// What Qt's SVG renderer reads and Skia's leaves out: <style> rules for
+// The bounds of path data made of straight lines only (M, L, H, V, Z, in
+// either case); nothing for curves or arcs.
+static std::optional<SkRect> lineBounds(const std::string& data)
+{
+    std::optional<SkRect> bounds;
+    double x = 0;
+    double y = 0;
+    double startX = 0;
+    double startY = 0;
+    char command = 0;
+    size_t i = 0;
+    const auto skip = [&] {
+        while (i < data.size() && (std::isspace(static_cast<unsigned char>(data[i])) || data[i] == ','))
+            ++i;
+    };
+    const auto number = [&](double& out) {
+        skip();
+        const char* begin = data.c_str() + i;
+        char* end = nullptr;
+        out = std::strtod(begin, &end);
+        if (end == begin)
+            return false;
+        i += size_t(end - begin);
+        return true;
+    };
+    // By hand: SkRect::join skips the empty rect a point is.
+    const auto add = [&] {
+        const SkScalar px = SkScalar(x);
+        const SkScalar py = SkScalar(y);
+        if (!bounds)
+            bounds = SkRect::MakeLTRB(px, py, px, py);
+        else
+            bounds->setLTRB(std::min(bounds->left(), px), std::min(bounds->top(), py), std::max(bounds->right(), px),
+                            std::max(bounds->bottom(), py));
+    };
+    while (true) {
+        skip();
+        if (i >= data.size())
+            break;
+        if (std::isalpha(static_cast<unsigned char>(data[i])))
+            command = data[i++];
+        const bool relative = std::islower(static_cast<unsigned char>(command));
+        double a = 0;
+        double b = 0;
+        switch (std::tolower(static_cast<unsigned char>(command))) {
+        case 'm':
+        case 'l':
+            if (!number(a) || !number(b))
+                return std::nullopt;
+            x = relative ? x + a : a;
+            y = relative ? y + b : b;
+            if (std::tolower(static_cast<unsigned char>(command)) == 'm') {
+                startX = x;
+                startY = y;
+                // Further pairs are lines.
+                command = relative ? 'l' : 'L';
+            }
+            break;
+        case 'h':
+            if (!number(a))
+                return std::nullopt;
+            x = relative ? x + a : a;
+            break;
+        case 'v':
+            if (!number(a))
+                return std::nullopt;
+            y = relative ? y + a : a;
+            break;
+        case 'z':
+            x = startX;
+            y = startY;
+            break;
+        default:
+            return std::nullopt;
+        }
+        add();
+    }
+    return bounds;
+}
+
+// What Skia's SVG renderer leaves out: <style> rules for
 // class selectors, put into each element's style attribute ahead of its own
 // declarations, and base64 data URIs broken over lines.
 static std::string prepareSvg(std::string svg)
@@ -122,7 +205,7 @@ static std::string prepareSvg(std::string svg)
     // Skia lays a pattern out in user space whatever its units; one in the
     // bounding box units of the rect it fills gets that box as its transform.
     for (size_t at = svg.find("<pattern"); at != std::string::npos; at = svg.find("<pattern", at + 1)) {
-        const size_t end = svg.find('>', at);
+        size_t end = svg.find('>', at);
         if (end == std::string::npos)
             break;
         std::string tag = svg.substr(at, end - at);
@@ -135,21 +218,48 @@ static std::string prepareSvg(std::string svg)
             || !value("patternTransform").empty() || value("id").empty())
             continue;
         const size_t use = svg.find("url(#" + value("id") + ")");
-        const size_t rect = use == std::string::npos ? std::string::npos : svg.rfind("<rect", use);
-        if (rect == std::string::npos || svg.find('>', rect) < use)
+        const size_t element = use == std::string::npos ? std::string::npos : svg.rfind('<', use);
+        if (element == std::string::npos || svg.find('>', element) < use)
             continue;
-        const std::string rectTag = svg.substr(rect, svg.find('>', rect) - rect);
-        const auto number = [&rectTag](std::string_view name, double fallback) {
-            const auto found = attributeValue(rectTag, name);
-            return found ? std::atof(rectTag.substr(found->first, found->second - found->first).c_str()) : fallback;
-        };
-        const double width = number("width", 0);
-        const double height = number("height", 0);
-        if (width <= 0 || height <= 0)
+        const std::string filler = svg.substr(element, svg.find('>', element) - element);
+        std::optional<SkRect> box;
+        if (filler.starts_with("<rect")) {
+            const auto number = [&filler](std::string_view name, double fallback) {
+                const auto found = attributeValue(filler, name);
+                return found ? std::atof(filler.substr(found->first, found->second - found->first).c_str()) : fallback;
+            };
+            box = SkRect::MakeXYWH(SkScalar(number("x", 0)), SkScalar(number("y", 0)), SkScalar(number("width", 0)),
+                                   SkScalar(number("height", 0)));
+        } else if (filler.starts_with("<path")) {
+            // Colloid's shadows fill a rectangle drawn as a path; as a rect it
+            // takes the transform like one (Skia's own box for a path gives
+            // a one-pixel tile, a uniform grey).
+            const auto d = attributeValue(filler, "d");
+            if (d) {
+                box = lineBounds(filler.substr(d->first, d->second - d->first));
+                if (box) {
+                    char geometry[160];
+                    snprintf(geometry, sizeof(geometry), "x=\"%g\" y=\"%g\" width=\"%g\" height=\"%g\"",
+                             double(box->x()), double(box->y()), double(box->width()), double(box->height()));
+                    std::string rect = filler;
+                    // From the attribute's name to its closing quote.
+                    const size_t name = rect.rfind(" d=", d->first);
+                    rect.replace(name + 1, d->second + 1 - (name + 1), geometry);
+                    rect.replace(0, 5, "<rect");
+                    svg.replace(element, filler.size(), rect);
+                    // The pattern may come after the element.
+                    if (element < at) {
+                        at += rect.size() - filler.size();
+                        end += rect.size() - filler.size();
+                    }
+                }
+            }
+        }
+        if (!box || box->width() <= 0 || box->height() <= 0)
             continue;
         char transform[160];
-        snprintf(transform, sizeof(transform), " patternTransform=\"matrix(%g 0 0 %g %g %g)\"", width, height,
-                 number("x", 0), number("y", 0));
+        snprintf(transform, sizeof(transform), " patternTransform=\"matrix(%g 0 0 %g %g %g)\"", double(box->width()),
+                 double(box->height()), double(box->x()), double(box->y()));
         svg.insert(end, transform);
     }
 
@@ -280,9 +390,8 @@ static sk_sp<SkImage> renderSvg(const sk_sp<SkSVGDOM>& svg, int size, const Colo
     SkCanvas* canvas = surface->getCanvas();
     canvas->clear(SK_ColorTRANSPARENT);
     // The drawing fills the size it is drawn at, whatever size its file
-    // declares, as Qt's SVG image reader draws it: the view box, or the
-    // file's own size without one, fits centred, keeping its aspect whatever
-    // the file asks.
+    // declares: the view box, or the file's own size without one, fits centred,
+    // keeping its aspect whatever the file asks.
     if (SkSVGSVG* root = svg->getRoot()) {
         const SkSVGLength fileWidth = root->getWidth();
         const SkSVGLength fileHeight = root->getHeight();
@@ -313,7 +422,7 @@ static sk_sp<SkImage> renderSvg(const sk_sp<SkSVGDOM>& svg, int size, const Colo
 sk_sp<SkImage> IconLoader::glyph(const std::string& name, int size, Color color, double scale)
 {
     // At 12 logical pixels and below the chevrons thin to under one; they
-    // have heavier drawings for that, as FishUI's Icon picks them.
+    // have heavier drawings for that.
     std::string file = name;
     if (size / scale <= 12 + 1e-6 && name.starts_with("chevron-"))
         file += "-small";
@@ -403,8 +512,10 @@ std::vector<std::string> IconLoader::GtkCache::lookup(const std::string& name)
         m_valid = false;
         return directories;
     }
-    for (uint32_t bucket = read32(table + 4 + (hash % buckets) * 4); bucket > 0 && bucket + 12 <= m_data.size();
-         bucket = read32(bucket)) {
+    // A chain ends with 0xffffffff, which must not wrap round in 32 bits: a
+    // miss then read past the end and took the whole cache for stale.
+    for (uint32_t bucket = read32(table + 4 + (hash % buckets) * 4);
+         bucket > 0 && size_t(bucket) + 12 <= m_data.size(); bucket = read32(bucket)) {
         const uint32_t nameOffset = read32(bucket + 4);
         if (nameOffset >= m_data.size() || name != reinterpret_cast<const char*>(m_data.data() + nameOffset))
             continue;
@@ -533,9 +644,9 @@ static bool matchesSize(char type, int size, int minimum, int maximum, int thres
     }
 }
 
-// QIconLoader::findIconHelper and QIconLoaderEngine::entryForSize: the theme,
-// its parents depth first, the first with the name giving every file it has
-// of it, pictures before drawings; an exact size first, else the closest.
+// The theme lookup: the theme, its parents depth first, the first with the name
+// giving every file it has of it, pictures before drawings; an exact size
+// first, else the closest.
 std::string IconLoader::lookup(const std::string& name, const std::string& requested, int size, int scale)
 {
     struct Entry
@@ -656,7 +767,7 @@ sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Co
     if (!surface)
         return nullptr;
     surface->getCanvas()->clear(SK_ColorTRANSPARENT);
-    // A larger picture is scaled down smoothly, as QPixmap::scaled; a smaller
+    // A larger picture is scaled down smoothly; a smaller
     // one stays as it is and the item stretches it, sampled linearly.
     const bool larger = decoded->width() > size || decoded->height() > size;
     const SkSamplingOptions sampling = larger ? SkSamplingOptions(SkCubicResampler::Mitchell())
@@ -717,7 +828,7 @@ sk_sp<SkImage> IconLoader::pixmap(const std::string& name, int pixels)
     if (path.ends_with(".svg")) {
         image = rasterise(path, pixels, nullptr);
     } else if (sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str())) {
-        // QPixmapIconEngine scales a larger picture down and leaves a smaller one.
+        // A larger picture is scaled down and a smaller one left as it is.
         if (std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data))) {
             auto [decoded, result] = codec->getImage();
             if (decoded && (decoded->width() > pixels || decoded->height() > pixels))
@@ -744,6 +855,52 @@ sk_sp<SkImage> IconLoader::themeIcon(const std::string& name, int size, int icon
     if (image)
         store(key, image);
     return image;
+}
+
+void IconLoader::preloadThemeIcons(const std::vector<std::string>& names, int size, double scale,
+                                   std::function<void()> done)
+{
+    const int device = int(std::lround(size * scale));
+    struct Pending
+    {
+        std::string key;
+        std::string path;
+        sk_sp<SkImage> image;
+    };
+    auto pending = std::make_shared<std::vector<Pending>>();
+    for (const std::string& name : names) {
+        const std::string key = "theme:" + Theme::current().iconTheme + "/" + name + "@" + std::to_string(size) + "x"
+                + std::to_string(device);
+        if (cached(key) || std::any_of(pending->begin(), pending->end(), [&key](const Pending& p) { return p.key == key; }))
+            continue;
+        std::string path = themeIconPath(name, size, scale);
+        if (!path.empty())
+            pending->push_back({key, std::move(path), nullptr});
+    }
+    if (pending->empty()) {
+        if (done)
+            done();
+        return;
+    }
+    // One job per icon, so the pool's threads share them; the last one in
+    // stores them all.
+    auto remaining = std::make_shared<size_t>(pending->size());
+    auto finished = std::make_shared<std::function<void()>>(std::move(done));
+    for (size_t i = 0; i < pending->size(); ++i) {
+        base::ThreadPool::global()
+            .run([pending, i, device] { (*pending)[i].image = rasterise((*pending)[i].path, device, nullptr); },
+                 [this, pending, remaining, finished] {
+                     if (--*remaining > 0)
+                         return;
+                     for (Pending& entry : *pending) {
+                         if (entry.image && !cached(entry.key))
+                             store(entry.key, std::move(entry.image));
+                     }
+                     if (*finished)
+                         (*finished)();
+                 })
+            .detach();
+    }
 }
 
 sk_sp<SkImage> IconLoader::themeIcon(const std::string& name, int size, double scale)

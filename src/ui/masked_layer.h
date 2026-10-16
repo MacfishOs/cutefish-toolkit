@@ -10,13 +10,12 @@ class SkCanvas;
 
 namespace cutefish::ui {
 
-// What a QML Image with layer.enabled and a FishUI.OpacityMask of a
-// FishUI.RoundedRectangle filling it puts in the window, as Qt Quick renders
-// it on the GPU: the image drawn into a layer texture of ceil(size) * dpr
+// An image clipped to a rounded rectangle through two layers, as a GPU scene
+// graph renders it: the image drawn into a layer texture of ceil(size) * dpr
 // pixels, the mask's rounded rectangle snapped and drawn into one of its
 // own, and the effect sampling both linearly where the item's quad covers
-// pixel centres, at its exact position. Within two levels of Qt's output.
-struct QuickLayerItem
+// pixel centres, at its exact position.
+struct MaskedLayerItem
 {
     // The Image item in logical window coordinates, unsnapped.
     double x = 0;
@@ -31,13 +30,13 @@ struct QuickLayerItem
     } fillMode = FillMode::Stretch;
     bool smooth = true;
     bool mipmap = false;
-    // The mask's FishUI.RoundedRectangle.
+    // The mask's rounded rectangle.
     double radius = 0;
     bool continuousCorners = false;
 };
 
 // The layer and the mask as textures; they do not depend on where the item is.
-struct QuickLayerTextures
+struct MaskedLayerTextures
 {
     sk_sp<SkImage> layer;
     sk_sp<SkImage> mask;
@@ -46,9 +45,9 @@ struct QuickLayerTextures
     double scale = 1;
 };
 
-QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickLayerItem& item);
+MaskedLayerTextures renderMaskedLayerTextures(const SkImage& picture, const MaskedLayerItem& item);
 // The effect: both textures filtered where the quad of the item at x, y
 // (logical) covers pixel centres, on a canvas in device pixels.
-void drawQuickLayer(SkCanvas* canvas, const QuickLayerTextures& textures, double x, double y, float opacity);
+void drawMaskedLayer(SkCanvas* canvas, const MaskedLayerTextures& textures, double x, double y, float opacity);
 
 } // namespace cutefish::ui

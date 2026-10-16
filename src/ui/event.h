@@ -23,10 +23,13 @@ enum class MouseButton {
     Left,
     Right,
     Middle,
+    // The side buttons.
+    Back,
+    Forward,
 };
 
-// QPointingDevice's type. A Wayland pointer is a TouchPad, as Qt's
-// Wayland platform reports it; a mouse is never told apart.
+// The pointing device's type. A Wayland pointer is a TouchPad; a mouse is
+// never told apart.
 enum class PointerDevice {
     Mouse,
     TouchPad,
@@ -73,6 +76,35 @@ struct ScrollEvent
     uint32_t time = 0;
 };
 
+// A touchpad gesture, as zwp_pointer_gestures_v1 reports it.
+struct GestureEvent
+{
+    enum class Type {
+        SwipeBegin,
+        SwipeUpdate,
+        SwipeEnd,
+        PinchBegin,
+        PinchUpdate,
+        PinchEnd,
+        HoldBegin,
+        HoldEnd,
+    };
+
+    Type type = Type::SwipeBegin;
+    uint32_t fingers = 0;
+    // Swipe and pinch updates: logical pixels the fingers' centre moved.
+    PointF delta;
+    // Pinch updates: the distance between the fingers against the begin's,
+    // and the rotation since the last update, in degrees clockwise.
+    double scale = 1;
+    double rotation = 0;
+    // Ends: the fingers did not complete the gesture.
+    bool cancelled = false;
+    uint32_t modifiers = NoModifier;
+    // Milliseconds on the compositor's clock; 0 when unknown.
+    uint32_t time = 0;
+};
+
 // What an input method may assume about a text field, for its suggestions.
 enum class TextPurpose {
     Normal,
@@ -80,6 +112,23 @@ enum class TextPurpose {
     Number,
     Email,
     Url,
+    // Digits only.
+    Digits,
+};
+
+// text-input-v3's content hints, its values, as a mask.
+enum TextHint : uint32_t {
+    NoTextHint = 0,
+    CompletionHint = 0x1,
+    SpellcheckHint = 0x2,
+    AutoCapitalizationHint = 0x4,
+    LowercaseHint = 0x8,
+    UppercaseHint = 0x10,
+    TitlecaseHint = 0x20,
+    HiddenTextHint = 0x40,
+    SensitiveDataHint = 0x80,
+    LatinHint = 0x100,
+    MultilineHint = 0x200,
 };
 
 // A text view's state as the input method sees it.
@@ -92,6 +141,10 @@ struct TextInputState
     // Where the cursor is, in window coordinates, so the candidates show by it.
     RectF cursorRectangle;
     TextPurpose purpose = TextPurpose::Normal;
+    // A mask of TextHint.
+    uint32_t hints = NoTextHint;
+
+    bool operator==(const TextInputState&) const = default;
 };
 
 // What an input method sends, applied in this order: the surrounding text
@@ -125,6 +178,8 @@ enum class CursorShape {
     NotAllowed,
     ResizeHorizontal,
     ResizeVertical,
+    // No pointer at all.
+    Blank,
 };
 
 } // namespace cutefish::ui

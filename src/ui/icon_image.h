@@ -9,10 +9,10 @@
 
 namespace cutefish::ui {
 
-// An icon as a QML Image shows an image provider's QIcon pixmap: the theme's
-// icon by name (Theme::iconTheme, then hicolor, then /usr/share/pixmaps), or
-// the file at an absolute path, made `pixels` square at a device pixel ratio
-// of 1 and drawn smoothly stretched into the view's rect, unsnapped.
+// An icon as an image provider's pixmap: the theme's icon by name
+// (Theme::iconTheme, then hicolor, then /usr/share/pixmaps), or the file at an
+// absolute path, made `pixels` square at a device pixel ratio of 1 and drawn
+// smoothly stretched into the view's rect, unsnapped.
 class IconImage : public View
 {
 public:

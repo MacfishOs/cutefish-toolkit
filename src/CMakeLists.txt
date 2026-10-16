@@ -32,6 +32,10 @@ cutefish_wayland_protocol(xdg-foreign-unstable-v2
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/xdg-foreign/xdg-foreign-unstable-v2.xml)
 cutefish_wayland_protocol(text-input-unstable-v3
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/text-input/text-input-unstable-v3.xml)
+cutefish_wayland_protocol(xdg-toplevel-drag-v1
+    ${WAYLAND_PROTOCOLS_DATADIR}/staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml)
+cutefish_wayland_protocol(primary-selection-unstable-v1
+    ${WAYLAND_PROTOCOLS_DATADIR}/unstable/primary-selection/primary-selection-unstable-v1.xml)
 cutefish_wayland_protocol(pointer-gestures-unstable-v1
     ${WAYLAND_PROTOCOLS_DATADIR}/unstable/pointer-gestures/pointer-gestures-unstable-v1.xml)
 cutefish_wayland_protocol(xdg-output-unstable-v1
@@ -44,25 +48,34 @@ cutefish_wayland_protocol(cutefish-window-hints-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-window-hints-v1.xml)
 cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
+cutefish_wayland_protocol(cutefish-shell-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-shell-v1.xml)
 
 add_subdirectory(base)
 
 set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
+    ui/animated_image.h
     ui/animation.h
     ui/application.h
     ui/bitmap.h
     ui/bitmap_painter.h
+    ui/blurred_copy.h
+    ui/fast_blur.h
+    ui/bubble_shape.h
     ui/button.h
     ui/check_box.h
     ui/clipboard.h
     ui/combo_box.h
     ui/dialog_window.h
+    ui/drag.h
     ui/embedded_gpu.h
+    ui/embedded_host.h
     ui/embedded_window.h
     ui/event.h
     ui/frame_client.h
     ui/geometry.h
     ui/geometry_conversions.h
+    ui/glyph_run.h
     ui/file_chooser.h
     ui/header_backdrop.h
     ui/header_button.h
@@ -78,35 +91,45 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/painter.h
     ui/path.h
     ui/progress_bar.h
-    ui/quick_layout.h
+    ui/cell_layout.h
+    ui/scroll_bar.h
     ui/scroll_view.h
+    ui/scroller.h
     ui/search_field.h
     ui/segmented_control.h
     ui/slider.h
     ui/styled_label.h
+    ui/subsurface.h
     ui/switch.h
     ui/test_input.h
     ui/text_area.h
     ui/text_field.h
+    ui/text_layout.h
     ui/theme.h
     ui/toast.h
+    ui/trusted_connection.h
     ui/toggle_control.h
     ui/view.h
     ui/window.h
     ui/window_header.h
+    ui/window_tab_bar.h
 )
 
 add_library(cutefish-toolkit SHARED
     gpu/egl_context.cpp
     wayland/connection.cpp
     wayland/data_device.cpp
+    wayland/primary_selection.cpp
+    wayland/selection.cpp
     wayland/keyboard.cpp
     wayland/text_input.cpp
     wayland/shell_surface.cpp
     wayland/wayland_window.cpp
+    ui/animated_image.cpp
     ui/animation.cpp
     ui/appearance.cpp
     ui/application.cpp
+    ui/bubble_shape.cpp
     ui/button.cpp
     ui/check_box.cpp
     ui/clipboard.cpp
@@ -115,8 +138,10 @@ add_library(cutefish-toolkit SHARED
     ui/editable_text.cpp
     ui/embedded_gpu.cpp
     ui/embedded_window.cpp
+    ui/font_fallback.cpp
     ui/frame_client.cpp
     ui/geometry.cpp
+    ui/glyph_run.cpp
     ui/file_chooser.cpp
     ui/header_backdrop.cpp
     ui/header_button.cpp
@@ -124,22 +149,27 @@ add_library(cutefish-toolkit SHARED
     ui/icon_image.cpp
     ui/icon_loader.cpp
     ui/image.cpp
+    ui/gif_decoder.cpp
     ui/image_decoder.cpp
+    ui/image_formats.cpp
     ui/image_view.cpp
     ui/label.cpp
     ui/line_breaks.cpp
     ui/layout.cpp
     ui/list_view.cpp
     ui/menu.cpp
+    ui/multi_effect_blur.cpp
     ui/painter.cpp
     ui/path.cpp
     ui/bitmap.cpp
     ui/bitmap_painter.cpp
+    ui/blurred_copy.cpp
+    ui/fast_blur.cpp
     ui/platform_window.cpp
     ui/progress_bar.cpp
-    ui/quick_layer.cpp
-    ui/quick_layout.cpp
-    ui/quick_rectangle.cpp
+    ui/masked_layer.cpp
+    ui/cell_layout.cpp
+    ui/smooth_rectangle.cpp
     ui/rounded_path.cpp
     ui/rounded_shape.cpp
     ui/scroll_bar.cpp
@@ -149,27 +179,33 @@ add_library(cutefish-toolkit SHARED
     ui/segmented_control.cpp
     ui/slider.cpp
     ui/styled_label.cpp
+    ui/subsurface.cpp
     ui/switch.cpp
     ui/test_input.cpp
     ui/text_area.cpp
     ui/text_field.cpp
+    ui/text_layout.cpp
     ui/text_context.cpp
     ui/text_lines.cpp
     ui/theme.cpp
     ui/thumbnail_cache.cpp
     ui/toast.cpp
+    ui/trusted_connection.cpp
     ui/toggle_control.cpp
     ui/view.cpp
     ui/window.cpp
     ui/window_compositing.cpp
     ui/window_restore.cpp
     ui/window_header.cpp
+    ui/window_tab_bar.cpp
     ${xdg-shell_SOURCES}
     ${viewporter_SOURCES}
     ${presentation-time_SOURCES}
     ${fractional-scale-v1_SOURCES}
     ${cursor-shape-v1_SOURCES}
     ${pointer-gestures-unstable-v1_SOURCES}
+    ${primary-selection-unstable-v1_SOURCES}
+    ${xdg-toplevel-drag-v1_SOURCES}
     ${text-input-unstable-v3_SOURCES}
     ${xdg-dialog-v1_SOURCES}
     ${xdg-activation-v1_SOURCES}
@@ -178,6 +214,7 @@ add_library(cutefish-toolkit SHARED
     ${tablet-unstable-v2_SOURCES}
     ${cutefish-window-hints-v1_SOURCES}
     ${cutefish-surface-blur-v1_SOURCES}
+    ${cutefish-shell-v1_SOURCES}
 )
 
 # The glyph icons, built in so they need no install location.
@@ -227,6 +264,7 @@ target_link_libraries(cutefish-toolkit
         PkgConfig::Xkbcommon
         PkgConfig::Systemd
         PkgConfig::ImageCodecs
+        PkgConfig::Icu
 )
 
 install(TARGETS cutefish-toolkit EXPORT CutefishToolkitTargets

@@ -34,7 +34,7 @@ static constexpr double snapDuration = 180;
 static constexpr double snapPageDuration = 220;
 static constexpr double minimumSnapDuration = 120;
 static constexpr int wheelStepDuration = 120;
-// Three lines of 15 pixels per wheel click, as Qt's default wheelScrollLines.
+// Three lines of 15 pixels per wheel click.
 static constexpr double wheelPixelsPer120 = 45.0 / 120;
 // The compositor sends 10 axis units per click.
 static constexpr double wheelPixelsPerUnit = 4.5;
@@ -58,7 +58,7 @@ static double bounded(double position, double minimum, double maximum)
     return std::clamp(position, minimum, std::max(minimum, maximum));
 }
 
-// As Qt compares points, which the stop conditions were tuned with.
+// Fuzzy, at 1e-12: the stop conditions were tuned with this comparison.
 static bool same(PointF a, PointF b)
 {
     return std::abs(a.x - b.x) <= 1e-12 && std::abs(a.y - b.y) <= 1e-12;

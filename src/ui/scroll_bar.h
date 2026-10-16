@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "ui/view.h"
 
@@ -12,7 +13,7 @@ namespace cutefish::ui {
 
 class Animation;
 
-// FishUI's scroll bar: a thin handle over the edge of the view, shown while
+// A scroll bar: a thin handle over the edge of the view, shown while
 // the view moves and while hovered, fading out a second after.
 class ScrollBar : public View
 {
@@ -37,6 +38,9 @@ public:
     // topPadding and bottomPadding; 1 unless set.
     void setPadding(double start, double end);
     bool isNeeded() const { return m_content > m_viewport; }
+    // The handle drawn for a dark or a light background whatever the theme,
+    // unset follows the theme.
+    void setDarkMode(std::optional<bool> dark);
 
     bool acceptsPointer() const override { return isNeeded(); }
 
@@ -65,6 +69,7 @@ private:
     double m_position = 0;
     bool m_moving = false;
     bool m_alwaysShown = false;
+    std::optional<bool> m_darkMode;
     bool m_hovered = false;
     bool m_dragging = false;
     double m_dragOffset = 0;

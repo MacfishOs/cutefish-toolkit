@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <strings.h>
 #include <tuple>
 #include <fontconfig/fontconfig.h>
 #include <vector>
@@ -30,6 +31,37 @@ namespace cutefish::ui {
 
 // "zh_CN.UTF-8" becomes "zh-CN"; "C" and "POSIX" name no language.
 namespace {
+
+// The fonts of one family out of fontconfig's sorted set.
+class FamilyStyleSet final : public SkFontStyleSet
+{
+public:
+    explicit FamilyStyleSet(std::vector<sk_sp<SkTypeface>> typefaces)
+        : m_typefaces(std::move(typefaces))
+    {
+    }
+
+    int count() override { return int(m_typefaces.size()); }
+
+    void getStyle(int index, SkFontStyle* style, SkString* name) override
+    {
+        if (style)
+            *style = m_typefaces[size_t(index)]->fontStyle();
+        if (name)
+            name->reset();
+    }
+
+    sk_sp<SkTypeface> createTypeface(int index) override { return m_typefaces[size_t(index)]; }
+    sk_sp<SkTypeface> matchStyle(const SkFontStyle& pattern) override { return matchStyleCSS3(pattern); }
+
+private:
+    std::vector<sk_sp<SkTypeface>> m_typefaces;
+};
+
+static bool sameFamily(const SkString& a, const char* b)
+{
+    return strcasecmp(a.c_str(), b) == 0;
+}
 
 // The system font manager with its character fallback remembered. SkParagraph
 // keeps fallbacks only for one layout, so every layout asked fontconfig again
@@ -53,7 +85,32 @@ protected:
     int onCountFamilies() const override { return m_fonts->countFamilies(); }
     void onGetFamilyName(int index, SkString* name) const override { m_fonts->getFamilyName(index, name); }
     sk_sp<SkFontStyleSet> onCreateStyleSet(int index) const override { return m_fonts->createStyleSet(index); }
-    sk_sp<SkFontStyleSet> onMatchFamily(const char family[]) const override { return m_fonts->matchFamily(family); }
+    // Fontconfig answers with every font, sorted; SkParagraph would then take
+    // the best style of any family. Only the family's own fonts, or the best
+    // match's family for an alias such as "monospace".
+    sk_sp<SkFontStyleSet> onMatchFamily(const char family[]) const override
+    {
+        sk_sp<SkFontStyleSet> sorted = m_fonts->matchFamily(family);
+        if (!sorted || !family)
+            return sorted;
+        std::vector<sk_sp<SkTypeface>> own;
+        SkString first;
+        std::vector<sk_sp<SkTypeface>> firstFamily;
+        for (int i = 0; i < sorted->count(); ++i) {
+            sk_sp<SkTypeface> typeface = sorted->createTypeface(i);
+            if (!typeface)
+                continue;
+            SkString name;
+            typeface->getFamilyName(&name);
+            if (sameFamily(name, family))
+                own.push_back(typeface);
+            if (first.isEmpty())
+                first = name;
+            if (name.equals(first))
+                firstFamily.push_back(typeface);
+        }
+        return sk_make_sp<FamilyStyleSet>(own.empty() ? std::move(firstFamily) : std::move(own));
+    }
 
     sk_sp<SkTypeface> onMatchFamilyStyle(const char family[], const SkFontStyle& style) const override
     {
@@ -137,8 +194,9 @@ TextContext::TextContext()
     m_fontCollection = sk_make_sp<skia::textlayout::FontCollection>();
     m_fontCollection->setDefaultFontManager(m_fontManager);
     m_fontCollection->enableFontFallback();
-    // Lines wrap where Qt's do; ICU's rules keep "WireGuard .conf" together.
-    m_unicode = makeQtLineBreakUnicode(SkUnicodes::ICU::Make());
+    // Lines wrap by line_breaks.h, also after breakable white space; ICU's
+    // rules keep "WireGuard .conf" together.
+    m_unicode = makeLineBreakUnicode(SkUnicodes::ICU::Make());
     readFontconfigDefaults();
 }
 
@@ -210,7 +268,7 @@ static std::vector<uint8_t> tableData(const SkTypeface* typeface, const char* ta
     return data;
 }
 
-// QFontEngine::processHheaTable and processOS2Table, in font units.
+// The hhea and OS/2 line metrics, in font units.
 const TextContext::Tables& TextContext::tables(const SkTypeface* typeface) const
 {
     std::lock_guard lock(m_tablesMutex);
@@ -254,8 +312,8 @@ const TextContext::Tables& TextContext::tables(const SkTypeface* typeface) const
     return tables;
 }
 
-// Qt's QFixed: 26.6 fixed point, converted from reals by truncation and
-// divided with rounding.
+// 26.6 fixed point, converted from reals by truncation and divided with
+// rounding.
 static int64_t fixedFromReal(double value)
 {
     return int64_t(value * 64);
@@ -286,21 +344,22 @@ static int64_t divFix(int64_t a, int64_t b)
     return ((a << 16) + b / 2) / b;
 }
 
-bool TextContext::roundsMetrics(double scale) const
+bool TextContext::roundsMetrics(double scale, bool hintedLayout) const
 {
-    return scale == 1 && m_hintedLayout && (m_fontconfigHinting == SkFontHinting::kNormal || m_fontconfigHinting == SkFontHinting::kFull);
+    return scale == 1 && hintedLayout && (m_fontconfigHinting == SkFontHinting::kNormal || m_fontconfigHinting == SkFontHinting::kFull);
 }
 
-QtFontMetrics TextContext::metrics(const SkTypeface* typeface, double pixelSize, double scale) const
+VerticalMetrics TextContext::metrics(const SkTypeface* typeface, double pixelSize, double scale,
+                                   bool hintedLayout) const
 {
-    QtFontMetrics result;
+    VerticalMetrics result;
     if (!typeface)
         return result;
     const Tables& t = tables(typeface);
     const int64_t unitsPerEm = int64_t(t.unitsPerEm) * 64;
     int64_t ascent = fixedDivide(fixedFromReal(t.ascent * pixelSize), unitsPerEm);
     int64_t descent = fixedDivide(fixedFromReal(t.descent * pixelSize), unitsPerEm);
-    if (roundsMetrics(scale)) {
+    if (roundsMetrics(scale, hintedLayout)) {
         ascent = fixedRound(ascent);
         descent = fixedRound(descent);
     }
@@ -386,8 +445,8 @@ void TextContext::readFontconfigDefaults()
             break;
         }
     }
-    // Horizontal hinting would round the advances, which Qt Quick's text
-    // does not; vertical hinting keeps baselines and stems crisp.
+    // Horizontal hinting would round the advances, which stay unhinted;
+    // vertical hinting keeps baselines and stems crisp.
     m_hinting = std::min(m_fontconfigHinting, SkFontHinting::kSlight);
     m_subpixelPositioning = true;
 }

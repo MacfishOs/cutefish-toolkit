@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "ui/quick_layer.h"
+#include "ui/masked_layer.h"
 
 #include <algorithm>
 #include <array>
@@ -36,8 +36,8 @@ struct Texture
     }
 };
 
-// The shape a FishUI.RoundedRectangle covers, in device pixels from its
-// corner; a port of its roundedrectangle.frag without border or inset.
+// The shape a rounded rectangle covers, in device pixels from its corner;
+// its shader's coverage without border or inset.
 struct RoundedShape
 {
     float width;
@@ -196,8 +196,8 @@ static float roundedCoverage(const RoundedShape& shape, float px, float py)
                     + tangentCoverage(shape, px - 0.25f, py + 0.25f, 0.5f) + tangentCoverage(shape, px + 0.25f, py + 0.25f, 0.5f));
 }
 
-// QSize * qreal rounds as qRound.
-static int qtRound(double value)
+// A size times a scale rounds halves up.
+static int roundHalfUp(double value)
 {
     return int(std::floor(value + 0.5));
 }
@@ -219,7 +219,7 @@ static sk_sp<SkImage> imageFromTexture(const Texture& texture)
     return bitmap.asImage();
 }
 
-QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickLayerItem& item)
+MaskedLayerTextures renderMaskedLayerTextures(const SkImage& picture, const MaskedLayerItem& item)
 {
     const double s = item.scale;
     const double w = item.width;
@@ -227,12 +227,12 @@ QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickL
     if (w <= 0 || h <= 0 || picture.width() <= 0 || picture.height() <= 0)
         return {};
 
-    // QQuickImage's node: where the picture lands in the item, and which texels.
+    // The image's fill mode: where the picture lands in the item, and which texels.
     const double pw = picture.width();
     const double ph = picture.height();
     double tx = 0, ty = 0, tw = w, th = h;
     double sx = 0, sy = 0, sw = pw, sh = ph;
-    if (item.fillMode == QuickLayerItem::FillMode::PreserveAspectFit) {
+    if (item.fillMode == MaskedLayerItem::FillMode::PreserveAspectFit) {
         if (w / pw <= h / ph) {
             tw = w;
             th = w / pw * ph;
@@ -242,7 +242,7 @@ QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickL
         }
         tx = int((w - tw) / 2);
         ty = int((h - th) / 2);
-    } else if (item.fillMode == QuickLayerItem::FillMode::PreserveAspectCrop) {
+    } else if (item.fillMode == MaskedLayerItem::FillMode::PreserveAspectCrop) {
         const double wscale = w / pw;
         const double hscale = h / ph;
         if (wscale > hscale) {
@@ -258,8 +258,8 @@ QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickL
 
     // The layer: ceil(size) * dpr texels showing the item's whole rect.
     Texture layer;
-    layer.width = qtRound(std::ceil(w) * s);
-    layer.height = qtRound(std::ceil(h) * s);
+    layer.width = roundHalfUp(std::ceil(w) * s);
+    layer.height = roundHalfUp(std::ceil(h) * s);
     layer.texels.assign(size_t(layer.width) * size_t(layer.height), Pixel{0, 0, 0, 0});
     const std::vector<Texture> levels = item.mipmap ? mipmaps(fromImage(picture)) : std::vector<Texture>{fromImage(picture)};
     if (levels.front().texels.empty())
@@ -291,8 +291,8 @@ QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickL
         }
     }
 
-    // The mask: a RoundedRectangle filling an item that has no parent, so
-    // PixelGrid snaps it from the origin: whole device pixels of its size.
+    // The mask: a rounded rectangle filling an item that has no parent, so
+    // it snaps from the origin: whole device pixels of its size.
     const RoundedShape shape{float(std::max(std::floor(w * s + 1e-4), 1.0)),
                              float(std::max(std::floor(h * s + 1e-4), 1.0)), float(item.radius * s),
                              item.continuousCorners};
@@ -315,7 +315,7 @@ QuickLayerTextures renderQuickLayerTextures(const SkImage& picture, const QuickL
     return {imageFromTexture(layer), imageFromTexture(mask), w, h, s};
 }
 
-void drawQuickLayer(SkCanvas* canvas, const QuickLayerTextures& textures, double x, double y, float opacity)
+void drawMaskedLayer(SkCanvas* canvas, const MaskedLayerTextures& textures, double x, double y, float opacity)
 {
     if (!textures.layer || !textures.mask)
         return;
@@ -329,7 +329,7 @@ void drawQuickLayer(SkCanvas* canvas, const QuickLayerTextures& textures, double
     sk_sp<SkShader> layer = textures.layer->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, linear, &local);
     sk_sp<SkShader> mask = textures.mask->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, linear, &local);
     SkPaint paint;
-    // FishUI's opacitymask.frag: the layer times the mask's alpha.
+    // The opacity mask: the layer times the mask's alpha.
     paint.setShader(SkShaders::Blend(SkBlendMode::kDstIn, std::move(layer), std::move(mask)));
     paint.setAlphaf(opacity);
     canvas->drawRect(quad, paint);

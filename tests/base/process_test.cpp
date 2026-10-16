@@ -182,3 +182,49 @@ TEST(ProcessTest, WaitForFinishedTimesOutThenCompletes)
     EXPECT_EQ(exitCode, SIGTERM);
     EXPECT_TRUE(process.waitForFinished(0ms));
 }
+
+// As the screen recorder: it reads commands until "stop" or the input's end.
+TEST(ProcessTest, KeepsTheInputOpenUntilClosed)
+{
+    EventLoop loop;
+    Process process(&loop);
+    process.setStandardInput("first\n");
+    process.setStandardInputOpen(true);
+    ASSERT_TRUE(process.start("sh", {"-c", "while read line; do echo \"got $line\"; [ \"$line\" = stop ] && break; done; echo end"}));
+    // Still running after the initial data: the input is open.
+    Timer later(&loop);
+    later.setSingleShot(true);
+    later.onTimeout = [&] {
+        EXPECT_TRUE(process.isRunning());
+        EXPECT_TRUE(process.writeStandardInput(std::string(100000, 'y') + "\n"));
+        EXPECT_TRUE(process.writeStandardInput("stop\n"));
+    };
+    later.start(200ms);
+    ASSERT_TRUE(runUntilFinished(loop, process));
+    EXPECT_EQ(process.standardOutput(), "got first\ngot " + std::string(100000, 'y') + "\ngot stop\nend\n");
+    EXPECT_FALSE(process.writeStandardInput("late\n"));
+
+    // The end of the input ends it too.
+    Process reader(&loop);
+    reader.setStandardInputOpen(true);
+    ASSERT_TRUE(reader.start("sh", {"-c", "cat; echo eof"}));
+    EXPECT_TRUE(reader.writeStandardInput("text\n"));
+    reader.closeStandardInput();
+    EXPECT_FALSE(reader.writeStandardInput("more\n"));
+    ASSERT_TRUE(runUntilFinished(loop, reader));
+    EXPECT_EQ(reader.standardOutput(), "text\neof\n");
+
+    // A program that stopped reading: no SIGPIPE here.
+    Process quitter(&loop);
+    quitter.setStandardInputOpen(true);
+    ASSERT_TRUE(quitter.start("true"));
+    ASSERT_TRUE(runUntilFinished(loop, quitter));
+    Process slow(&loop);
+    slow.setStandardInputOpen(true);
+    ASSERT_TRUE(slow.start("sh", {"-c", "exec 0<&-; sleep 0.3"}));
+    Timer write(&loop);
+    write.setSingleShot(true);
+    write.onTimeout = [&] { slow.writeStandardInput("ignored\n"); };
+    write.start(100ms);
+    ASSERT_TRUE(runUntilFinished(loop, slow));
+}

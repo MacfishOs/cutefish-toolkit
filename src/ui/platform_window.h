@@ -6,11 +6,14 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "ui/drag.h"
 #include "ui/event.h"
 #include "ui/geometry.h"
+#include "ui/path.h"
 #include "ui/window.h"
 
 class SkCanvas;
@@ -59,15 +62,34 @@ public:
     virtual void activate() {}
     // "wayland:<handle>" for other clients to parent to; empty when none.
     virtual void exportHandle(std::function<void(const std::string&)> done) { done({}); }
+    // An xdg-activation token for a process this one starts; empty when none.
+    virtual void requestActivationToken(std::function<void(const std::string&)> done) { done({}); }
     // The logical size of the screen the window is on; empty when unknown.
     virtual SizeF screenSize() const { return {}; }
     virtual void setTransientParent(PlatformWindow* parent, bool modal) = 0;
     // The size a window shown maximized returns to; before show().
     virtual void setRestoreSize(int, int) {}
     virtual void show(int width, int height) = 0;
+    // Embedded only: off screen until destroyed.
+    virtual void hide() {}
     virtual void startMove() = 0;
+    // Hands the pointer to a drag; false when the platform cannot drag.
+    virtual bool startDrag(DragSource) { return false; }
     virtual void setCursorShape(CursorShape shape) = 0;
     virtual void setBlur(const RectF& rect, double radius) = 0;
+    // The outline masking the blur.
+    virtual void setBlurShape(const Path&) {}
+    // Wayland only: glass instead of the plain blur, or none.
+    virtual void setGlass(const std::optional<GlassMaterial>&) {}
+    virtual void setResizeAroundCenter(bool) {}
+    virtual void setSkipTaskbar(bool) {}
+    virtual void setAlwaysOnTop(bool) {}
+    virtual void setRestoreId(const std::string&) {}
+    virtual void setForeignParent(const std::string&, bool) {}
+    // On the trusted connection: cutefish_shell_v1's desktop role.
+    virtual bool setDesktopRole(const std::string&) { return false; }
+    virtual void setShellOutput(const std::string&) {}
+    virtual void activateShellSurface() {}
     // The focused text view's state for input methods, or none.
     virtual void setTextInput(const TextInputState* state) = 0;
 
@@ -75,8 +97,13 @@ public:
     virtual bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) = 0;
     // Headless only: the buffer last presented.
     virtual const Image* presentedImage() const { return nullptr; }
+    // Headless only: the moves the window asked for.
+    virtual int moveRequests() const { return 0; }
 
 protected:
+    // Another window's platform side, such as a window a drag carries.
+    static PlatformWindow* platformOf(Window* window);
+
     void notifyConfigure(int width, int height, const WindowStates& states);
     void notifyConfigureBounds(int width, int height);
     void notifyInteractiveResize(bool active);
@@ -95,6 +122,11 @@ protected:
     void notifyKey(const KeyEvent& event, bool pressed);
     void notifyHold();
     void notifyTextInput(const TextInputEvent& event);
+    uint32_t notifyDragEnter(double x, double y, DropOffer* offer, uint32_t modifiers);
+    uint32_t notifyDragMotion(double x, double y, uint32_t modifiers);
+    void notifyDragLeave();
+    uint32_t notifyDrop();
+    void notifyWorkArea(const RectF& area);
 
     Window* m_window;
 };

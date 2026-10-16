@@ -37,7 +37,6 @@ Application::Application(int argc, char** argv, Platform platform)
         m_loop = m_ownedLoop.get();
     }
     m_text = std::make_unique<TextContext>();
-    m_text->setHintedLayout(platform != Platform::Embedded);
     if (platform != Platform::Wayland)
         return;
 

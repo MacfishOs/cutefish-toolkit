@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "ui/platform_window.h"
@@ -13,13 +14,18 @@ class GrDirectContext;
 
 namespace cutefish::ui {
 
+class EmbeddedWindow;
+
 // The platform side of a window on Application::Platform::Embedded: frames go
 // into memory the host reads, and the host hears when one is wanted and which
 // cursor the pointer asks for.
 class EmbeddedPlatformWindow final : public PlatformWindow
 {
 public:
-    using PlatformWindow::PlatformWindow;
+    // A popup when it has a parent.
+    EmbeddedPlatformWindow(Window* window, EmbeddedPlatformWindow* parent, const PopupPlacement& placement,
+                           bool grab);
+    ~EmbeddedPlatformWindow() override;
 
     bool isHeadless() const override { return false; }
     bool isEmbedded() const override { return true; }
@@ -32,10 +38,13 @@ public:
     void minimize() override {}
     void setTransientParent(PlatformWindow*, bool) override {}
     void startMove() override {}
-    void setBlur(const RectF&, double) override {}
-    // No input method: the host's keys carry the text.
-    void setTextInput(const TextInputState*) override {}
+    void activate() override;
+    void setBlur(const RectF& rect, double radius) override;
+    void setBlurShape(const Path& path) override;
+    void setTextInput(const TextInputState* state) override;
     void show(int width, int height) override;
+    void hide() override;
+    bool startDrag(DragSource source) override;
     void setCursorShape(CursorShape shape) override;
     void requestRender() override;
     bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) override;
@@ -61,7 +70,31 @@ public:
     std::function<void()> onRenderRequested;
     std::function<void(CursorShape)> onCursorShape;
 
+    // The EmbeddedWindow this is the platform of; null for a plain Window,
+    // which is never drawn.
+    EmbeddedWindow* owner = nullptr;
+    // The next state change comes from the input method.
+    bool inputMethodCause = false;
+
+    bool isPopup() const { return m_popup; }
+    const PopupPlacement& placement() const { return m_placement; }
+    bool grabs() const { return m_grab; }
+    const RectF& blurRect() const { return m_blurRect; }
+    double blurRadius() const { return m_blurRadius; }
+    const Path& blurShape() const { return m_blurShape; }
+    void popupResized();
+
 private:
+    bool m_popup = false;
+    PopupPlacement m_placement;
+    bool m_grab = false;
+    // Told to the host, until hidden.
+    bool m_popupShown = false;
+    RectF m_blurRect;
+    double m_blurRadius = 0;
+    Path m_blurShape;
+    // What the host last heard; unset while disabled.
+    std::optional<TextInputState> m_textInput;
     WindowStates m_states;
     std::vector<uint8_t> m_pixels;
     int m_width = 0;

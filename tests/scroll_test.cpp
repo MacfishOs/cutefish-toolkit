@@ -21,7 +21,8 @@ using namespace cutefish::ui;
 using test::Box;
 
 // Mirrors cutefish-framework's scrolling tests, so both toolkits keep one feel.
-// Deltas point towards the end of the content, the other way from Qt's.
+// Deltas point towards the end of the content, the other way from the
+// framework's.
 
 static double now = 0;
 

@@ -69,7 +69,7 @@ static char32_t decodeUtf8(std::string_view text, size_t& i)
     return c;
 }
 
-// UTF-16 units, as Qt escapes them.
+// UTF-16 units, the units keys and values are escaped by.
 static std::vector<char16_t> utf16(std::string_view text)
 {
     std::vector<char16_t> units;
@@ -99,7 +99,8 @@ static std::string fromUtf16(const std::u16string& units)
 
 static const char kHexUpper[] = "0123456789ABCDEF";
 
-// QSettingsPrivate::iniEscapedKey
+// Letters, digits, '_', '-' and '.' stay; '/' becomes '\', other units up to
+// 0xFF %XX and the rest %UXXXX.
 static std::string escapeKey(std::string_view key)
 {
     std::string result;
@@ -133,7 +134,7 @@ static int hexValue(char c)
     return -1;
 }
 
-// QSettingsPrivate::iniUnescapedKey
+// Reverses escapeKey().
 static std::string unescapeKey(std::string_view key)
 {
     std::u16string result;
@@ -183,8 +184,9 @@ static std::string unescapeKey(std::string_view key)
     return fromUtf16(result);
 }
 
-// QSettingsPrivate::iniEscapedString, for text that is not @ByteArray or
-// @Variant data: other characters above 0x1F go out as UTF-8.
+// C-style escapes, quoted when the text holds ';', ',' or '=', for text
+// that is not @ByteArray or @Variant data: other characters above 0x1F go
+// out as UTF-8.
 static std::string escapeString(std::string_view text)
 {
     std::string result;
@@ -252,7 +254,7 @@ static std::string escapeString(std::string_view text)
     return result;
 }
 
-// QSettingsPrivate::iniUnescapedStringList: the value as UTF-16 units, and
+// Undoes escapeString(): the value as UTF-16 units, and
 // whether commas made it a list.
 static bool unescapeValue(std::string_view raw, std::u16string& string, std::vector<std::u16string>& list)
 {
@@ -351,7 +353,7 @@ static bool unescapeValue(std::string_view raw, std::u16string& string, std::vec
 
 namespace {
 
-// A value as QSettingsPrivate::stringToVariant reads it.
+// A raw value: a string, a comma-separated list, or an @-prefixed form.
 struct Value
 {
     enum class Kind {
@@ -523,8 +525,7 @@ static std::string sectionOf(const std::string& key)
     return slash == std::string::npos ? std::string() : key.substr(0, slash);
 }
 
-// [General] first, then the groups and the keys in each sorted, as QSettings
-// writes every file.
+// [General] first, then the groups and the keys in each sorted.
 static std::string writeFile(const std::map<std::string, std::string>& values)
 {
     std::map<std::string, std::vector<std::pair<std::string, const std::string*>>> sections;
@@ -659,7 +660,7 @@ bool Settings::boolValue(const std::string& key, bool fallback) const
     const Value value = parseRaw(rawValue(key));
     if (value.kind != Value::Kind::String)
         return fallback;
-    // QVariant's conversion from a string.
+    // Any text but empty, "0" and "false" is true.
     return !(value.string.empty() || value.string == "0" || equalsIgnoringCase(value.string, "false"));
 }
 
@@ -725,7 +726,7 @@ std::optional<Settings::Rect> Settings::rectValue(const std::string& key) const
     return Rect{value.numbers[0], value.numbers[1], value.numbers[2], value.numbers[3]};
 }
 
-// QSettingsPrivate::variantToString for a string: a leading @ is doubled.
+// A string value: a leading @ is doubled so it reads back as text.
 static std::string escapeTextValue(std::string_view value)
 {
     return escapeString(startsWith(value, "@") ? "@" + std::string(value) : std::string(value));

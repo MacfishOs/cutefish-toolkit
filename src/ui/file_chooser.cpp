@@ -61,7 +61,7 @@ FileChooser::Filter FileChooser::Filter::fromNameFilter(std::string_view nameFil
             filter.patterns.emplace_back(patterns.substr(start, end - start));
         start = end + 1;
     }
-    // A filter without a name is named after its patterns, as Qt's portal dialog does.
+    // A filter without a name is named after its patterns.
     if (filter.name.empty()) {
         for (const std::string& pattern : filter.patterns)
             filter.name += (filter.name.empty() ? "" : " ") + pattern;

@@ -37,6 +37,113 @@ TEST(WindowTest, HeaderDoubleClickTogglesMaximized)
     EXPECT_FALSE(window.states().maximized);
 }
 
+namespace {
+
+// Takes presses, and counts the releases that land inside it.
+class PressView : public View
+{
+public:
+    bool acceptsPointer() const override { return true; }
+
+    int presses = 0;
+    int releasesInside = 0;
+    int releasesOutside = 0;
+
+protected:
+    void pointerPress(const PointerEvent&) override { ++presses; }
+    void pointerRelease(const PointerEvent& event) override
+    {
+        if (localRect().contains(event.position))
+            ++releasesInside;
+        else
+            ++releasesOutside;
+    }
+};
+
+// What the content of a header and the bar beside it hold.
+class HeaderRow : public View
+{
+public:
+    HeaderRow()
+    {
+        moving = addChild<PressView>();
+        moving->setMovesWindow(true);
+        still = addChild<PressView>();
+    }
+
+    PressView* moving;
+    PressView* still;
+
+protected:
+    void layout() override
+    {
+        moving->setGeometry({0, 0, 100, 40});
+        still->setGeometry({100, 0, 100, 40});
+    }
+};
+
+} // namespace
+
+static void dragBy(Window& window, PointF from, PointF delta)
+{
+    TestInput::movePointer(window, from);
+    TestInput::press(window, from);
+    TestInput::movePointer(window, {from.x + delta.x, from.y + delta.y});
+    TestInput::release(window, {from.x + delta.x, from.y + delta.y});
+}
+
+TEST(WindowTest, HeaderDragFromViewsInItMovesTheWindow)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    WindowHeader* header = column->addChild<WindowHeader>();
+    header->setLayoutHints({.fillWidth = true});
+    HeaderRow* row = header->setContent<HeaderRow>();
+    PressView* outside = column->addChild<PressView>();
+    outside->setMovesWindow(true);
+    outside->setLayoutHints({.fillWidth = true, .fillHeight = true});
+    window.resize({400, 300});
+    window.setContentView(std::move(column));
+    window.show();
+    window.grab();
+    const PointF maximizeButton = {400 - 4 - 32 - 1 - 16, 20};
+
+    // The header itself moves at once.
+    TestInput::movePointer(window, {250, 20});
+    TestInput::press(window, {250, 20});
+    TestInput::release(window, {250, 20});
+    EXPECT_EQ(TestInput::moveRequests(window), 1);
+
+    // A wobble within the drag distance is still a click.
+    dragBy(window, maximizeButton, {5, 5});
+    EXPECT_TRUE(window.states().maximized);
+    EXPECT_EQ(TestInput::moveRequests(window), 1);
+
+    // Further, the window moves, maximized or not, and nothing is clicked.
+    dragBy(window, maximizeButton, {0, 20});
+    EXPECT_EQ(TestInput::moveRequests(window), 2);
+    EXPECT_TRUE(window.states().maximized);
+
+    dragBy(window, {50, 20}, {30, 0});
+    EXPECT_EQ(TestInput::moveRequests(window), 3);
+    EXPECT_EQ(row->moving->presses, 1);
+    EXPECT_EQ(row->moving->releasesInside, 0);
+    EXPECT_EQ(row->moving->releasesOutside, 1);
+
+    // A view that keeps its drags, and one outside the header, move nothing.
+    dragBy(window, {150, 20}, {30, 0});
+    EXPECT_EQ(row->still->releasesInside, 1);
+    dragBy(window, {200, 150}, {30, 0});
+    EXPECT_EQ(outside->releasesInside, 1);
+    EXPECT_EQ(TestInput::moveRequests(window), 3);
+
+    // Nor does anything while full screen.
+    window.setFullScreen(true);
+    dragBy(window, {50, 20}, {30, 0});
+    EXPECT_EQ(TestInput::moveRequests(window), 3);
+    EXPECT_EQ(row->moving->releasesInside, 1);
+}
+
 TEST(WindowTest, ConfirmDialogAnswersOnce)
 {
     Window parent;
@@ -62,8 +169,8 @@ TEST(WindowTest, ConfirmDialogAnswersOnce)
     EXPECT_EQ(accepted, 0);
 }
 
-// As FishUI's ConfirmDialog: Return confirms even while a destructive
-// dialog's Cancel has the focus; Space presses the focused button.
+// A confirmation: Return confirms even while a destructive dialog's Cancel has
+// the focus; Space presses the focused button.
 TEST(WindowTest, ConfirmDialogReturnConfirms)
 {
     Window parent;
@@ -104,7 +211,9 @@ TEST(WindowTest, ConfirmDialogTextChangesWhileShown)
     window->grab();
     EXPECT_GT(window->size().height, height);
     dialog.setTitle("Pairing with the keyboard");
-    const View* texts = window->contentView()->children().front().get();
+    // The content under the close button.
+    const View* column = window->contentView()->children().front().get();
+    const View* texts = column->children().front().get();
     EXPECT_EQ(static_cast<const Label*>(texts->children().front().get())->text(), "Pairing with the keyboard");
     dialog.setText({});
     window->grab();
@@ -169,7 +278,7 @@ TEST(WindowTest, DialogKeepsItsMarginAtEveryScale)
     for (const double scale : {1.5, 1.0, 1.25}) {
         window->setScale(scale);
         window->grab();
-        const View* actions = window->contentView()->children().back().get();
+        const View* actions = window->contentView()->children().front()->children().back().get();
         const double margin = window->size().height - actions->geometry().bottom();
         EXPECT_GE(margin, 12) << scale;
         EXPECT_LT(margin, 13) << scale;
@@ -199,7 +308,64 @@ TEST(WindowTest, DialogFitsTextLinesAtFractionalScale)
     EXPECT_LT(window->size().height - bottom, 17);
 }
 
-// As QWindow::isActive: a window stays active while its dialog has the focus.
+// A tool tip is a whole number of pixels wide; its text keeps one gap to both
+// sides, whatever the rounding leaves over.
+TEST(WindowTest, ToolTipCentresItsText)
+{
+    for (const double scale : {1.0, 1.5}) {
+        Window window;
+        window.resize({400, 200});
+        window.setContentView(std::make_unique<View>());
+        View* target = window.contentView()->addChild<View>();
+        target->setGeometry({180, 120, 40, 40});
+        window.setScale(scale);
+        window.show();
+        for (const char* text : {"Close", "Wi-Fi", "Capture Selected Window", "Record Selected Portion"}) {
+            window.pinToolTip(target, target->localRect(), text);
+            const View* tip = TestInput::toolTip(window);
+            ASSERT_NE(tip, nullptr);
+            const auto* label = static_cast<const Label*>(tip->children().front().get());
+            const RectF box = label->geometry();
+            SCOPED_TRACE(std::string(text) + " at " + std::to_string(scale));
+            EXPECT_EQ(1u, label->lineCount());
+            EXPECT_DOUBLE_EQ(label->sizeHint().width, box.width);
+            EXPECT_NEAR(box.x * scale, (tip->geometry().width - box.right()) * scale, 0.5);
+            window.unpinToolTip(target);
+        }
+    }
+}
+
+// A label in no window, given a window's text layout mode, measures as the
+// same label drawn in that window.
+TEST(WindowTest, LabelMeasuredOutsideTheWindowMatchesItsDrawnWidth)
+{
+    for (const bool hinted : {true, false}) {
+        for (const double scale : {1.0, 1.5}) {
+            Window window;
+            window.resize({600, 200});
+            window.setContentView(std::make_unique<View>());
+            window.setScale(scale);
+            window.setHintedTextLayout(hinted);
+            window.show();
+            for (const char* text : {"Close", "Wi-Fi", "Capture Selected Window", "Record Selected Portion"}) {
+                Label* drawn = window.contentView()->addChild<Label>(text);
+                drawn->setGeometry({0, 0, 600, 40});
+                window.grab();
+                Label measure(text);
+                const SizeF unset = measure.sizeHint();
+                measure.setTextLayoutMode(window.textLayoutMode());
+                SCOPED_TRACE(std::string(text) + " at " + std::to_string(scale) + (hinted ? " hinted" : ""));
+                EXPECT_EQ(drawn->sizeHint(), measure.sizeHint());
+                // Out of any window, without a mode: scale 1, hinted.
+                if (scale == 1.0 && hinted)
+                    EXPECT_EQ(drawn->sizeHint(), unset);
+                window.contentView()->takeChild(drawn);
+            }
+        }
+    }
+}
+
+// A window stays active while its dialog has the focus.
 TEST(WindowTest, ParentStaysActiveWhileItsDialogIsFocused)
 {
     Window parent;
@@ -233,7 +399,7 @@ TEST(WindowTest, ParentStaysActiveWhileItsDialogIsFocused)
     EXPECT_TRUE(other.isActive());
 }
 
-// FishUI's Toast: over the content at the bottom centre once faded in.
+// A toast: over the content at the bottom centre once faded in.
 TEST(WindowTest, ToastShowsOverTheContent)
 {
     Window window;
@@ -258,4 +424,21 @@ TEST(WindowTest, ToastShowsOverTheContent)
         }
     }
     EXPECT_GT(changed, 0);
+}
+
+TEST(WindowTest, ConfirmDialogClosesFromItsCorner)
+{
+    Window parent;
+    parent.resize({400, 300});
+    parent.setContentView(std::make_unique<View>());
+    parent.show();
+    ConfirmDialog dialog(&parent, "Close the window?");
+    bool rejected = false;
+    dialog.onRejected = [&] { rejected = true; };
+    dialog.show();
+    Window* window = dialog.window();
+    window->grab();
+    // The window's close button: 8 from the top and the end.
+    TestInput::click(*window, {window->size().width - 8 - 16, 8 + 16});
+    EXPECT_TRUE(rejected);
 }

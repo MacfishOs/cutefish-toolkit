@@ -4,6 +4,7 @@
 #pragma once
 
 #include <EGL/egl.h>
+#include <memory>
 
 #include "include/core/SkRefCnt.h"
 
@@ -12,6 +13,8 @@
 class GrDirectContext;
 
 namespace cutefish::ui {
+
+class EmbeddedGpuScope;
 
 struct EmbeddedGpu::Private
 {
@@ -24,10 +27,15 @@ struct EmbeddedGpu::Private
     int units = 8;
     int attributes = 8;
     bool abandoned = false;
+    // Between beginBatch() and endBatch().
+    std::unique_ptr<EmbeddedGpuScope> batch;
+
+    ~Private();
 };
 
-// The host's GL state around one render into its texture, as the contract in
-// embedded_gpu.h states it.
+// The host's GL state around one render into its texture, or around a batch
+// of them, as the contract in embedded_gpu.h states it. Inside a batch it
+// does nothing but check the context.
 class EmbeddedGpuScope
 {
 public:
@@ -44,6 +52,7 @@ public:
 private:
     EmbeddedGpu& m_gpu;
     bool m_valid = false;
+    bool m_nested = false;
     int m_framebuffer = 0;
     int m_readFramebuffer = 0;
     int m_viewport[4] = {};

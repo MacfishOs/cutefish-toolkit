@@ -4,6 +4,8 @@
 #include "base/file.h"
 
 #include <cerrno>
+#include <csignal>
+#include <pthread.h>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
@@ -58,6 +60,25 @@ static bool writeAll(int fd, std::string_view contents)
         contents.remove_prefix(size_t(written));
     }
     return true;
+}
+
+ssize_t writeWithoutSigpipe(int fd, const void* data, size_t size)
+{
+    sigset_t sigpipe;
+    sigemptyset(&sigpipe);
+    sigaddset(&sigpipe, SIGPIPE);
+    sigset_t previous;
+    pthread_sigmask(SIG_BLOCK, &sigpipe, &previous);
+    const ssize_t n = ::write(fd, data, size);
+    const int error = errno;
+    if (n < 0 && error == EPIPE) {
+        const timespec zero = {0, 0};
+        while (sigtimedwait(&sigpipe, nullptr, &zero) == -1 && errno == EINTR) {
+        }
+    }
+    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    errno = error;
+    return n;
 }
 
 bool writeAtomically(const std::string& path, std::string_view contents)

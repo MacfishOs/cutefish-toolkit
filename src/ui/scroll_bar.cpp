@@ -91,21 +91,29 @@ double ScrollBar::handleStart() const
     return m_startPadding + (trackLength() - handleLength()) * fraction;
 }
 
+void ScrollBar::setDarkMode(std::optional<bool> dark)
+{
+    if (dark == m_darkMode)
+        return;
+    m_darkMode = dark;
+    requestPaint();
+}
+
 void ScrollBar::paint(Painter& painter)
 {
     if (m_opacity <= 0 || !isNeeded())
         return;
     const Theme& theme = Theme::current();
-    const double alpha = m_dragging ? (theme.darkMode ? 0.4 : 0.5) : (theme.darkMode ? 0.5 : 0.4);
-    const Color color = (theme.darkMode ? Color::rgb(0xFFFFFF) : Color::rgb(0x000000))
-                                .withAlpha(alpha * m_opacity);
+    const bool dark = m_darkMode.value_or(theme.darkMode);
+    const double alpha = m_dragging ? (dark ? 0.4 : 0.5) : (dark ? 0.5 : 0.4);
+    const Color color = (dark ? Color::rgb(0xFFFFFF) : Color::rgb(0x000000)).withAlpha(alpha * m_opacity);
     const double width = thickness - 2 * kPadding;
     RectF handle;
     if (m_orientation == Orientation::Vertical)
         handle = {kPadding, handleStart(), width, handleLength()};
     else
         handle = {handleStart(), kPadding, handleLength(), width};
-    painter.drawQuickRectangle(handle, theme.smallRadius, color);
+    painter.drawSmoothRectangle(handle, theme.smallRadius, color);
 }
 
 void ScrollBar::pointerEnter()

@@ -123,9 +123,9 @@ TEST(PainterTest, SnapsShapesAsPixelGrid)
     EXPECT_EQ(sliver, (Rect{1, 0, 15, 1}));
 }
 
-// FishUI's RoundedRectangle at 150%, rendered by Qt 6.8 on the test laptop:
-// the top-left corners of white cards on #EEEEEE.
-TEST(PainterTest, RoundedRectCornersMatchFishUI)
+// Reference rounded rectangles at 150%, rendered on the test laptop: the
+// top-left corners of white cards on #EEEEEE.
+TEST(PainterTest, RoundedRectCornersMatchReference)
 {
     constexpr int kContinuous[8][8] = {
         {238, 238, 238, 238, 238, 238, 238, 238},
@@ -186,10 +186,10 @@ TEST(PainterTest, InsetRingsFollowTheSnappedShape)
     EXPECT_TRUE(near(image.pixel(28, middle), kRed));
 }
 
-// What Qt's SVG reader honours and Skia's leaves out: a size without a view
+// What Skia's SVG renderer leaves out: a size without a view
 // box, <style> class rules with currentColor, and a pattern in the bounding
 // box units of the rect it fills.
-TEST(PainterTest, DrawsSvgFilesAsQtReadsThem)
+TEST(PainterTest, DrawsSvgFeaturesSkiaLeavesOut)
 {
     // A file each: drawings are cached by path.
     int files = 0;
@@ -230,6 +230,17 @@ TEST(PainterTest, DrawsSvgFilesAsQtReadsThem)
 </defs></svg>)svg");
     EXPECT_TRUE(near(patterned.pixel(4, 16), kBlue, 8));
     EXPECT_TRUE(near(patterned.pixel(28, 16), kRed, 8));
+
+    // The same filling a rectangle drawn as a path, as Colloid's PNG shadows
+    // do: librsvg draws it alike.
+    const Image pathPatterned = draw(R"svg(<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 16 16">
+<path fill="url(#p)" d="M0 0h16v16H0z"/>
+<defs><pattern id="p" patternContentUnits="objectBoundingBox" width="1" height="1">
+<use xlink:href="#i" transform="matrix(0.5 0 0 1 0 0)"/></pattern>
+<image id="i" width="2" height="1" preserveAspectRatio="none" xlink:href="data:image/png;base64,)svg" + base64 + R"svg("/>
+</defs></svg>)svg");
+    EXPECT_TRUE(near(pathPatterned.pixel(4, 16), kBlue, 8));
+    EXPECT_TRUE(near(pathPatterned.pixel(28, 16), kRed, 8));
 }
 
 TEST(PainterTest, DrawsSvgFilesAndAppGlyphs)

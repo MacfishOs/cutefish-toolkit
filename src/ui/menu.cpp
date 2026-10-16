@@ -6,9 +6,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <string>
 
 #include "base/event_loop.h"
 #include "ui/application.h"
+#include "ui/embedded_window.h"
 #include "ui/icon.h"
 #include "ui/keys.h"
 #include "ui/label.h"
@@ -20,7 +23,7 @@
 
 namespace cutefish::ui {
 
-// FishUI's MenuItem, MenuSeparator and MenuSurface metrics.
+// Row, separator and surface metrics.
 static constexpr double kRowHeight = 30;
 static constexpr double kRowSpacing = 1;
 static constexpr double kSeparatorHeight = 5;
@@ -38,10 +41,15 @@ static constexpr double kCheckSize = 12;
 static constexpr double kCheckSpacing = 6;
 static constexpr double kIconSize = 22;
 static constexpr double kGlyphSize = 16;
-// MenuPopupWindow keeps this far from the screen's edges.
+// A row's chevron slot, and how far a submenu overlaps its menu's frame.
+static constexpr double kArrowSize = 20;
+static constexpr double kSubmenuOverlap = 2;
+// The backstop for the pointer leaving towards nowhere.
+static constexpr std::chrono::milliseconds kSubmenuDismissDelay{50};
+// A menu keeps this far from the screen's edges.
 static constexpr double kScreenMargin = 6;
 static constexpr double kDropDownHeight = 240;
-// DesktopMenu's scroll indicator.
+// A desktop menu's scroll indicator.
 static constexpr double kIndicatorWidth = 3;
 static constexpr double kIndicatorMinimumLength = 24;
 // Letters typed within this long of each other make up one search.
@@ -89,6 +97,8 @@ public:
                     row.shortcut = addChild<Label>(item.shortcut);
                     row.shortcut->setVerticallyCentered(true);
                 }
+                if (item.submenu)
+                    row.arrow = addChild<Icon>("angle-right", kArrowSize);
             }
             m_rows.push_back(row);
         }
@@ -131,7 +141,7 @@ public:
         return -1;
     }
 
-    // ListView.positionViewAtIndex with ListView.Center, once laid out.
+    // The row scrolled to the middle of the view, once laid out.
     void centreOnOpen(int row) { m_centreRow = row; }
 
     void pointerMoved(PointF windowPoint)
@@ -145,13 +155,97 @@ public:
             return;
         m_keyboard = false;
         setCurrent(row);
+        // Another row, or none, takes the submenu down; a row with one opens it.
+        if (m_menu->m_openSubmenu && row != submenuRow())
+            m_menu->closeSubmenu();
+        if (row >= 0 && m_menu->m_items[m_rows[size_t(row)].index].submenu)
+            openSubmenu(row, false);
     }
 
     void pointerLeft()
     {
         m_pointerInside = false;
-        if (!m_keyboard)
+        // A row whose submenu is open stays lit while the pointer goes over.
+        if (m_menu->m_openSubmenu) {
+            setCurrent(submenuRow());
+            m_menu->scheduleSubmenuCheck();
+        } else if (!m_keyboard) {
             setCurrent(-1);
+        }
+        if (m_menu->m_parentMenu)
+            m_menu->m_parentMenu->scheduleSubmenuCheck();
+    }
+
+    bool pointerInside() const { return m_pointerInside; }
+    int current() const { return m_current; }
+    bool isKeyboardDriven() const { return m_keyboard; }
+    // The lit row's item, or -1.
+    int currentItem() const { return m_current >= 0 ? int(m_rows[size_t(m_current)].index) : -1; }
+    void setCurrentItem(size_t item, bool keyboard)
+    {
+        for (size_t i = 0; i < m_rows.size(); ++i) {
+            if (m_rows[i].index == item && m_rows[i].label) {
+                m_keyboard = keyboard;
+                setCurrent(int(i));
+                updateColors();
+                return;
+            }
+        }
+    }
+
+    // The row the open submenu hangs off, or -1.
+    int submenuRow() const
+    {
+        for (size_t i = 0; i < m_rows.size(); ++i) {
+            if (m_menu->m_openSubmenu && m_menu->m_items[m_rows[i].index].submenu.get() == m_menu->m_openSubmenu)
+                return int(i);
+        }
+        return -1;
+    }
+
+    // MenuPopupWindow's submenu placement: against the menu's frame, two
+    // pixels over it, its first row level with the row; mirrored to the
+    // other side when it does not fit, slid to stay on screen.
+    void openSubmenu(int row, bool fromKeyboard)
+    {
+        const Item& item = m_menu->m_items[m_rows[size_t(row)].index];
+        Menu* submenu = item.submenu.get();
+        if (!submenu || !item.enabled || (submenu == m_menu->m_openSubmenu && submenu->isOpen()))
+            return;
+        Window* window = this->window();
+        if (!window)
+            return;
+        m_menu->closeSubmenu();
+        const double top = mapToWindow({0, m_rows[size_t(row)].rect.y}).y;
+        PopupPlacement placement;
+        placement.anchorRect = {kSubmenuOverlap, top - kVerticalContentMargin,
+                                std::max(1.0, window->size().width - 2 * kSubmenuOverlap), kRowHeight};
+        placement.anchor = PopupAnchor::TopRight;
+        placement.gravity = PopupAnchor::BottomRight;
+        placement.flipX = true;
+        placement.flipY = false;
+        placement.slide = true;
+        submenu->open(window, placement, fromKeyboard, false);
+        if (!submenu->isOpen())
+            return;
+        m_menu->m_openSubmenu = submenu;
+        m_menu->m_submenuFromKeyboard = fromKeyboard;
+        if (fromKeyboard) {
+            m_keyboard = true;
+            if (Rows* rows = submenu->rows())
+                rows->step(1);
+        }
+        setCurrent(row);
+        updateColors();
+        requestPaint();
+    }
+
+    void submenuClosed()
+    {
+        if (!m_pointerInside && !m_keyboard)
+            setCurrent(-1);
+        updateColors();
+        requestPaint();
     }
 
     // The view moved under a still pointer.
@@ -163,6 +257,11 @@ public:
 
     bool key(const KeyEvent& event)
     {
+        // The innermost open menu takes the keys.
+        if (m_menu->m_openSubmenu) {
+            if (Rows* rows = m_menu->m_openSubmenu->rows())
+                return rows->key(event);
+        }
         return m_menu->m_dropDown ? dropDownKey(event) : desktopKey(event);
     }
 
@@ -192,6 +291,11 @@ protected:
                                        kIconSize, kIconSize});
             }
             double right = row.rect.right() - kRowPadding;
+            if (row.arrow) {
+                row.arrow->setGeometry({right - kArrowSize, y + std::round((kRowHeight - kArrowSize) / 2), kArrowSize,
+                                        kArrowSize});
+                right -= kArrowSize + kItemSpacing;
+            }
             if (row.shortcut) {
                 const double shortcutWidth = row.shortcut->sizeHint().width;
                 row.shortcut->setGeometry({right - shortcutWidth, y, shortcutWidth, kRowHeight});
@@ -240,10 +344,11 @@ protected:
 
     void pointerRelease(const PointerEvent& event) override
     {
-        // Choosing is on release, over the row the pointer is on then.
+        // Choosing is on release, over the row the pointer is on then; a row
+        // with a submenu only opens it.
         const int row = rowAt(event.position);
         if (row >= 0)
-            m_menu->activate(m_rows[size_t(row)].index);
+            choose(row, false);
     }
 
 private:
@@ -255,8 +360,17 @@ private:
         Icon* check = nullptr;
         Icon* glyph = nullptr;
         ThemeIcon* icon = nullptr;
+        Icon* arrow = nullptr;
         RectF rect;
     };
+
+    void choose(int row, bool fromKeyboard)
+    {
+        if (m_menu->m_items[m_rows[size_t(row)].index].submenu)
+            openSubmenu(row, fromKeyboard);
+        else
+            m_menu->activate(m_rows[size_t(row)].index);
+    }
 
     double labelPadding() const { return m_checkColumn ? kCheckSize + kCheckSpacing : kLabelPadding; }
 
@@ -269,19 +383,28 @@ private:
         return 0;
     }
 
-    // MenuItem's implicit width; a drop-down measures its rows in the menu's
-    // font, as ComboBoxMenu's probe row does.
+    // A row's own width; a drop-down measures its rows in the menu's font.
     double rowWidth(const Row& row) const
+    {
+        const double maximum = m_menu->m_items[row.index].maximumWidth;
+        const double width = naturalRowWidth(row);
+        return maximum > 0 ? std::min(width, maximum) : width;
+    }
+
+    double naturalRowWidth(const Row& row) const
     {
         double text = row.label->sizeHint().width;
         const Item& item = m_menu->m_items[row.index];
         if (!item.fontFamily.empty()) {
             Label probe(item.text);
+            probe.setTextLayoutMode(row.label->textLayoutMode());
             text = probe.sizeHint().width;
         }
         double width = labelPadding() + glyphPadding(row) + text;
         if (row.shortcut)
             width += row.shortcut->sizeHint().width + kShortcutSpacing;
+        if (row.arrow)
+            width += kArrowSize + kItemSpacing;
         return std::max(kMinimumRowWidth, std::ceil(width) + 2 * kRowPadding);
     }
 
@@ -302,7 +425,7 @@ private:
         return -1;
     }
 
-    // DesktopMenu's keys: the arrows wrap round the enabled rows.
+    // A desktop menu's keys: the arrows wrap round the enabled rows.
     bool desktopKey(const KeyEvent& event)
     {
         switch (event.key) {
@@ -323,13 +446,25 @@ private:
         case key::Return:
         case key::KeypadEnter:
             if (selectable(m_current))
-                m_menu->activate(m_rows[size_t(m_current)].index);
+                choose(m_current, true);
             else if (m_current < 0)
-                m_menu->close();
+                m_menu->rootMenu()->close();
             return true;
         case key::Space:
             if (selectable(m_current))
-                m_menu->activate(m_rows[size_t(m_current)].index);
+                choose(m_current, true);
+            return true;
+        case key::Right:
+            if (selectable(m_current) && m_menu->m_items[m_rows[size_t(m_current)].index].submenu)
+                openSubmenu(m_current, true);
+            else if (!m_menu->m_parentMenu && m_menu->onNavigateRight)
+                m_menu->onNavigateRight();
+            return true;
+        case key::Left:
+            if (m_menu->m_parentMenu)
+                m_menu->close();
+            else if (m_menu->onNavigateLeft)
+                m_menu->onNavigateLeft();
             return true;
         case key::Escape:
             m_menu->close();
@@ -339,7 +474,7 @@ private:
         }
     }
 
-    // ComboBoxMenu's keys: the arrows stop at the ends, and typing finds rows.
+    // A drop-down's keys: the arrows stop at the ends, and typing finds rows.
     bool dropDownKey(const KeyEvent& event)
     {
         switch (event.key) {
@@ -486,7 +621,9 @@ private:
             if (!row.label)
                 continue;
             const bool enabled = m_menu->m_items[row.index].enabled;
-            const bool active = enabled && int(i) == m_current;
+            const bool active = enabled && (int(i) == m_current
+                                            || (m_menu->m_openSubmenu
+                                                && m_menu->m_items[row.index].submenu.get() == m_menu->m_openSubmenu));
             const Color disabled = theme.text.withAlpha(0.4);
             const std::optional<Color> text = !enabled ? std::optional<Color>(disabled)
                                                        : active ? std::optional<Color>(theme.highlightedText)
@@ -498,6 +635,8 @@ private:
                 row.glyph->setColor(text);
             if (row.shortcut)
                 row.shortcut->setColor(!enabled ? disabled : active ? theme.highlightedText : theme.text.withAlpha(0.5));
+            if (row.arrow)
+                row.arrow->setColor(active ? theme.highlightedText : theme.disabledText);
         }
     }
 
@@ -515,7 +654,7 @@ private:
     int m_searchTimer = 0;
 };
 
-// DesktopMenu's scroll indicator, drawn over the rows of a menu that scrolls.
+// A desktop menu's scroll indicator, drawn over the rows of a menu that scrolls.
 class ScrollIndicator : public View
 {
 public:
@@ -535,7 +674,7 @@ protected:
         const double length = std::max(kIndicatorMinimumLength, view.height * view.height / content);
         const RectF bar = {view.right() - kIndicatorWidth,
                            view.y + view.height * (m_view->scrollPosition().y / content), kIndicatorWidth, length};
-        painter.drawQuickRectangle(bar, kIndicatorWidth / 2,
+        painter.drawSmoothRectangle(bar, kIndicatorWidth / 2,
                                    theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.35)
                                                   : Color::rgb(0x000000).withAlpha(0.25));
     }
@@ -544,8 +683,8 @@ private:
     const ScrollView* m_view;
 };
 
-// The popup's content: MenuSurface's background and the scrolling rows,
-// with ComboBoxMenu's scroll bar or DesktopMenu's indicator.
+// The popup's content: the background and the scrolling rows, with a
+// drop-down's scroll bar or a desktop menu's indicator.
 class Menu::Surface : public View
 {
 public:
@@ -569,14 +708,26 @@ public:
         setTracksHover(true);
     }
 
+    // MenuSurface's implicit size: the arrow's length added across its edge,
+    // and the edge it stands on at least long enough to show it.
     SizeF sizeHint() const override
     {
         const SizeF rows = m_rows->sizeHint();
-        return {std::max(m_menu->m_minimumWidth, rows.width + 2 * kContentMargin),
-                rows.height + 2 * kVerticalContentMargin};
+        const BubbleShape shape = m_menu->bubble({}, 0);
+        const bool across = shape.arrowEdge == BubbleShape::Edge::Left || shape.arrowEdge == BubbleShape::Edge::Right;
+        const bool along = shape.arrowEdge == BubbleShape::Edge::Top || shape.arrowEdge == BubbleShape::Edge::Bottom;
+        return {std::max({m_menu->m_minimumWidth, rows.width + 2 * kContentMargin + (across ? shape.arrowLength : 0),
+                          along ? shape.minimumEdgeLength() : 0}),
+                std::max(rows.height + 2 * kVerticalContentMargin + (along ? shape.arrowLength : 0),
+                         across ? shape.minimumEdgeLength() : 0)};
     }
 
     Rows* rows() const { return m_rows; }
+
+    void setArrowPosition(double position) { m_arrowPosition = position; }
+    BubbleShape shape() const { return m_menu->bubble(geometry().size(), m_arrowPosition); }
+    // Painted as a path rather than a rounded rect.
+    bool isShaped() const { return m_menu->m_arrowEdge != BubbleShape::Edge::None || m_menu->m_continuousCorners; }
 
     bool acceptsPointer() const override { return true; }
     bool acceptsFocus() const override { return true; }
@@ -584,17 +735,25 @@ public:
 protected:
     void layout() override
     {
-        m_scroll->setGeometry(localRect().adjusted(kContentMargin, kVerticalContentMargin, -kContentMargin,
-                                                   -kVerticalContentMargin));
+        const RectF body = shape().bodyRect();
+        m_scroll->setGeometry(body.adjusted(kContentMargin, kVerticalContentMargin, -kContentMargin,
+                                            -kVerticalContentMargin));
         if (m_indicator)
-            m_indicator->setGeometry(localRect());
+            m_indicator->setGeometry(body);
     }
 
     void paint(Painter& painter) override
     {
         const Theme& theme = Theme::current();
+        // A bubble paints its colour only without glass; an
+        // embedded host draws the glass, tint included, into blurRect().
+        if (Application::instance()->platform() == Application::Platform::Embedded && EmbeddedWindow::host())
+            return;
         // Over the compositor's blur; the window radius is the compositor's too.
-        painter.fillRoundedRect(localRect(), theme.windowRadius, theme.secondBackground.withAlpha(0.8));
+        if (isShaped())
+            painter.fillPath(shape().path(), theme.secondBackground.withAlpha(0.8));
+        else
+            painter.fillRoundedRect(localRect(), theme.windowRadius, theme.secondBackground.withAlpha(0.8));
     }
 
     void pointerMove(const PointerEvent& event) override { m_rows->pointerMoved(mapToWindow(event.position)); }
@@ -611,12 +770,17 @@ private:
     ScrollView* m_scroll;
     Rows* m_rows = nullptr;
     ScrollIndicator* m_indicator = nullptr;
+    double m_arrowPosition = 0;
 };
 
 Menu::Menu() = default;
 
 Menu::~Menu()
 {
+    if (m_submenuTimer)
+        Application::instance()->loop().stopTimer(m_submenuTimer);
+    if (m_parentMenu && m_parentMenu->m_openSubmenu == this)
+        m_parentMenu->m_openSubmenu = nullptr;
     m_window.reset();
 }
 
@@ -635,6 +799,29 @@ void Menu::addSeparator()
     Item item;
     item.separator = true;
     m_items.push_back(std::move(item));
+}
+
+Menu* Menu::addSubmenu(std::string text)
+{
+    Item item;
+    item.text = std::move(text);
+    item.submenu = std::make_unique<Menu>();
+    item.submenu->m_parentMenu = this;
+    m_items.push_back(std::move(item));
+    return m_items.back().submenu.get();
+}
+
+Menu* Menu::submenu(size_t index) const
+{
+    return index < m_items.size() ? m_items[index].submenu.get() : nullptr;
+}
+
+void Menu::setItemText(size_t index, std::string text)
+{
+    if (index < m_items.size()) {
+        m_items[index].text = std::move(text);
+        itemsChanged();
+    }
 }
 
 void Menu::setItemEnabled(size_t index, bool enabled)
@@ -667,6 +854,94 @@ void Menu::setItemGlyph(size_t index, std::string glyph)
         m_items[index].glyph = std::move(glyph);
 }
 
+void Menu::setItemMaximumWidth(size_t index, double width)
+{
+    if (index < m_items.size())
+        m_items[index].maximumWidth = width;
+}
+
+void Menu::setArrow(BubbleShape::Edge edge, PointF target)
+{
+    m_arrowEdge = edge;
+    m_arrowTarget = target;
+}
+
+BubbleShape Menu::bubble(SizeF size, double arrowPosition) const
+{
+    BubbleShape shape;
+    shape.width = size.width;
+    shape.height = size.height;
+    shape.radius = Theme::current().windowRadius;
+    shape.continuousCorners = m_continuousCorners;
+    shape.arrowEdge = m_arrowEdge;
+    shape.arrowPosition = arrowPosition;
+    return shape;
+}
+
+double Menu::minimumEdgeLength() const
+{
+    return bubble({}, 0).minimumEdgeLength();
+}
+
+SizeF Menu::popupSize(Window* parent, SizeF content) const
+{
+    SizeF size = {std::ceil(content.width), std::ceil(content.height)};
+    // A drop-down is at most half the screen tall, and a desktop menu the
+    // screen, so long lists scroll.
+    const SizeF screen = parent->screenSize();
+    const double height = m_availableGeometry ? m_availableGeometry->height : screen.height;
+    if (height > 0) {
+        const double available = height - 2 * kScreenMargin;
+        const double maximum = m_dropDown ? std::max(std::min(available, kDropDownHeight), std::round(available * 0.5))
+                                          : available;
+        size.height = std::min(size.height, maximum);
+    }
+    return size;
+}
+
+SizeF Menu::implicitSize(Window* window)
+{
+    Surface probe(this, false);
+    probe.setTextLayoutMode(window->textLayoutMode());
+    return popupSize(window, probe.sizeHint());
+}
+
+void Menu::popupAt(Window* window, PointF topLeft)
+{
+    // Once per opening, before measuring, so rows it adds count.
+    close();
+    if (onAboutToShow)
+        onAboutToShow();
+    m_aboutToShowDone = true;
+    const SizeF size = implicitSize(window);
+    // MenuPopupWindow::popupPosition on whole pixels, its right and bottom
+    // the last pixel inside, as an integer rect has them.
+    double x = std::round(topLeft.x);
+    double y = std::round(topLeft.y);
+    const SizeF screen = window->screenSize();
+    const RectF area = m_availableGeometry.value_or(RectF{0, 0, screen.width, screen.height});
+    if (area.width > 0 && area.height > 0) {
+        const double right = area.x + area.width - 1;
+        const double bottom = area.y + area.height - 1;
+        if (x + size.width > right - kScreenMargin)
+            x = right - size.width - kScreenMargin;
+        if (y + size.height > bottom - kScreenMargin)
+            y = bottom - kScreenMargin - size.height;
+        x = std::max(area.x + kScreenMargin, std::min(x, right - kScreenMargin - size.width));
+        y = std::max(area.y + kScreenMargin, y);
+    }
+    PopupPlacement placement;
+    placement.anchorRect = {x, y, 1, 1};
+    placement.anchor = PopupAnchor::TopLeft;
+    placement.gravity = PopupAnchor::BottomRight;
+    placement.flipX = false;
+    placement.flipY = false;
+    m_openAt = PointF{x, y};
+    open(window, placement, false);
+    m_openAt.reset();
+    m_aboutToShowDone = false;
+}
+
 void Menu::setItemFontFamily(size_t index, std::string family)
 {
     if (index < m_items.size())
@@ -675,6 +950,7 @@ void Menu::setItemFontFamily(size_t index, std::string family)
 
 void Menu::clear()
 {
+    closeSubmenu();
     m_items.clear();
 }
 
@@ -706,32 +982,34 @@ void Menu::popupFor(View* view, double gap, std::optional<RectF> rect, bool from
     open(window, placement, fromKeyboard);
 }
 
-void Menu::open(Window* parent, const PopupPlacement& placement, bool fromKeyboard)
+void Menu::open(Window* parent, const PopupPlacement& placement, bool fromKeyboard, bool grab)
 {
     close();
-    m_window = std::make_unique<Window>(parent, placement, true);
+    if (onAboutToShow && !m_aboutToShowDone)
+        onAboutToShow();
+    // A submenu without a visible row would map as an empty frame.
+    if (m_parentMenu && !onAboutToShow
+        && std::none_of(m_items.begin(), m_items.end(), [](const Item& item) { return item.visible; }))
+        return;
+    m_window = Window::createPopup(parent, placement, grab);
     auto content = std::make_unique<Surface>(this, fromKeyboard);
     Surface* surface = content.get();
-    SizeF size = content->sizeHint();
-    size.width = std::ceil(size.width);
-    size.height = std::ceil(size.height);
-
-    // A drop-down is at most half the screen tall, and a desktop menu the
-    // screen, so long lists scroll.
-    const SizeF screen = parent->screenSize();
-    if (screen.height > 0) {
-        const double available = screen.height - 2 * kScreenMargin;
-        const double maximum = m_dropDown ? std::max(std::min(available, kDropDownHeight), std::round(available * 0.5))
-                                          : available;
-        size.height = std::min(size.height, maximum);
-    }
+    // Measured in the popup, at its scale: text measured elsewhere at scale 1
+    // takes rounded advances and comes out narrower than drawn.
+    m_window->setContentView(std::move(content));
+    const SizeF size = popupSize(parent, surface->sizeHint());
+    // The arrow follows the target from where the menu opens.
+    const PointF origin = m_openAt.value_or(PointF{placement.anchorRect.x, placement.anchorRect.y});
+    const bool across = m_arrowEdge == BubbleShape::Edge::Left || m_arrowEdge == BubbleShape::Edge::Right;
+    surface->setArrowPosition(across ? m_arrowTarget.y - origin.y : m_arrowTarget.x - origin.x);
     if (m_dropDown)
         surface->rows()->centreOnOpen(surface->rows()->checkedRow());
 
     m_window->resize(size);
     m_window->setBackgroundColor(Color::rgb(0x000000).withAlpha(0));
-    m_window->setContentView(std::move(content));
-    m_window->setBackgroundBlur({0, 0, size.width, size.height}, Theme::current().windowRadius);
+    const double arrowPosition = surface->shape().arrowPosition;
+    applyBlur(size, arrowPosition);
+    m_shownItems = itemsSignature();
     m_window->onCloseRequested = [this] { close(); };
     surface->setFocus(fromKeyboard ? FocusReason::Keyboard : FocusReason::Other);
     m_window->show();
@@ -741,10 +1019,21 @@ void Menu::close()
 {
     if (!m_window)
         return;
+    closeSubmenu();
+    if (m_submenuTimer) {
+        Application::instance()->loop().stopTimer(m_submenuTimer);
+        m_submenuTimer = 0;
+    }
     // A row closes the menu from inside the popup's own event handling; the
-    // window goes once that is over.
+    // window goes once that is over, and off screen now.
     std::shared_ptr<Window> window(std::move(m_window));
+    window->hide();
     Application::instance()->loop().post([window] {});
+    if (m_parentMenu && m_parentMenu->m_openSubmenu == this) {
+        m_parentMenu->m_openSubmenu = nullptr;
+        if (Rows* rows = m_parentMenu->rows())
+            rows->submenuClosed();
+    }
     if (onClosed)
         onClosed();
 }
@@ -754,9 +1043,124 @@ void Menu::activate(size_t index)
     if (index >= m_items.size() || !m_items[index].enabled)
         return;
     const std::function<void()> action = m_items[index].action;
-    close();
+    // Choosing a row closes the whole chain.
+    rootMenu()->close();
     if (action)
         action();
+}
+
+void Menu::applyBlur(SizeF size, double arrowPosition)
+{
+    if (m_arrowEdge != BubbleShape::Edge::None || m_continuousCorners) {
+        // The glass is the body, masked by the whole outline.
+        const BubbleShape shape = bubble(size, arrowPosition);
+        m_window->setBackgroundBlur(shape.bodyRect(), Theme::current().windowRadius);
+        m_window->setBackgroundBlurShape(shape.path());
+    } else {
+        m_window->setBackgroundBlur({0, 0, size.width, size.height}, Theme::current().windowRadius);
+    }
+}
+
+std::string Menu::itemsSignature() const
+{
+    std::string signature;
+    for (const Item& item : m_items) {
+        signature += item.text + '\x1f' + item.shortcut + '\x1f' + item.icon + '\x1f' + item.glyph + '\x1f'
+                + item.fontFamily + '\x1f' + std::to_string(reinterpret_cast<uintptr_t>(item.submenu.get())) + '\x1f'
+                + std::to_string(item.maximumWidth) + char('0' + item.separator) + char('0' + item.enabled)
+                + char('0' + item.visible) + char('0' + item.checked) + '\x1e';
+    }
+    return signature;
+}
+
+void Menu::itemsChanged()
+{
+    if (!m_window || m_rebuildPosted)
+        return;
+    m_rebuildPosted = true;
+    // Rows may be calling in from their own event handling.
+    Application::instance()->loop().post([alive = std::weak_ptr<bool>(m_alive), this] {
+        if (alive.expired())
+            return;
+        m_rebuildPosted = false;
+        rebuild();
+    });
+}
+
+void Menu::rebuild()
+{
+    if (!m_window || !m_window->contentView())
+        return;
+    const std::string signature = itemsSignature();
+    if (signature == m_shownItems)
+        return;
+    m_shownItems = signature;
+    const auto* previous = static_cast<const Surface*>(m_window->contentView());
+    const int currentItem = previous->rows()->currentItem();
+    const bool keyboard = previous->rows()->isKeyboardDriven();
+    const double arrowPosition = previous->shape().arrowPosition;
+    if (m_openSubmenu && std::none_of(m_items.begin(), m_items.end(), [this](const Item& item) {
+            return item.visible && item.submenu.get() == m_openSubmenu;
+        }))
+        closeSubmenu();
+
+    auto content = std::make_unique<Surface>(this, keyboard);
+    Surface* surface = content.get();
+    surface->setArrowPosition(arrowPosition);
+    Window* parent = m_window->parentWindow();
+    m_window->setContentView(std::move(content));
+    const SizeF size = popupSize(parent ? parent : m_window.get(), surface->sizeHint());
+    m_window->resize(size);
+    applyBlur(size, arrowPosition);
+    surface->setFocus(keyboard ? FocusReason::Keyboard : FocusReason::Other);
+    if (currentItem >= 0)
+        surface->rows()->setCurrentItem(size_t(currentItem), keyboard);
+}
+
+Menu* Menu::rootMenu()
+{
+    Menu* menu = this;
+    while (menu->m_parentMenu)
+        menu = menu->m_parentMenu;
+    return menu;
+}
+
+Menu::Rows* Menu::rows() const
+{
+    if (!m_window || !m_window->contentView())
+        return nullptr;
+    return static_cast<Surface*>(m_window->contentView())->rows();
+}
+
+void Menu::closeSubmenu()
+{
+    if (m_openSubmenu)
+        m_openSubmenu->close();
+    m_openSubmenu = nullptr;
+}
+
+void Menu::checkSubmenuHover()
+{
+    if (!m_openSubmenu || m_submenuFromKeyboard)
+        return;
+    const Rows* submenuRows = m_openSubmenu->rows();
+    if (submenuRows && submenuRows->pointerInside())
+        return;
+    const Rows* own = rows();
+    if (own && own->pointerInside() && own->current() == own->submenuRow())
+        return;
+    closeSubmenu();
+}
+
+void Menu::scheduleSubmenuCheck()
+{
+    auto& loop = Application::instance()->loop();
+    if (m_submenuTimer)
+        loop.stopTimer(m_submenuTimer);
+    m_submenuTimer = loop.startTimer(kSubmenuDismissDelay, false, [this] {
+        m_submenuTimer = 0;
+        checkSubmenuHover();
+    });
 }
 
 } // namespace cutefish::ui

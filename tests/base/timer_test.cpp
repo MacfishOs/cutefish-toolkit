@@ -122,3 +122,40 @@ TEST(TimerTest, DestroyedOwnerIsNeverCalled)
     loop.run();
     EXPECT_FALSE(fired);
 }
+
+TEST(TimerTest, RestartsMoveTheDeadlineBothWays)
+{
+    EventLoop loop;
+    Timer timer;
+    timer.setSingleShot(true);
+    std::chrono::steady_clock::time_point fired;
+    timer.onTimeout = [&] { fired = std::chrono::steady_clock::now(); };
+    const auto start = std::chrono::steady_clock::now();
+    timer.start(10ms);
+    // Pushed back every 2 ms for 30 ms, as a burst of reads restarts a timer.
+    int restarts = 0;
+    const int pusher = loop.startTimer(2ms, true, [&] {
+        if (std::chrono::steady_clock::now() - start < 30ms) {
+            timer.start(10ms);
+            ++restarts;
+        }
+    });
+    loop.startTimer(80ms, false, [&] { loop.quit(); });
+    loop.run();
+    loop.stopTimer(pusher);
+    EXPECT_GT(restarts, 5);
+    ASSERT_NE(fired.time_since_epoch().count(), 0);
+    // Not before the last restart's deadline, which is past 30 ms.
+    EXPECT_GE(fired - start, 30ms);
+    EXPECT_LT(fired - start, 60ms);
+
+    // A shorter interval brings it forward.
+    fired = {};
+    const auto again = std::chrono::steady_clock::now();
+    timer.start(50ms);
+    loop.startTimer(5ms, false, [&] { timer.start(5ms); });
+    loop.startTimer(40ms, false, [&] { loop.quit(); });
+    loop.run();
+    ASSERT_NE(fired.time_since_epoch().count(), 0);
+    EXPECT_LT(fired - again, 30ms);
+}

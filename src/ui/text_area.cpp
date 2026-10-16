@@ -30,11 +30,11 @@ namespace textlayout = skia::textlayout;
 
 namespace cutefish::ui {
 
-// QQuickTextInput's coarse timer of half the cursor flash time fires up to 5% early.
+// A coarse timer of half the cursor flash time fires up to 5% early.
 static constexpr auto kBlinkInterval = std::chrono::milliseconds(475);
 // Wide enough that nothing wraps.
 static constexpr double kUnboundedWidth = 1e6;
-// FishUI's background: a field width when the area has no text.
+// The background: a field width when the area has no text.
 static constexpr double kFrameWidth = 120;
 // The surrounding text an input method gets around the cursor.
 static constexpr size_t kSurroundingLimit = 4000;
@@ -48,6 +48,15 @@ struct TextArea::Private
     Margins padding = Margins::all(6);
     bool frame = true;
     double fontSize = 0;
+    int fontWeight = 400;
+    std::string fontFamily;
+    // 0 left, 0.5 centred, 1 right.
+    double align = 0;
+    bool verticallyCentered = false;
+    std::optional<Color> textColor;
+    std::optional<Color> selectionColor;
+    std::optional<Color> selectedTextColor;
+    bool persistentSelection = false;
     std::string preedit;
     int preeditCursor = -1;
 
@@ -66,6 +75,7 @@ struct TextArea::Private
     uint64_t paragraphTheme = 0;
     double layoutWidth = -1;
     double layoutScale = 0;
+    bool layoutHinted = true;
     std::vector<TextLineBox> lines;
     TextGeometry geometry;
 
@@ -85,7 +95,7 @@ struct TextArea::Private
     double pixelSize() const { return TextContext::pixelSize(fontSize > 0 ? fontSize : Theme::current().fontSize()); }
 
     // With breaks, a newline before each of those text offsets: the lines
-    // Qt's layout made.
+    // the layout made.
     void buildDisplay(const std::vector<size_t>& breaks = {})
     {
         const std::string& text = edit.text();
@@ -116,6 +126,11 @@ struct TextArea::Private
     }
 
     // Lays the text out in a content width, in logical pixels.
+    bool hintedLayout() const
+    {
+        return (*self)->textLayoutMode().hinted;
+    }
+
     void layout(double width, double scale, bool enabled)
     {
         const bool rebuild = !unwrapped || dirty || paragraphEnabled != enabled
@@ -124,7 +139,7 @@ struct TextArea::Private
             const TextContext& context = Application::instance()->text();
             const Theme& theme = Theme::current();
             const textlayout::TextStyle style =
-                context.style(fontSize, 400, enabled ? theme.text : theme.disabledText);
+                context.style(fontSize, fontWeight, enabled ? theme.text : theme.disabledText, fontFamily);
             textlayout::ParagraphStyle paragraphStyle;
             paragraphStyle.setTextStyle(style);
             paragraphStyle.setApplyRoundingHack(false);
@@ -148,17 +163,18 @@ struct TextArea::Private
             layoutWidth = -1;
             layoutScale = 0;
         }
-        const bool round = Application::instance()->text().roundsMetrics(scale);
-        if (layoutWidth == width && layoutScale == scale)
+        const bool hinted = hintedLayout();
+        const bool round = Application::instance()->text().roundsMetrics(scale, hinted);
+        if (layoutWidth == width && layoutScale == scale && layoutHinted == hinted)
             return;
-        // The lines QTextLine makes on Qt's advances, as newlines in the text.
+        // The lines made on the truncated advances, as newlines in the text.
         std::vector<size_t> breaks;
         if (wrap != WrapMode::NoWrap) {
             buildDisplay();
-            const QtWrap mode = wrap == WrapMode::WordWrap       ? QtWrap::Word
-                                : wrap == WrapMode::WrapAnywhere ? QtWrap::Anywhere
-                                                                 : QtWrap::WordOrAnywhere;
-            const std::vector<size_t> starts = qtLineStarts(unwrapped.get(), display, width, mode, round);
+            const LineWrap mode = wrap == WrapMode::WordWrap       ? LineWrap::Word
+                                : wrap == WrapMode::WrapAnywhere ? LineWrap::Anywhere
+                                                                 : LineWrap::WordOrAnywhere;
+            const std::vector<size_t> starts = lineStarts(unwrapped.get(), display, width, mode, round);
             for (size_t i = 1; i < starts.size(); ++i) {
                 const size_t offset = unwrappedFromDisplay[starts[i]];
                 if (display[starts[i] - 1] != '\n' && (breaks.empty() || breaks.back() != offset))
@@ -169,12 +185,19 @@ struct TextArea::Private
         paragraph = make();
         layoutWidth = width;
         layoutScale = scale;
+        layoutHinted = hinted;
         const TextContext& context = Application::instance()->text();
-        lines = textLineBoxes(paragraph.get(), context.typeface(400).get(), pixelSize(), scale);
-        geometry = textGeometry(paragraph.get(), display, width, 0, round);
+        lines = textLineBoxes(paragraph.get(), context.typeface(fontWeight, fontFamily).get(), pixelSize(), scale,
+                              hinted);
+        geometry = textGeometry(paragraph.get(), display, width, align, round);
     }
 
     double textHeight() const { return ui::textHeight(lines); }
+    // Down by this when the text is shorter than the area and centred in it.
+    double centring(double contentHeight) const
+    {
+        return verticallyCentered ? std::max(0.0, (contentHeight - textHeight()) / 2) : 0;
+    }
 
     size_t displayOffset(size_t offset) const { return toDisplay[std::min(offset, toDisplay.size() - 1)]; }
     size_t textOffset(size_t offset) const { return fromDisplay[std::min(offset, fromDisplay.size() - 1)]; }
@@ -278,6 +301,50 @@ void TextArea::setFontSize(double size)
     requestLayout();
 }
 
+void TextArea::setFont(const std::string& family, double pixelSize, int weight)
+{
+    d->fontFamily = family;
+    d->fontSize = pixelSize;
+    d->fontWeight = weight;
+    d->placeholderLabel->setFontSize(pixelSize);
+    d->placeholderLabel->setFontFamily(family);
+    d->placeholderLabel->setWeight(weight);
+    d->dirty = true;
+    requestLayout();
+}
+
+void TextArea::setHorizontalAlignment(HorizontalAlignment alignment)
+{
+    d->align = alignment == HorizontalAlignment::Center ? 0.5 : alignment == HorizontalAlignment::Right ? 1 : 0;
+    d->layoutWidth = -1;
+    requestPaint();
+}
+
+void TextArea::setVerticallyCentered(bool centered)
+{
+    d->verticallyCentered = centered;
+    requestPaint();
+}
+
+void TextArea::setTextColor(std::optional<Color> color)
+{
+    d->textColor = color;
+    requestPaint();
+}
+
+void TextArea::setSelectionColors(std::optional<Color> background, std::optional<Color> text)
+{
+    d->selectionColor = background;
+    d->selectedTextColor = text;
+    requestPaint();
+}
+
+void TextArea::setPersistentSelection(bool persistent)
+{
+    d->persistentSelection = persistent;
+    requestPaint();
+}
+
 size_t TextArea::cursorPosition() const
 {
     return d->edit.cursor();
@@ -365,8 +432,7 @@ void TextArea::redo()
 
 static double currentScale(const View* view)
 {
-    const Window* window = view->window();
-    return window ? window->scale() : 1.0;
+    return view->textLayoutMode().scale;
 }
 
 SizeF TextArea::sizeHint() const
@@ -374,7 +440,7 @@ SizeF TextArea::sizeHint() const
     // T.TextArea: the content, the background's width and the placeholder,
     // each with the padding.
     d->layout(kUnboundedWidth, currentScale(this), isEnabled());
-    const bool round = Application::instance()->text().roundsMetrics(currentScale(this));
+    const bool round = Application::instance()->text().roundsMetrics(currentScale(this), d->hintedLayout());
     double width = naturalWidth(d->paragraph.get(), round) + d->padding.horizontal();
     if (d->frame)
         width = std::max(width, kFrameWidth);
@@ -404,7 +470,7 @@ void TextArea::paint(Painter& painter)
     const bool enabled = isEnabled();
 
     if (d->frame) {
-        // FishUI's background: a line half the bottom padding above the
+        // The background: a line half the bottom padding above the
         // bottom, thicker with focus.
         const double height = focused ? 2 : 1;
         painter.fillRoundedRect({0, bounds.height - height - d->padding.bottom / 2, bounds.width, height}, 0,
@@ -426,7 +492,7 @@ void TextArea::paint(Painter& painter)
     d->scrollY = std::clamp(d->scrollY, 0.0, maximum);
 
     const PointF offset = painter.offset();
-    const PointF origin = {content.x, content.y - d->scrollY};
+    const PointF origin = {content.x, content.y - d->scrollY + d->centring(content.height)};
     const auto device = [scale, offset, origin](double x, double y) {
         return SkPoint::Make(SkScalar(std::round((offset.x + origin.x + x) * scale)),
                              SkScalar(std::round((offset.y + origin.y + y) * scale)));
@@ -437,7 +503,7 @@ void TextArea::paint(Painter& painter)
 
     // The selection's rects, line by line.
     std::vector<SkRect> selection;
-    if (focused && d->preedit.empty() && d->edit.hasSelection()) {
+    if ((focused || d->persistentSelection) && d->preedit.empty() && d->edit.hasSelection()) {
         const size_t start = d->displayOffset(d->edit.selectionStart());
         const size_t end = d->displayOffset(d->edit.selectionEnd());
         for (size_t l = 0; l < d->geometry.lines.size() && l < d->lines.size(); ++l) {
@@ -456,19 +522,19 @@ void TextArea::paint(Painter& painter)
             selection.push_back(SkRect::MakeLTRB(topLeft.fX, topLeft.fY, bottomRight.fX, bottomRight.fY));
         }
         SkPaint paint;
-        paint.setColor(theme.highlight.argb());
+        paint.setColor(d->selectionColor.value_or(theme.highlight).argb());
         for (const SkRect& rect : selection)
             canvas->drawRect(rect, paint);
     }
 
     // The text, and again in the highlighted text colour over the selection.
-    const Color color = enabled ? theme.text : theme.disabledText;
+    const Color color = enabled ? d->textColor.value_or(theme.text) : theme.disabledText;
     const auto draw = [&](Color textColor) {
         canvas->save();
         canvas->translate(SkScalar(offset.x * scale), SkScalar(offset.y * scale));
         canvas->scale(SkScalar(scale), SkScalar(scale));
-        paintTextLines(canvas, d->paragraph.get(), d->lines, origin, content.width, 0,
-                       Application::instance()->text().roundsMetrics(scale),
+        paintTextLines(canvas, d->paragraph.get(), d->lines, origin, content.width, d->align,
+                       Application::instance()->text().roundsMetrics(scale, d->hintedLayout()),
                        [textColor](size_t) { return textColor.argb(); });
         canvas->restore();
     };
@@ -478,7 +544,7 @@ void TextArea::paint(Painter& painter)
         for (const SkRect& rect : selection) {
             canvas->save();
             canvas->clipRect(rect);
-            draw(theme.highlightedText);
+            draw(d->selectedTextColor.value_or(theme.highlightedText));
             canvas->restore();
         }
         canvas->restore();
@@ -503,7 +569,7 @@ void TextArea::paint(Painter& painter)
         const SkPoint top = device(d->geometry.x(caret), box.top);
         const SkPoint bottom = device(d->geometry.x(caret), box.top + box.height);
         SkPaint paint;
-        paint.setColor(theme.text.argb());
+        paint.setColor(d->textColor.value_or(theme.text).argb());
         canvas->drawRect(SkRect::MakeXYWH(top.fX, top.fY, SkScalar(std::max(1.0, std::round(scale))), bottom.fY - top.fY),
                          paint);
     }
@@ -515,7 +581,8 @@ size_t TextArea::offsetAt(PointF position) const
     const double scale = currentScale(this);
     const double width = std::max(0.0, geometry().width - d->padding.horizontal());
     d->layout(width, scale, isEnabled());
-    const double y = position.y - d->padding.top + d->scrollY;
+    const double contentHeight = std::max(0.0, geometry().height - d->padding.vertical());
+    const double y = position.y - d->padding.top + d->scrollY - d->centring(contentHeight);
     size_t line = 0;
     while (line + 1 < d->lines.size() && y >= d->lines[line].top + d->lines[line].height)
         ++line;
@@ -573,9 +640,27 @@ void TextArea::pointerMove(const PointerEvent& event)
     moved();
 }
 
-void TextArea::pointerRelease(const PointerEvent&)
+void TextArea::pointerRelease(const PointerEvent& event)
 {
+    const bool selected = d->selecting;
     d->selecting = false;
+    // A mouse selection goes to the primary selection, and a
+    // middle click pastes it where it lands.
+    if (event.button == MouseButton::Left && selected) {
+        if (d->edit.hasSelection())
+            Clipboard::setText(d->edit.selectedText(), ClipboardMode::Selection);
+    } else if (event.button == MouseButton::Middle && !d->readOnly) {
+        d->edit.setCursor(offsetAt(event.position));
+        moved();
+        Clipboard::requestText([self = std::weak_ptr<TextArea*>(d->self)](std::string text) {
+            const auto area = self.lock();
+            if (!area || text.empty())
+                return;
+            std::erase(text, '\r');
+            (*area)->d->edit.insert(text);
+            (*area)->edited();
+        }, ClipboardMode::Selection);
+    }
 }
 
 void TextArea::focusIn(FocusReason)
@@ -705,7 +790,7 @@ bool TextArea::keyPress(const KeyEvent& event)
         edited();
         return true;
     case key::Tab:
-        // Moves the focus, as FishUI's areas in forms do.
+        // Moves the focus, as areas in forms do.
         return false;
     default:
         break;
@@ -782,7 +867,7 @@ void TextArea::textInput(const TextInputEvent& event)
 
 void TextArea::showContextMenu(PointF position)
 {
-    // FishUI's TextEditMenu, without the rows a read-only area has no use for.
+    // The text menu, without the rows a read-only area has no use for.
     const bool editable = !d->readOnly;
     const bool selection = d->edit.hasSelection();
     d->menu = std::make_unique<Menu>();

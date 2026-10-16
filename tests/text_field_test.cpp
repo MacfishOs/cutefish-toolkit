@@ -206,8 +206,8 @@ TEST(TextFieldTest, RendersAtFractionalScales)
     }
 }
 
-// TextInput.maximumLength and a validator: what does not fit or is refused
-// does not happen; textEdited is the user's alone; editingFinished on Return.
+// A maximum length and a validator: what does not fit or is refused does not
+// happen; textEdited is the user's alone; editingFinished on Return.
 TEST(TextFieldTest, LimitsValidatesAndReportsEdits)
 {
     Fixture f;
@@ -261,4 +261,34 @@ TEST(TextFieldTest, SearchFieldClears)
     // Gone without text: a click there lands in the field.
     TestInput::typeText(window, "x");
     EXPECT_EQ(field->text(), "x");
+}
+
+TEST(TextFieldTest, MouseSelectionGoesToThePrimarySelection)
+{
+    Fixture f("alpha beta");
+    Clipboard::setText("old", ClipboardMode::Selection);
+    TestInput::click(f.window, {30, 27});
+    TestInput::click(f.window, {30, 27});
+    std::string selected;
+    Clipboard::requestText([&](std::string text) { selected = std::move(text); }, ClipboardMode::Selection);
+    EXPECT_EQ(selected, "alpha");
+
+    // A middle click pastes it at the cursor, the selection given up.
+    Clipboard::setText("X", ClipboardMode::Selection);
+    f.key(key::End);
+    TestInput::click(f.window, {30, 27}, MouseButton::Middle);
+    EXPECT_EQ(f.field->text(), "alpha betaX");
+}
+
+TEST(TextFieldTest, PasswordsStayOffThePrimarySelection)
+{
+    Fixture f("secret");
+    f.field->setEchoMode(TextField::EchoMode::Password);
+    Clipboard::setText("before", ClipboardMode::Selection);
+    TestInput::click(f.window, {30, 27});
+    TestInput::click(f.window, {30, 27});
+    TestInput::click(f.window, {30, 27});
+    std::string selected;
+    Clipboard::requestText([&](std::string text) { selected = std::move(text); }, ClipboardMode::Selection);
+    EXPECT_EQ(selected, "before");
 }

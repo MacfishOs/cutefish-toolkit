@@ -17,7 +17,7 @@ class Label;
 class Menu;
 class ThemeIcon;
 
-// FishUI's combo box: the current item in a field-like box with a chevron,
+// A combo box: the current item in a field-like box with a chevron,
 // opening a menu of the items with the current one checked.
 class ComboBox : public View
 {

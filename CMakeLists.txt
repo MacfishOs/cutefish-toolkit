@@ -28,9 +28,9 @@ pkg_check_modules(Fontconfig REQUIRED IMPORTED_TARGET fontconfig)
 pkg_check_modules(Xkbcommon REQUIRED IMPORTED_TARGET xkbcommon)
 pkg_check_modules(Systemd REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(Icu REQUIRED IMPORTED_TARGET icu-uc icu-i18n)
-# Image formats Skia leaves out, read as Qt's image plugins read them.
+# Decoders for the image formats Skia leaves out.
 pkg_check_modules(ImageCodecs REQUIRED IMPORTED_TARGET
-    libpng libwebp libtiff-4 libheif libjxl libjxl_threads)
+    libpng libwebp libwebpdemux libtiff-4 libheif libjxl libjxl_threads)
 pkg_check_modules(SkiaDependencies REQUIRED IMPORTED_TARGET
     freetype2 harfbuzz icu-uc libpng libjpeg zlib expat)
 pkg_check_modules(WaylandProtocols REQUIRED wayland-protocols>=1.39)

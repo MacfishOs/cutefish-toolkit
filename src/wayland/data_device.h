@@ -4,54 +4,87 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
-#include <string>
+#include <memory>
 #include <unordered_map>
-#include <vector>
+
+#include "ui/drag.h"
+#include "wayland/selection.h"
 
 struct wl_data_device;
 struct wl_data_device_manager;
 struct wl_data_offer;
 struct wl_data_source;
 struct wl_seat;
-
-namespace cutefish::base {
-class EventLoop;
-}
+struct wl_buffer;
+struct wl_surface;
+struct xdg_toplevel_drag_v1;
+struct wp_viewport;
 
 namespace cutefish::ui::wayland {
 
-class Connection;
 struct DataDeviceListeners;
+class ShellSurface;
+class WaylandDropOffer;
 
-// The seat's clipboard selection, as text. Drag and drop is not taken yet.
-class DataDevice
+// The seat's wl_data_device: the clipboard selection, and drag and drop
+// with this client as the source, the target or both.
+class DataDevice final : public Selection
 {
 public:
     DataDevice(Connection& connection, base::EventLoop& loop, wl_data_device_manager* manager,
                wl_seat* seat);
-    ~DataDevice();
-
-    DataDevice(const DataDevice&) = delete;
-    DataDevice& operator=(const DataDevice&) = delete;
+    ~DataDevice() override;
 
     void setSelection(const std::string& text);
     void requestSelection(std::function<void(std::string)> callback);
 
+    // Starts a drag from the last button press on the surface; `attached`
+    // is a toplevel the compositor moves with the pointer. False when a
+    // drag is already running.
+    bool startDrag(ShellSurface* origin, DragSource source, ShellSurface* attached, double scale);
+    // The source of the drag this client runs, for its own targets.
+    const DragSource* localSource() const { return m_dragSource ? &m_drag : nullptr; }
+
+protected:
+    void* createSource(const std::vector<std::string>& mimeTypes) override;
+    void destroySource(void* source) override;
+    void setSource(void* source) override;
+    void receive(void* offer, const char* mimeType, int fd) override;
+    void destroyOffer(void* offer) override;
+
 private:
     friend struct DataDeviceListeners;
+    friend class WaylandDropOffer;
 
-    void dropOffer(wl_data_offer* offer);
+    // Tells the target window's view and answers the compositor.
+    void updateTarget(uint32_t action);
+    // Drops the offer; an unfinished one tells the source the drag was cancelled.
+    void endTarget();
+    void endSource(DropAction action);
+    void createIcon(const DragSource& source);
 
-    Connection& m_connection;
-    base::EventLoop& m_loop;
     wl_data_device_manager* m_manager;
     wl_data_device* m_device = nullptr;
-    // Announced offers and their MIME types, until they become the selection or go.
-    std::unordered_map<wl_data_offer*, std::vector<std::string>> m_offers;
-    wl_data_offer* m_selection = nullptr;
-    wl_data_source* m_source = nullptr;
-    std::string m_sourceText;
+
+    // The drag over one of our surfaces.
+    std::unordered_map<wl_data_offer*, uint32_t> m_offerActions;
+    std::shared_ptr<WaylandDropOffer> m_dropOffer;
+    ShellSurface* m_dropShell = nullptr;
+    uint32_t m_dropSerial = 0;
+    uint32_t m_acceptedAction = 0;
+    bool m_dropAccepted = false;
+
+    // The drag this client runs.
+    DragSource m_drag;
+    wl_data_source* m_dragSource = nullptr;
+    xdg_toplevel_drag_v1* m_toplevelDrag = nullptr;
+    uint32_t m_dragAction = 0;
+    bool m_dropPerformed = false;
+    wl_surface* m_icon = nullptr;
+    wp_viewport* m_iconViewport = nullptr;
+    wl_buffer* m_iconBuffer = nullptr;
+    void* m_iconMemory = nullptr;
+    size_t m_iconSize = 0;
 };
 
 } // namespace cutefish::ui::wayland

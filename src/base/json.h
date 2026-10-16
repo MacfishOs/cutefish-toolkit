@@ -12,8 +12,8 @@
 
 namespace cutefish::base::json {
 
-// A JSON value, read from and written to RFC 8259 text, as QJsonValue holds
-// one. Objects keep their members in the order read or added.
+// A JSON value, read from and written to RFC 8259 text. Numbers are doubles;
+// objects keep their members in the order read or added.
 class Value
 {
 public:
@@ -44,7 +44,7 @@ public:
 
     // Null when the text is not JSON; trailing white space is allowed.
     static std::optional<Value> parse(std::string_view text);
-    // Compact, as QJsonDocument::Compact writes; indented by four spaces otherwise.
+    // Compact, without white space; indented by four spaces otherwise.
     std::string serialize(bool compact = true) const;
 
     Type type() const { return m_type; }
@@ -58,7 +58,7 @@ public:
     // The fallback when the value is of another type.
     bool toBool(bool fallback = false) const { return isBool() ? m_bool : fallback; }
     double toDouble(double fallback = 0) const { return isNumber() ? m_number : fallback; }
-    // Rounded, as QJsonValue::toInteger does for whole numbers.
+    // Rounded to the nearest integer, halfway away from zero.
     int64_t toInt(int64_t fallback = 0) const;
     std::string toString(const std::string& fallback = {}) const { return isString() ? m_string : fallback; }
     const Array& toArray() const;

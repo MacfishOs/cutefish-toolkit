@@ -40,7 +40,8 @@ public:
     }
     void minimize() override {}
     void setTransientParent(PlatformWindow*, bool) override {}
-    void startMove() override {}
+    void startMove() override { ++m_moveRequests; }
+    int moveRequests() const override { return m_moveRequests; }
     void setCursorShape(CursorShape) override {}
     void setBlur(const RectF&, double) override {}
     void setTextInput(const TextInputState*) override {}
@@ -90,6 +91,7 @@ private:
     std::array<int, 3> m_ages = {};
     size_t m_next = 0;
     const Image* m_presented = nullptr;
+    int m_moveRequests = 0;
 };
 
 } // namespace
@@ -100,8 +102,10 @@ std::unique_ptr<PlatformWindow> PlatformWindow::create(Window* window, PlatformW
     if (Application::instance()->platform() == Application::Platform::Headless)
         return std::make_unique<HeadlessWindow>(window);
     // Popups included: an embedded host draws what it is given and nothing else.
-    if (Application::instance()->platform() == Application::Platform::Embedded)
-        return std::make_unique<EmbeddedPlatformWindow>(window);
+    if (Application::instance()->platform() == Application::Platform::Embedded) {
+        return std::make_unique<EmbeddedPlatformWindow>(window, static_cast<EmbeddedPlatformWindow*>(parent),
+                                                        placement, grab);
+    }
     if (parent) {
         return std::make_unique<wayland::WaylandWindow>(
             window, static_cast<wayland::WaylandWindow*>(parent), placement, grab);
@@ -197,6 +201,37 @@ void PlatformWindow::notifyHold()
 void PlatformWindow::notifyTextInput(const TextInputEvent& event)
 {
     m_window->handleTextInput(event);
+}
+
+void PlatformWindow::notifyWorkArea(const RectF& area)
+{
+    m_window->handleWorkArea(area);
+}
+
+PlatformWindow* PlatformWindow::platformOf(Window* window)
+{
+    return window ? window->m_platform.get() : nullptr;
+}
+
+uint32_t PlatformWindow::notifyDragEnter(double x, double y, DropOffer* offer, uint32_t modifiers)
+{
+    m_window->handleDragEnter(x, y, offer, modifiers);
+    return m_window->m_dropAction;
+}
+
+uint32_t PlatformWindow::notifyDragMotion(double x, double y, uint32_t modifiers)
+{
+    return m_window->handleDragMotion(x, y, modifiers);
+}
+
+void PlatformWindow::notifyDragLeave()
+{
+    m_window->handleDragLeave();
+}
+
+uint32_t PlatformWindow::notifyDrop()
+{
+    return m_window->handleDrop();
 }
 
 } // namespace cutefish::ui

@@ -13,7 +13,7 @@
 namespace cutefish::ui {
 
 // Touchpad and wheel scrolling of one view. It follows cutefish-framework's
-// Scroller, so toolkit views and Qt views in the session scroll alike: finger
+// Scroller, so every view in the session scrolls alike: finger
 // samples are resampled to each frame of the window, and the coast and the
 // rubber band run on the same frame clock. A paged view moves along one axis
 // and settles on a viewport-sized page.

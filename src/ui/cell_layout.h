@@ -9,21 +9,20 @@
 
 namespace cutefish::ui {
 
-// Lays its children out as Qt Quick Layouts do (RowLayout, ColumnLayout,
-// GridLayout, after QGridLayoutEngine), so a port of FishUI's QML lands on
-// the same pixels: implicit sizes are rounded up to whole pixels, positions
-// are rounded, and filling children share the space beyond their preferred
-// sizes in proportion to them. A child's LayoutHints give Layout.*:
-// preferred, minimum and maximum sizes, fillWidth and fillHeight, the
-// alignment per axis (left and vertically centred by default) and margins.
+// Lays its children out in a row, a column or a grid: implicit sizes are
+// rounded up to whole pixels, positions are rounded, and filling children
+// share the space beyond their preferred sizes in proportion to them. A
+// child's LayoutHints give its preferred, minimum and maximum sizes,
+// fillWidth and fillHeight, the alignment per axis (left and vertically
+// centred by default) and margins.
 // A nested layout fills, between the minimum and maximum its children take
 // unless its hints set them. Hidden children take no space. Row, Column and
-// Grid are the toolkit's own layouts, closer to QML's positioners.
-class QuickLayout : public View
+// Grid are the toolkit's own layouts, which only place children in turn.
+class CellLayout : public View
 {
 public:
-    // A layout's minimum, preferred and maximum on one axis, as
-    // QGridLayoutEngine::sizeHint gives them; its padding included.
+    // A layout's minimum, preferred and maximum on one axis; its padding
+    // included.
     struct Extent
     {
         double minimum = 0;
@@ -31,13 +30,13 @@ public:
         double maximum = 0;
     };
 
-    // QML's default: 5 between children.
+    // 5 between children by default.
     void setSpacing(double spacing);
     void setRowSpacing(double spacing);
     void setColumnSpacing(double spacing);
     // Children lay out in the rect less the padding, as a layout anchored
-    // with margins in an item, FishUI's RoundedItem: inside another layout
-    // a padded one is that item, filling only as its hints say.
+    // with margins in a padded item: inside another layout a padded one is
+    // that item, filling only as its hints say.
     void setPadding(const Margins& padding);
     const Margins& padding() const { return m_padding; }
 
@@ -55,7 +54,7 @@ protected:
         Grid,
     };
 
-    QuickLayout(Flow flow, int columns);
+    CellLayout(Flow flow, int columns);
 
     void setColumnCount(int columns);
     void layout() override;
@@ -89,47 +88,47 @@ private:
     Margins m_padding;
 };
 
-class RowLayout : public QuickLayout
+class RowLayout : public CellLayout
 {
 public:
     RowLayout()
-        : QuickLayout(Flow::Row, -1)
+        : CellLayout(Flow::Row, -1)
     {
     }
 };
 
-class ColumnLayout : public QuickLayout
+class ColumnLayout : public CellLayout
 {
 public:
     ColumnLayout()
-        : QuickLayout(Flow::Column, 1)
+        : CellLayout(Flow::Column, 1)
     {
     }
 };
 
 // Children flow left to right, a new row after every `columns` of them;
 // unlimited columns keep them in one row.
-class GridLayout : public QuickLayout
+class GridLayout : public CellLayout
 {
 public:
     explicit GridLayout(int columns = -1)
-        : QuickLayout(Flow::Grid, columns)
+        : CellLayout(Flow::Grid, columns)
     {
     }
 
     void setColumns(int columns) { setColumnCount(columns); }
 };
 
-namespace qml {
+namespace rounding {
 
-// Qt's qRound: halves away from zero.
-double qRound(double value);
+// Rounds halves away from zero.
+double halfAwayFromZero(double value);
 
-// Where QML's anchors.centerIn and horizontalCenter/verticalCenter put an
-// item of the extent in a parent of the extent: qRound(parent / 2) less
-// qRound(item / 2).
-double anchorsCenter(double parentExtent, double itemExtent);
+// Where centring anchors put an item of the extent in a parent of the
+// extent: half the parent rounded less half the item rounded, halves away
+// from zero.
+double centeredStart(double parentExtent, double itemExtent);
 
-} // namespace qml
+} // namespace rounding
 
 } // namespace cutefish::ui

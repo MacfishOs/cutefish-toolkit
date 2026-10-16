@@ -12,7 +12,7 @@ namespace cutefish::ui {
 static constexpr double kGlyphSize = 14;
 static constexpr double kFocusRing = 2;
 
-// A MouseArea over the glyph: it takes the press, and the click clears.
+// A press area over the glyph: it takes the press, and the click clears.
 class SearchField::ClearButton : public Icon
 {
 public:

@@ -18,7 +18,7 @@
 
 namespace cutefish::ui {
 
-// FishUI's dialog metrics.
+// The dialog's metrics.
 static constexpr double kHeaderHeight = 44;
 static constexpr double kButtonMargin = 8;
 static constexpr double kButton = 32;
@@ -102,7 +102,7 @@ void DialogButton::paint(Painter& painter)
         color = surface.darker(1.08);
     else if (isEnabled() && m_hovered)
         color = m_primary || theme.darkMode ? surface.lighter(1.05) : surface.darker(1.04);
-    // FishUI's borders are one device pixel, 1 / Dpi.ratio; the inner edge
+    // Borders are one device pixel, 1 / scale; the inner edge
     // and the focus ring keep the button's shape through RoundedRectangle's inset.
     const double pixel = 1 / painter.scale();
     painter.drawRoundedRect(bounds, {radius}, color, pixel,
@@ -119,7 +119,7 @@ void DialogButton::paint(Painter& painter)
     }
 }
 
-// FishUI's ConfirmDialogButton fades as a whole.
+// A dialog button fades as a whole when disabled.
 void DialogButton::enabledChanged()
 {
     setOpacity(isEnabled() ? 1 : 0.5);
@@ -155,8 +155,7 @@ void DialogButton::pointerRelease(const PointerEvent& event)
         onClicked();
 }
 
-// As a Qt Quick button: Space presses it and the release clicks; Return is
-// left to the dialog.
+// Space presses it and the release clicks; Return is left to the dialog.
 bool DialogButton::keyPress(const KeyEvent& event)
 {
     if (event.key != key::Space || event.modifiers != NoModifier)
@@ -178,7 +177,7 @@ bool DialogButton::keyRelease(const KeyEvent& event)
 }
 
 // The dialog's view: the header line with the title and buttons, the
-// content below with FishUI's padding.
+// content below with the dialog's padding.
 class DialogWindow::Root : public View
 {
 public:
@@ -348,6 +347,34 @@ void ConfirmDialog::setText(std::string text)
     }
 }
 
+// The dialog's content with the window's close button over its corner.
+class ConfirmContent final : public View
+{
+public:
+    ConfirmContent(std::unique_ptr<View> content, std::function<void()> close)
+        : m_content(content.get())
+    {
+        addChild(std::move(content));
+        m_close = addChild<HeaderButton>("close", kButton);
+        m_close->onClicked = std::move(close);
+    }
+
+    SizeF sizeHint() const override { return m_content->sizeHint(); }
+    double heightForWidth(double width) const override { return m_content->heightForWidth(width); }
+
+protected:
+    void layout() override
+    {
+        const RectF bounds = localRect();
+        m_content->setGeometry(bounds);
+        m_close->setGeometry({bounds.width - kButtonMargin - kButton, kButtonMargin, kButton, kButton});
+    }
+
+private:
+    View* m_content;
+    HeaderButton* m_close;
+};
+
 void ConfirmDialog::show()
 {
     m_window = std::make_unique<Window>();
@@ -396,8 +423,11 @@ void ConfirmDialog::show()
     m_window->addShortcut(NoModifier, key::Escape, [this] { finish(false); });
     m_window->addShortcut(NoModifier, key::Return, [this] { finish(true); });
     m_window->addShortcut(NoModifier, key::KeypadEnter, [this] { finish(true); });
-    m_window->setContentView(std::move(column));
-    m_window->resize({std::max(kConfirmMinimumWidth, actions->sizeHint().width + 2 * kContentPadding), 0});
+    // Measured as the window will lay the buttons out, before they are in it.
+    column->setTextLayoutMode(m_window->textLayoutMode());
+    const double width = std::max(kConfirmMinimumWidth, actions->sizeHint().width + 2 * kContentPadding);
+    m_window->setContentView(std::make_unique<ConfirmContent>(std::move(column), [this] { finish(false); }));
+    m_window->resize({width, 0});
     m_window->setFitsContentHeight(true);
     // A destructive action waits for a deliberate choice.
     (m_destructive && cancel ? static_cast<View*>(cancel) : static_cast<View*>(confirm))->setFocus();

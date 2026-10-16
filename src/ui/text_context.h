@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <string>
@@ -25,8 +26,8 @@ class FontCollection;
 
 namespace cutefish::ui {
 
-// What Qt's QFontMetricsF reports for a font, in logical pixels.
-struct QtFontMetrics
+// A font's vertical metrics, in logical pixels.
+struct VerticalMetrics
 {
     double ascent = 0;
     double descent = 0;
@@ -37,8 +38,7 @@ struct QtFontMetrics
 // Fonts and shaping shared by every window: the system font manager with
 // fallback, and the rendering fontconfig asks for.
 //
-// Text lays out as FishUI's (Qt Quick, QtRendering) does, so both toolkits
-// place it alike: at a whole logical pixel size, with unhinted advances,
+// Text lays out at a whole logical pixel size, with unhinted advances,
 // lines as tall as their ascent and descent rounded up. It is drawn at the
 // device size.
 class TextContext
@@ -60,34 +60,37 @@ public:
     // BCP 47, for picking the Han variant among fallback fonts.
     const std::string& locale() const { return m_locale; }
 
-    // The pixel size Qt gives a logical size: whole pixels, as
-    // QFontDatabasePrivate::load rounds point sizes.
+    // The pixel size for a logical size: rounded to two decimals, then to
+    // whole pixels.
     static double pixelSize(double logicalSize);
 
     // The theme's family at a logical size (0 for the theme's), rounded as
     // pixelSize() rounds it, in logical units.
     // A family given takes the theme's place, the theme's standing in when the
-    // family is missing, as a QFont family does.
+    // family is missing.
     skia::textlayout::TextStyle style(double fontSize, int weight, Color color,
                                       const std::string& family = {}) const;
     sk_sp<SkTypeface> typeface(int weight, const std::string& family = {}) const;
 
-    // QFontEngine's height metrics for the typeface: from OS/2 or hhea, in
-    // Qt's 26.6 fixed point. Qt rounds ascent and descent to whole pixels
-    // when it hints, which it does only without scaling and with full or
-    // medium hinting.
-    QtFontMetrics metrics(const SkTypeface* typeface, double pixelSize, double scale) const;
-    bool roundsMetrics(double scale) const;
-    // Off, text lays out unrounded at every scale, scale 1 included, as Qt's
-    // offscreen platform lays it out for the compositor's panels.
-    void setHintedLayout(bool hinted) { m_hintedLayout = hinted; }
-    // Glyph bounds and advances as Qt's FreeType engine reports them for
-    // QFontMetricsF::tightBoundingRect.
-    bool hintsGlyphMetrics(double scale) const { return roundsMetrics(scale); }
+    // The typeface's height metrics: from OS/2 or hhea, in 26.6 fixed point.
+    // Ascent and descent are rounded to whole pixels when metrics are hinted,
+    // only without scaling and with full or medium hinting.
+    // `hintedLayout` is the window's (Window::hintedTextLayout()): off, text
+    // lays out unrounded at every scale, scale 1 included, as for the
+    // compositor's lock screen and switcher.
+    VerticalMetrics metrics(const SkTypeface* typeface, double pixelSize, double scale, bool hintedLayout) const;
+    bool roundsMetrics(double scale, bool hintedLayout) const;
+    // At a fractional device scale glyphs draw unhinted at quarter-pixel
+    // horizontal positions, baselines on whole rows; at whole scales as
+    // fontconfig asks. Advances and metrics are not affected.
+    static bool drawsUnhinted(double deviceScale) { return std::abs(deviceScale - std::round(deviceScale)) > 1e-3; }
+    // Whether glyph bounds and advances for ink bounds are hinted, as the
+    // metrics are.
+    bool hintsGlyphMetrics(double scale, bool hintedLayout) const { return roundsMetrics(scale, hintedLayout); }
 
-    // Surfaces blend glyph coverage linearly, as Qt Quick's text shaders
-    // do, without Skia's contrast and gamma, which embolden light text on
-    // dark backgrounds. Without a pixel geometry text is greyscale.
+    // Surfaces blend glyph coverage linearly, without Skia's contrast and
+    // gamma, which embolden light text on dark backgrounds. Without a pixel
+    // geometry text is greyscale.
     SkSurfaceProps surfaceProps(bool subpixel = true) const
     {
         return SkSurfaceProps(0, subpixel ? m_pixelGeometry : kUnknown_SkPixelGeometry, 0, 1);
@@ -95,8 +98,14 @@ public:
 
     SkFont::Edging edging() const { return m_edging; }
     SkFontHinting hinting() const { return m_hinting; }
+    // What fontconfig asks for, which glyphs take at whole scales.
+    SkFontHinting fontconfigHinting() const { return m_fontconfigHinting; }
     bool subpixelPositioning() const { return m_subpixelPositioning; }
     SkPixelGeometry pixelGeometry() const { return m_pixelGeometry; }
+    // Whether subpixel text over translucent targets blends per channel (true)
+    // or stays greyscale there; set by the window being painted.
+    bool translucentSubpixel() const { return m_translucentSubpixel; }
+    void setTranslucentSubpixel(bool subpixel) { m_translucentSubpixel = subpixel; }
 
 private:
     void readFontconfigDefaults();
@@ -125,7 +134,7 @@ private:
     SkFontHinting m_fontconfigHinting = SkFontHinting::kSlight;
     SkFontHinting m_hinting = SkFontHinting::kSlight;
     bool m_subpixelPositioning = true;
-    bool m_hintedLayout = true;
+    bool m_translucentSubpixel = true;
     SkPixelGeometry m_pixelGeometry = kUnknown_SkPixelGeometry;
 };
 

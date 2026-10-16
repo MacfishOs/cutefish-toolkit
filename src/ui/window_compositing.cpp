@@ -8,6 +8,7 @@
 #include "include/core/SkSurface.h"
 
 #include "ui/application.h"
+#include "ui/bitmap.h"
 #include "ui/layer.h"
 #include "ui/painter.h"
 #include "ui/text_context.h"
@@ -266,6 +267,42 @@ void Window::updateLayers(View* view, PointF origin, SkCanvas* target)
     layer.damage.setEmpty();
 }
 
+void View::paintFlat(View* view, Painter& painter)
+{
+    if (!view->isVisible() || view->opacity() <= 0)
+        return;
+    painter.save();
+    painter.multiplyOpacity(view->opacity());
+    painter.translate(view->geometry().topLeft());
+    if (view->clipsChildren())
+        painter.clip(view->localRect());
+    view->paint(painter);
+    for (const auto& child : view->children())
+        paintFlat(child.get(), painter);
+    painter.restore();
+}
+
+Bitmap View::grab(double scale)
+{
+    if (scale <= 0)
+        scale = window() ? window()->scale() : 1.0;
+    const int width = int(std::ceil(m_geometry.width * scale));
+    const int height = int(std::ceil(m_geometry.height * scale));
+    Bitmap bitmap(width, height, Bitmap::Format::Argb32Premultiplied);
+    if (bitmap.isNull())
+        return bitmap;
+    const SkImageInfo info = SkImageInfo::MakeN32Premul(width, height);
+    const SkSurfaceProps properties = Application::instance()->text().surfaceProps(false);
+    const sk_sp<SkSurface> surface = SkSurfaces::WrapPixels(info, bitmap.bits(), bitmap.stride(), &properties);
+    if (!surface)
+        return {};
+    surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+    Painter painter(surface->getCanvas(), scale);
+    painter.translate({-m_geometry.x, -m_geometry.y});
+    paintFlat(this, painter);
+    return bitmap;
+}
+
 void View::paintTree(Painter& painter, const SkRegion* region)
 {
     if (!m_visible || m_opacity <= 0)
@@ -308,7 +345,10 @@ void View::paintContent(Painter& painter, const SkRegion* region)
             painter.restore();
             return;
         }
-        painter.clip(localRect());
+        if (m_childClipRadius > 0)
+            painter.clipRoundedRect(localRect(), m_childClipRadius);
+        else
+            painter.clip(localRect());
     }
     if (!region || region->intersects(toSkIRect(painter.deviceRect(visualRect())).makeOutset(1, 1)))
         paint(painter);
@@ -342,6 +382,7 @@ void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
 
 std::vector<Rect> Window::paintFrame(SkCanvas* canvas, int bufferAge)
 {
+    Application::instance()->text().setTranslucentSubpixel(m_translucentSubpixel);
     FrameDamage& damage = *m_frameDamage;
     const SkIRect window = SkIRect::MakeWH(canvas->imageInfo().width(), canvas->imageInfo().height());
     if (damage.full)

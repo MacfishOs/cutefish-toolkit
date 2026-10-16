@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-// Qt defines `emit` as an empty macro; this header may follow a Qt one.
+// A host toolkit may define `emit` as an empty macro in an earlier header.
 #pragma push_macro("emit")
 #undef emit
 

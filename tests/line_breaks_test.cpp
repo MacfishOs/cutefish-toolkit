@@ -60,10 +60,10 @@ size_t utf16Offset(const std::string& text, size_t utf8)
 
 } // namespace
 
-// Where Qt 6.8 allows a line to break, from QTextEngine::attributes() and
-// the breakable white space QTextLine also ends lines after, on the test
-// laptop: UTF-16 positions a break may come before.
-TEST(LineBreaksTest, BreakWhereQtDoes)
+// Reference line break opportunities, with the breakable white space lines
+// also end after, measured on the test laptop: UTF-16 positions a break may
+// come before.
+TEST(LineBreaksTest, BreakOpportunitiesMatchReference)
 {
     struct Case
     {
@@ -101,7 +101,7 @@ TEST(LineBreaksTest, BreakWhereQtDoes)
          {27, 32, 48, 52}},
     };
     for (const Case& test : cases) {
-        const std::vector<uint8_t> breaks = qtLineBreaks(test.text);
+        const std::vector<uint8_t> breaks = lineBreaks(test.text);
         std::vector<size_t> positions;
         for (size_t i = 1; i < breaks.size(); ++i) {
             if (breaks[i])
@@ -111,9 +111,9 @@ TEST(LineBreaksTest, BreakWhereQtDoes)
     }
 }
 
-// Qt ends a line after any space, even before the "." of a file extension;
+// A line ends after any space, even before the "." of a file extension;
 // ICU's LB13 would keep "WireGuard .conf" together and move "WireGuard" down.
-TEST(LineBreaksTest, WrappedTextBreaksWhereQtDoes)
+TEST(LineBreaksTest, WrappedTextBreaksAfterAnySpace)
 {
     const std::string head = "Import the configuration file your VPN provider gives you, such as an "
                              "OpenVPN .ovpn or a WireGuard";
@@ -137,12 +137,12 @@ TEST(LineBreaksTest, WrappedTextBreaksWhereQtDoes)
     EXPECT_LE(area->cursorPosition(), head.size() + 1);
 }
 
-// Lines Qt 6.8's QTextLayout makes of the same sentences in Noto Sans at 14
+// Reference lines of the same sentences in Noto Sans at 14
 // px, WrapAtWordBoundaryOrAnywhere, at several widths and at scales 1 and
 // 1.5: the UTF-16 position each line starts at. Left out, as the widths
 // differ: tab stops, colour emoji advances, and at scale 1 the hinted
 // advances of curly quotes, a pixel apart.
-TEST(LineBreaksTest, WrapAtQtsWidths)
+TEST(LineBreaksTest, WrapsAtReferenceWidths)
 {
     using Wraps = std::vector<std::pair<double, std::vector<size_t>>>;
     struct Case

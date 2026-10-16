@@ -150,7 +150,7 @@ std::string fileUri(const std::string& absolutePath)
     static const char hex[] = "0123456789ABCDEF";
     std::string uri = "file://";
     for (unsigned char c : absolutePath) {
-        // RFC 3986's path characters, and the brackets, which QUrl leaves alone.
+        // RFC 3986's path characters, and the brackets, stay as they are.
         const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
                            || std::string_view("-._~!$&'()*+,;=:@/[]").find(char(c)) != std::string_view::npos;
         if (plain) {
@@ -164,7 +164,7 @@ std::string fileUri(const std::string& absolutePath)
     return uri;
 }
 
-// Absolute, without "." and ".." and repeated slashes, as QFileInfo gives it.
+// Absolute, without "." and ".." and repeated slashes.
 static std::string absolutePath(const std::string& path)
 {
     std::string full = path;
@@ -237,7 +237,7 @@ static void collectText(png_structp png, png_infop info, std::map<std::string, s
     }
 }
 
-// A PNG with its text chunks, as QImage reads one with its text().
+// A PNG with its text chunks.
 static std::optional<PngFile> readPng(const std::string& path)
 {
     std::unique_ptr<FILE, FileCloser> file(std::fopen(path.c_str(), "rb"));

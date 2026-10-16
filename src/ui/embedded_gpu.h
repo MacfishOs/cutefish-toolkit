@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <memory>
 
 namespace cutefish::ui {
@@ -53,6 +55,31 @@ public:
     // With the context current: drops what Skia caches but does not need
     // now, keeping the context usable.
     void purgeResources();
+
+    // Renders into textures between these share one save and reset of the
+    // GL state and one submit, for a host drawing several windows a frame:
+    // the contract above applies once around the whole batch, and the
+    // textures are finished for the host after endBatch(). The host draws
+    // nothing on the context in between. False when the context is not
+    // current or usable; endBatch() is still fine to call.
+    // Skia's GPU resource cache: textures, buffers and atlases it keeps,
+    // and how much of that it could free now. Zero once abandoned.
+    struct CacheUsage
+    {
+        int resources = 0;
+        size_t bytes = 0;
+        size_t purgeableBytes = 0;
+    };
+    CacheUsage cacheUsage() const;
+    // With the context current: frees resources unused for that long, for a
+    // caller to run after the renderer has been idle.
+    void performDeferredCleanup(std::chrono::milliseconds unusedFor);
+    // The cache's budget; Skia's default is 256 MB.
+    void setCacheLimit(size_t bytes);
+
+    bool beginBatch();
+    void endBatch();
+    bool inBatch() const;
 
 private:
     friend class EmbeddedGpuScope;

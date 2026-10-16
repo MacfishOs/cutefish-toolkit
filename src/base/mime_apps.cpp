@@ -27,8 +27,8 @@ using Lines = std::vector<std::string>;
 
 namespace {
 
-// A lock file as QLockFile writes one, the process id, the program's name
-// and the host's, so a Qt program editing the same list waits for this.
+// A lock file holding the process id, the program's name and the host's on
+// three lines, the common format, so other programs editing the list wait.
 class LockFile
 {
 public:
@@ -63,7 +63,7 @@ public:
     }
 
 private:
-    // QLockFile's rule: its process is gone, or it is older than 30 seconds.
+    // Stale when its process is gone or it is older than 30 seconds.
     bool isStale() const
     {
         struct stat info;
@@ -97,7 +97,7 @@ static bool contains(const std::vector<std::string>& list, const std::string& va
     return std::find(list.begin(), list.end(), value) != list.end();
 }
 
-// As QString::trimmed().
+// Without leading and trailing white space.
 static std::string trimmed(std::string_view text)
 {
     const auto space = [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; };
@@ -110,7 +110,7 @@ static std::string trimmed(std::string_view text)
     return std::string(text.substr(start, end - start));
 }
 
-// As QString::split(separator), keeping empty parts.
+// Split at every separator, keeping empty parts.
 static Lines split(std::string_view text, char separator)
 {
     Lines parts;
@@ -218,7 +218,7 @@ static std::shared_ptr<const DesktopEntry> entryForDesktopId(std::string desktop
     return entry && opensFiles(*entry) ? entry : nullptr;
 }
 
-// As QString::fromUtf8(file.readAll()).split('\n'); nothing for a missing file.
+// The file split at every '\n', empty parts kept; nothing for a missing file.
 static Lines fileLines(const std::string& path)
 {
     const std::optional<std::string> contents = file::read(path);
@@ -332,8 +332,7 @@ bool setDefault(const std::string& path, const std::string& mimeType, const std:
     return writeLines(path, lines);
 }
 
-// When the file came to be; files without a birth time sort first, as an
-// invalid QDateTime does.
+// When the file came to be; files without a birth time sort first.
 static int64_t birthTime(const std::string& path)
 {
     struct statx info;

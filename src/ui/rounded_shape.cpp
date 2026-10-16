@@ -161,8 +161,8 @@ static int cornerBlock(const RoundedShapeSpec& spec)
     return std::max({int(std::ceil(extent - spec.inset)) + 2, int(spec.borderWidth), 1});
 }
 
-// FishUI's roundedrectangle.frag again, for GPU canvases, which run it on
-// the corner blocks at no CPU cost. Lengths in device pixels.
+// The rounded-rectangle coverage again, as a shader for GPU canvases, which
+// run it on the corner blocks at no CPU cost. Lengths in device pixels.
 static constexpr const char* kShader = R"(
 uniform float2 quadOrigin;
 uniform float2 size;

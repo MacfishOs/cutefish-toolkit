@@ -14,8 +14,8 @@ namespace cutefish::ui {
 class Window;
 
 // The desktop's file dialog, through the org.freedesktop.portal.FileChooser
-// portal, as Qt's file dialogs on this desktop are: xdg-desktop-portal-cutefish
-// shows it in a process of its own and one callback answers.
+// portal: xdg-desktop-portal-cutefish shows it in a process of its own and
+// one callback answers.
 class FileChooser
 {
 public:
@@ -33,7 +33,7 @@ public:
         std::vector<std::string> patterns;
         std::vector<std::string> mimeTypes;
 
-        // From a Qt name filter: "Image files (*.jpg *.png)".
+        // From a name filter: "Image files (*.jpg *.png)".
         static Filter fromNameFilter(std::string_view nameFilter);
     };
 

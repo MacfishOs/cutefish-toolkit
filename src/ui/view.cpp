@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "ui/drag.h"
 #include "ui/layer.h"
 #include "ui/painter.h"
 #include "ui/window.h"
@@ -26,6 +27,23 @@ Window* View::window() const
     while (view->m_parent)
         view = view->m_parent;
     return view->m_window;
+}
+
+TextLayoutMode View::textLayoutMode() const
+{
+    if (const Window* window = this->window())
+        return window->textLayoutMode();
+    for (const View* view = this; view; view = view->m_parent) {
+        if (view->m_textLayoutMode)
+            return *view->m_textLayoutMode;
+    }
+    return {};
+}
+
+void View::setTextLayoutMode(TextLayoutMode mode)
+{
+    m_textLayoutMode = mode;
+    requestLayout();
 }
 
 void View::addChild(std::unique_ptr<View> child)
@@ -94,6 +112,14 @@ void View::setClipsChildren(bool clips)
         return;
     invalidate();
     m_clipsChildren = clips;
+}
+
+void View::setChildClipRadius(double radius)
+{
+    if (radius == m_childClipRadius)
+        return;
+    invalidate();
+    m_childClipRadius = radius;
 }
 
 void View::setOpacity(double opacity)
@@ -167,6 +193,9 @@ void View::setEnabled(bool enabled)
             notify(child.get());
     };
     notify(this);
+    // A layout looks again at what is under the pointer.
+    if (enabled)
+        requestLayout();
     requestPaint();
 }
 
@@ -202,6 +231,12 @@ void View::updateTextInput()
 {
     if (Window* window = this->window(); window && window->focusView() == this)
         window->updateTextInput();
+}
+
+bool View::startDrag(DragSource source)
+{
+    Window* window = this->window();
+    return window && window->startDrag(std::move(source));
 }
 
 void View::setLayoutHints(const LayoutHints& hints)

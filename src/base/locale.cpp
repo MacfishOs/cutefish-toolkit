@@ -27,7 +27,7 @@
 
 // Exported by ICU's common library but declared only in its internal
 // uresimp.h: a nested lookup that inherits from parent locales key by key, as
-// CLDR does and as Qt's CLDR scan does.
+// CLDR does.
 U_CAPI UResourceBundle* U_EXPORT2 ures_getByKeyWithFallback(const UResourceBundle* resourceBundle, const char* key,
                                                             UResourceBundle* fillIn, UErrorCode* status);
 
@@ -35,13 +35,13 @@ namespace cutefish::base {
 
 struct Locale::Data
 {
-    // Names as QLocale::name() gives them.
+    // Language and territory, such as "en_US", or "C".
     std::string name = "C";
     std::string language = "C";
     std::string icuId = "en_US_POSIX";
     bool isC = true;
 
-    // Qt format strings, long and short.
+    // Format strings as Locale::toString() takes them, long and short.
     std::array<std::string, 2> dateFormats = {"dddd, d MMMM yyyy", "d MMM yyyy"};
     std::array<std::string, 2> timeFormats = {"HH:mm:ss t", "HH:mm:ss"};
     // By Locale::FormatType, then the same three standalone.
@@ -59,7 +59,7 @@ struct Locale::Data
     std::string plus = "+";
     char32_t zero = U'0';
     // Digits after the last separator, between separators, and the fewest
-    // before the first one, as Qt's m_grouping_least, _higher and _top.
+    // before the first one.
     int groupLeast = 3;
     int groupHigher = 3;
     int groupTop = 1;
@@ -124,9 +124,9 @@ static std::string localeId(std::string_view name)
     return id;
 }
 
-// Converts a CLDR date or time pattern into a Qt format string, as Qt's
-// util/locale_database/dateconverter.py does.
-static std::string qtFormatFromPattern(std::string_view text)
+// Converts a CLDR date or time pattern into a format string as
+// Locale::toString() takes it.
+static std::string formatFromCldrPattern(std::string_view text)
 {
     std::string result;
     std::string separator;
@@ -208,7 +208,8 @@ static std::string qtFormatFromPattern(std::string_view text)
             result += form;
             text.remove_prefix(n);
         } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-            // A field Qt has no form for, with the separator only it needed.
+            // A field the format strings have no form for, with the separator
+            // only it needed.
             text.remove_prefix(n);
             while (!separator.empty() && (separator.back() == ' ' || separator.back() == '-'))
                 separator.pop_back();
@@ -276,7 +277,7 @@ static std::string resourceString(const UResourceBundle* bundle, std::initialize
     return resourceString(findResource(bundle, keys).get());
 }
 
-// Qt's names and formats are the Gregorian calendar's, also where another
+// Names and formats are always the Gregorian calendar's, also where another
 // one is the default (fa_IR, th_TH).
 static std::string gregorian(const std::string& id)
 {
@@ -326,7 +327,7 @@ static std::string withoutLeadingSpace(const std::string& text)
     return text.substr(i);
 }
 
-// How a unit is written after a number, as Qt's ldml.py __findUnit picks it.
+// How a unit is written after a number: its short form, else its narrow one.
 static std::string unitText(const UResourceBundle* units, const std::string& unit)
 {
     for (const char* length : {"unitsShort", "unitsNarrow"}) {
@@ -361,7 +362,7 @@ static void readUnits(Locale::Data& data)
     data.byteUnit = byte.empty() ? "bytes" : byte;
 
     // The SI units as CLDR has them, extrapolated past what it has from the
-    // localized byte, which also gives the IEC units; see Qt's __unitCount.
+    // localized byte, which also gives the IEC units.
     static const char* const quantifiers[] = {"kilo", "mega", "giga", "tera", "peta", "exa"};
     std::vector<std::string> cache;
     std::string tail = "B";
@@ -390,7 +391,7 @@ static void readUnits(Locale::Data& data)
         data.iecUnits[i] = std::string(1, char(std::toupper(quantifiers[i][0]))) + suffix;
 }
 
-// Digit grouping as Qt's ldml.py __numberGrouping reads it.
+// Digit grouping from the default numbering system's decimal pattern.
 static void readGrouping(Locale::Data& data, const UResourceBundle* bundle)
 {
     std::string system = resourceString(bundle, {"NumberElements", "default"});
@@ -466,10 +467,10 @@ static std::shared_ptr<const Locale::Data> createData(const std::string& id)
     data->name = territory[0] ? data->language + "_" + territory : data->language;
 
     const char* icuId = data->icuId.c_str();
-    data->dateFormats = {qtFormatFromPattern(datePattern(id, UDAT_NONE, UDAT_FULL)),
-                         qtFormatFromPattern(datePattern(id, UDAT_NONE, UDAT_SHORT))};
-    data->timeFormats = {qtFormatFromPattern(datePattern(id, UDAT_FULL, UDAT_NONE)),
-                         qtFormatFromPattern(datePattern(id, UDAT_SHORT, UDAT_NONE))};
+    data->dateFormats = {formatFromCldrPattern(datePattern(id, UDAT_NONE, UDAT_FULL)),
+                         formatFromCldrPattern(datePattern(id, UDAT_NONE, UDAT_SHORT))};
+    data->timeFormats = {formatFromCldrPattern(datePattern(id, UDAT_FULL, UDAT_NONE)),
+                         formatFromCldrPattern(datePattern(id, UDAT_SHORT, UDAT_NONE))};
 
     status = U_ZERO_ERROR;
     std::unique_ptr<UDateFormat, DateFormatDeleter> symbols(
@@ -493,7 +494,7 @@ static std::shared_ptr<const Locale::Data> createData(const std::string& id)
     }
 
     Resource bundle = openResource(nullptr, id);
-    // Qt takes the wide format day periods.
+    // AM and PM are the wide format day periods.
     if (Resource markers = findResource(bundle.get(), {"calendar", "gregorian", "AmPmMarkers"})) {
         UErrorCode markerStatus = U_ZERO_ERROR;
         int32_t length = 0;
@@ -757,8 +758,8 @@ static std::string integerText(int64_t value, int width, const Locale::Data& dig
     return (negative ? digits.minus : std::string()) + localizedDigits(text, digits.zero);
 }
 
-// Copies quoted text, as Qt's qt_readEscapedFormatString does; i is at the
-// opening quote.
+// Copies quoted text, with '' as a literal quote; i is at the opening
+// quote.
 static std::string readQuoted(std::string_view format, size_t& i)
 {
     ++i;
@@ -830,8 +831,8 @@ static std::string zoneName(const DateTime& when, const Locale::Data& names)
     return U_FAILURE(status) ? when.zoneAbbreviation : toUtf8(buffer, length);
 }
 
-// Qt's QCalendarBackend::dateTimeToString: names from one locale, digits from
-// another, as the system locale does with LC_TIME and LC_NUMERIC.
+// Writes a date and time by a format string: names from one locale, digits
+// from another, as the system locale does with LC_TIME and LC_NUMERIC.
 static std::string formatDateTime(std::string_view format, const CalendarDate* date, const ClockTime* time,
                                   const DateTime* when, const Locale::Data& names, const Locale::Data& digits)
 {
@@ -1029,7 +1030,7 @@ std::string Locale::zeroDigit() const
     return fromCodePoint(m_numeric->zero);
 }
 
-// Marks where separators go in a run of ASCII integer digits, as Qt groups.
+// Marks where separators go in a run of ASCII integer digits.
 static std::string grouped(const std::string& integer, const Locale::Data& sizes)
 {
     std::string result = integer;
@@ -1065,8 +1066,8 @@ std::string Locale::toString(double value, int decimals) const
         return value < 0 ? m_numeric->minus + "inf" : "inf";
     decimals = std::max(0, decimals);
 
-    // The exact decimal expansion of the double, rounded half away from zero
-    // as Qt's double-conversion does.
+    // The exact decimal expansion of the double, rounded half away from
+    // zero.
     std::vector<char> buffer(size_t(400 + decimals));
     std::snprintf(buffer.data(), buffer.size(), "%.*f", decimals + 40, std::fabs(value));
     const std::string digits = buffer.data();

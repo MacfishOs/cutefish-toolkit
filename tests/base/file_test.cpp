@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -110,6 +112,34 @@ TEST_F(FileTest, WatchesDirectoryEntries)
     EXPECT_EQ(names.back(), "entry");
 }
 
+TEST_F(FileTest, ReportsAQueueOverflow)
+{
+    int maximum = 16384;
+    if (const auto limit = file::read("/proc/sys/fs/inotify/max_queued_events"))
+        maximum = std::atoi(limit->c_str());
+    if (maximum > 200000)
+        GTEST_SKIP() << "the inotify queue is too long to fill";
+    int overflows = 0;
+    int changes = 0;
+    int fileChanges = 0;
+    FileWatch watch = FileWatch::directory(
+        m_directory, [&](const std::string&) { ++changes; }, [&] { ++overflows; });
+    FileWatch plain = FileWatch::directory(m_directory, [](const std::string&) {});
+    FileWatch file = FileWatch::file(m_directory + "/watched", [&] { ++fileChanges; });
+    // Each file is a create and a close-write event: overfill while nothing reads.
+    for (int i = 0; i < maximum / 2 + 100; ++i) {
+        const std::string path = m_directory + "/f" + std::to_string(i);
+        const int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+        ASSERT_GE(fd, 0);
+        ::close(fd);
+    }
+    runFor(300ms);
+    EXPECT_EQ(overflows, 1);
+    EXPECT_GT(changes, 0);
+    // A file watch takes the overflow as a change.
+    EXPECT_EQ(fileChanges, 1);
+}
+
 TEST(PathsTest, StandardDirectories)
 {
     EXPECT_FALSE(paths::home().empty());
@@ -117,4 +147,16 @@ TEST(PathsTest, StandardDirectories)
     EXPECT_EQ(paths::cutefishConfig("calendar"), paths::home() + "/.config/cutefish/calendar.conf");
     EXPECT_EQ(paths::findExecutable("sh").empty(), false);
     EXPECT_TRUE(paths::findExecutable("no-such-program-anywhere").empty());
+}
+
+// A reader that went: EPIPE, and the process carries on.
+TEST(FileWriteTest, WritesToAClosedPipeWithoutSigpipe)
+{
+    int fds[2];
+    ASSERT_EQ(pipe2(fds, O_CLOEXEC), 0);
+    close(fds[0]);
+    const char data[] = "lost";
+    EXPECT_EQ(file::writeWithoutSigpipe(fds[1], data, sizeof data), -1);
+    EXPECT_EQ(errno, EPIPE);
+    close(fds[1]);
 }

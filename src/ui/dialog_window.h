@@ -15,7 +15,7 @@ namespace cutefish::ui {
 class Label;
 class Window;
 
-// FishUI's dialog button: a pill, in the accent colour when primary, in red
+// A dialog button: a pill, in the accent colour when primary, in red
 // when it confirms something that cannot be undone.
 class DialogButton : public View
 {
@@ -54,7 +54,7 @@ private:
     bool m_pressed = false;
 };
 
-// FishUI's dialog: a modal window over its parent, its title on the line of
+// A dialog: a modal window over its parent, its title on the line of
 // its close button and its height that of its content.
 class DialogWindow
 {
@@ -75,7 +75,7 @@ public:
         setContentView(std::move(view));
         return content;
     }
-    // FishUI's back button, before the title, for pages that replace each other.
+    // A back button, before the title, for pages that replace each other.
     void setBackVisible(bool visible);
 
     void show();
@@ -95,7 +95,7 @@ private:
     Root* m_root;
 };
 
-// FishUI's confirmation: a title, an explanation and two buttons, the
+// A confirmation: a title, an explanation and two buttons, the
 // confirming one in the accent colour or, when it destroys something, red.
 class ConfirmDialog
 {
@@ -103,7 +103,7 @@ public:
     ConfirmDialog(Window* parent, std::string title, std::string text = {});
     ~ConfirmDialog();
 
-    // Also while shown, as ConfirmDialog's bound title and text.
+    // Also while shown.
     void setTitle(std::string title);
     void setText(std::string text);
     void setConfirmText(std::string text);

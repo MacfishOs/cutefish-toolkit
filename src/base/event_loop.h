@@ -62,6 +62,10 @@ public:
     void unwatch(int id);
 
     int startTimer(std::chrono::nanoseconds interval, bool repeat, Task task);
+    // Moves a running timer's next expiry to `interval` from now, with that
+    // interval from then on, without a system call when the expiry only
+    // moves later. False when the timer is not running.
+    bool restartTimer(int id, std::chrono::nanoseconds interval);
     void stopTimer(int id);
 
     // Runs the task on the loop's next iteration; callable from any thread.
@@ -80,7 +84,7 @@ public:
     int run();
     void quit(int exitCode = 0);
 
-    // For a loop run inside another one, such as a host's Qt loop: the
+    // For a loop run inside another one, such as a host toolkit's loop: the
     // descriptor turns readable whenever there is work, timers and posted
     // tasks included, and dispatch() does that work without blocking.
     int fd() const { return m_epoll; }
@@ -98,6 +102,9 @@ private:
     {
         int fd = -1;
         std::chrono::steady_clock::time_point deadline;
+        // What the descriptor is set to: a restart that only moves the
+        // deadline later leaves it, and an early expiry rearms.
+        std::chrono::steady_clock::time_point armed;
         std::chrono::nanoseconds interval{1};
         bool repeat = false;
         Task task;

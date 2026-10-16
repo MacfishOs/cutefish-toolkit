@@ -15,17 +15,16 @@
 
 namespace cutefish::ui {
 
-struct QuickLayerItem;
+struct MaskedLayerItem;
 
-// A picture from a file, decoded on a thread at the device size it is shown
-// at, as a QML Image with asynchronous and sourceSize; or pixels given to
-// it. PNG, JPEG, WebP, TIFF, HEIF, AVIF, JPEG XL, BMP, ICO and SVG files.
-// Decoded pictures are shared between views through a cache.
+// A picture from a file, decoded on a thread at the device size it is shown at;
+// or pixels given to it. PNG, JPEG, WebP, TIFF, HEIF, AVIF, JPEG XL, BMP, ICO
+// and SVG files. Decoded pictures are shared between views through a cache.
 class ImageView : public View
 {
 public:
     enum class FillMode {
-        // The view's whole rect, the aspect ignored, as QML's default.
+        // The view's whole rect, the aspect ignored; the default.
         Stretch,
         // Inside the rect, centred.
         PreserveAspectFit,
@@ -60,37 +59,36 @@ public:
 
     void setFillMode(FillMode mode);
     FillMode fillMode() const { return m_fillMode; }
-    // The size to decode at, in logical pixels, as QML's sourceSize; the
-    // view's own size when empty. A fixed one keeps a resize from decoding again.
+    // The size to decode at, in logical pixels; the view's own size when empty.
+    // A fixed one keeps a resize from decoding again.
     void setSourceSize(SizeF size);
-    // Turns the pixels as the file's EXIF orientation says, as QML's
-    // autoTransform; off by default. Thumbnails are always turned.
+    // Turns the pixels as the file's EXIF orientation says; off by
+    // default. Thumbnails are always turned.
     void setAutoTransform(bool autoTransform);
     // Cuts the picture to a rounded rect of the view.
     void setCornerRadius(double radius, Corners corners = Corners::Circular);
-    // Off draws pixels unfiltered, as QML's smooth: false.
+    // Off draws pixels unfiltered.
     void setSmooth(bool smooth);
-    // Trilinear filtering when shrinking, as QML's mipmap: true; used by
-    // QuickMaskedLayer, which otherwise filters as QML's default does.
+    // Trilinear filtering when shrinking; used by MaskedLayer, which
+    // otherwise filters bilinearly.
     void setMipmap(bool mipmap);
 
     enum class Rendering {
         // On device pixels, cut to the corner radius with antialiasing.
         Direct,
-        // As a QML Image with layer.enabled and a FishUI.OpacityMask of a
-        // FishUI.RoundedRectangle of the corner radius: drawn into a layer
-        // of the view's size and placed at the view's exact, unsnapped
-        // position, both filtered. Give the view the Image item's geometry.
-        QuickMaskedLayer,
+        // Masked by a rounded rectangle of the corner radius through layers
+        // (MaskedLayerItem): drawn into a layer of the view's size and placed
+        // at the view's exact, unsnapped position, both filtered.
+        MaskedLayer,
     };
     void setRendering(Rendering rendering);
 
     Status status() const { return m_status; }
     std::function<void(Status)> onStatusChanged;
 
-    // Once ready: the picture's size in logical pixels, as QML's implicit size.
+    // Once ready: the picture's size in logical pixels.
     SizeF sizeHint() const override;
-    // An unsnapped QuickMaskedLayer reaches into the pixels around the view.
+    // An unsnapped MaskedLayer reaches into the pixels around the view.
     RectF visualRect() const override;
 
     struct Picture;
@@ -103,8 +101,8 @@ private:
     void reset();
     void load(double scale);
     void apply(const std::string& key, std::shared_ptr<const Picture> picture);
-    void paintQuickLayer(Painter& painter);
-    QuickLayerItem layerItem(double scale) const;
+    void paintMaskedLayer(Painter& painter);
+    MaskedLayerItem layerItem(double scale) const;
     void setStatus(Status status);
 
     std::string m_source;
@@ -125,7 +123,7 @@ private:
     std::unique_ptr<Loading> m_loading;
     // Gone with the view, so a result held for the frame skips it.
     std::shared_ptr<char> m_alive = std::make_shared<char>();
-    // QuickMaskedLayer's pixels and what they were made for.
+    // MaskedLayer's pixels and what they were made for.
     struct Composed;
     std::unique_ptr<Composed> m_composed;
 };

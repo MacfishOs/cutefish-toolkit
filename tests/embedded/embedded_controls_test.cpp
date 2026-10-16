@@ -42,8 +42,8 @@ static int inkedPixels(const EmbeddedWindow::Frame& frame, int top, int bottom)
     return count;
 }
 
-// Measured from Qt Quick Text on the compositor's offscreen platform, which
-// lays text out unrounded at every scale (Noto Sans).
+// Reference text measured as the compositor's lock screen lays it out,
+// unrounded at every scale (Noto Sans).
 TEST(EmbeddedControlsTest, TextLaysOutAsTheOffscreenPlatform)
 {
     struct Case
@@ -63,6 +63,8 @@ TEST(EmbeddedControlsTest, TextLaysOutAsTheOffscreenPlatform)
     };
     for (const double scale : {1.0, 1.5}) {
         EmbeddedWindow window;
+        // The lock screen's placement: unrounded.
+        window.setHintedTextLayout(false);
         auto content = std::make_unique<Free>();
         std::vector<Label*> labels;
         for (const Case& item : cases) {
@@ -89,6 +91,8 @@ TEST(EmbeddedControlsTest, RaisedTextDrawsItsStyleBelow)
     int inked[2] = {};
     for (int raised = 0; raised < 2; ++raised) {
         EmbeddedWindow window;
+        // The lock screen's placement: unrounded.
+        window.setHintedTextLayout(false);
         auto content = std::make_unique<Free>();
         StyledLabel* label = content->addChild<StyledLabel>("Raised");
         label->setFontSize(16);
@@ -108,6 +112,8 @@ TEST(EmbeddedControlsTest, RaisedTextDrawsItsStyleBelow)
 TEST(EmbeddedControlsTest, BarePasswordInput)
 {
     EmbeddedWindow window;
+    // The lock screen's placement: unrounded.
+    window.setHintedTextLayout(false);
     auto content = std::make_unique<Free>();
     TextField* field = content->addChild<TextField>();
     field->setGeometry({14, 0, 186, 32});
@@ -187,6 +193,9 @@ TEST(EmbeddedControlsTest, IconPixmapsByNameOrPath)
     EXPECT_FALSE(IconImage::preload("no-such-icon-anywhere", 48));
 
     EmbeddedWindow window;
+
+    // The lock screen's placement: unrounded.
+    window.setHintedTextLayout(false);
     auto content = std::make_unique<Free>();
     IconImage* icon = content->addChild<IconImage>("no-such-icon-anywhere", 48);
     icon->setFallbackName(path);
@@ -200,8 +209,8 @@ TEST(EmbeddedControlsTest, IconPixmapsByNameOrPath)
     EXPECT_EQ(centre[3], 255);
     EXPECT_EQ(inkedPixels(frame, 0, frame.height), 48 * 48);
 
-    // At its own size, on the rounded device pixel and unfiltered, as Qt's
-    // software renderer: 22 logical is 38.5 device at 1.75.
+    // At its own size, on the rounded device pixel and unfiltered: 22
+    // logical is 38.5 device at 1.75.
     EmbeddedWindow exact;
     auto row = std::make_unique<Free>();
     IconImage* whole = row->addChild<IconImage>(path, 168);
@@ -225,6 +234,8 @@ TEST(EmbeddedControlsTest, IconPixmapsByNameOrPath)
 TEST(EmbeddedControlsTest, QuadEasings)
 {
     EmbeddedWindow window;
+    // The lock screen's placement: unrounded.
+    window.setHintedTextLayout(false);
     window.setContentView(std::make_unique<Free>());
     window.setSize({10, 10});
     const uint64_t start = 1000000000;

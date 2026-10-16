@@ -18,6 +18,8 @@
 
 namespace cutefish::ui {
 
+EmbeddedGpu::Private::~Private() = default;
+
 EmbeddedGpu::EmbeddedGpu()
     : d(std::make_unique<Private>())
 {
@@ -25,6 +27,7 @@ EmbeddedGpu::EmbeddedGpu()
 
 EmbeddedGpu::~EmbeddedGpu()
 {
+    d->batch.reset();
     // An abandoned context frees nothing through GL.
     if (d->context && !d->abandoned && eglGetCurrentContext() != d->egl)
         d->context->abandonContext();
@@ -82,12 +85,58 @@ void EmbeddedGpu::purgeResources()
         d->context->purgeUnlockedResources(GrPurgeResourceOptions::kAllResources);
 }
 
+EmbeddedGpu::CacheUsage EmbeddedGpu::cacheUsage() const
+{
+    CacheUsage usage;
+    if (isAbandoned())
+        return usage;
+    d->context->getResourceCacheUsage(&usage.resources, &usage.bytes);
+    usage.purgeableBytes = d->context->getResourceCachePurgeableBytes();
+    return usage;
+}
+
+void EmbeddedGpu::performDeferredCleanup(std::chrono::milliseconds unusedFor)
+{
+    if (!isAbandoned() && eglGetCurrentContext() == d->egl)
+        d->context->performDeferredCleanup(unusedFor);
+}
+
+void EmbeddedGpu::setCacheLimit(size_t bytes)
+{
+    if (!isAbandoned())
+        d->context->setResourceCacheLimit(bytes);
+}
+
+bool EmbeddedGpu::beginBatch()
+{
+    endBatch();
+    d->batch = std::make_unique<EmbeddedGpuScope>(*this);
+    if (!d->batch->isValid()) {
+        d->batch.reset();
+        return false;
+    }
+    return true;
+}
+
+void EmbeddedGpu::endBatch()
+{
+    d->batch.reset();
+}
+
+bool EmbeddedGpu::inBatch() const
+{
+    return d->batch != nullptr;
+}
+
 EmbeddedGpuScope::EmbeddedGpuScope(EmbeddedGpu& gpu)
     : m_gpu(gpu)
+    , m_nested(gpu.d->batch != nullptr)
 {
     if (gpu.isAbandoned() || eglGetCurrentContext() != gpu.d->egl)
         return;
     m_valid = true;
+    if (m_nested)
+        return;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &m_framebuffer);
     if (gpu.d->es3)
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_readFramebuffer);
@@ -103,7 +152,7 @@ EmbeddedGpuScope::EmbeddedGpuScope(EmbeddedGpu& gpu)
 
 EmbeddedGpuScope::~EmbeddedGpuScope()
 {
-    if (!m_valid)
+    if (!m_valid || m_nested)
         return;
     GrDirectContext* context = m_gpu.d->context.get();
     context->flushAndSubmit(GrSyncCpu::kNo);

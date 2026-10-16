@@ -39,7 +39,7 @@ TEST(JsonTest, RefusesInvalidText)
         EXPECT_FALSE(Value::parse(text)) << text;
 }
 
-TEST(JsonTest, WritesAsQtDoes)
+TEST(JsonTest, SerializesCompactOrIndented)
 {
     Value value = Value::object();
     value.insert("text", "tab\there \"quoted\"");

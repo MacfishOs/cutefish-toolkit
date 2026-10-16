@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "ui/quick_rectangle.h"
+#include "ui/smooth_rectangle.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,7 @@
 
 namespace cutefish::ui {
 
-// A vertex of QSGBasicInternalRectangleNode's smooth geometry: a point in
+// A vertex of the antialiased rectangle's geometry: a point in
 // the item, its colour and the offset its vertex shader moves it by.
 struct SmoothVertex
 {
@@ -36,7 +36,7 @@ static float shaderOffset(float offset, double scale)
     return float(std::copysign(d * factor, offset));
 }
 
-// Qt interpolates premultiplied vertex colours; Skia does not. Each
+// The ramp needs premultiplied vertex colours interpolated; Skia does not. Each
 // colour of the strip goes as its own pass, its alpha ramped and nothing
 // else, and the passes add up in a layer to the premultiplied blend.
 static void drawStrip(SkCanvas* canvas, const std::vector<SmoothVertex>& strip, double originX, double originY,
@@ -83,7 +83,7 @@ static void drawStrip(SkCanvas* canvas, const std::vector<SmoothVertex>& strip, 
     canvas->restore();
 }
 
-void drawQuickRoundedRectangle(SkCanvas* canvas, const RectF& rect, double radius, double scale, Color fill,
+void drawSmoothRoundedRectangle(SkCanvas* canvas, const RectF& rect, double radius, double scale, Color fill,
                                double borderWidth, Color border, float opacity)
 {
     const float width = float(rect.width);
@@ -150,7 +150,7 @@ void drawQuickRoundedRectangle(SkCanvas* canvas, const RectF& rect, double radiu
         }
     }
 
-    // A closed ring as Qt indexes it: the right side bottom to top, the
+    // A closed ring: the right side bottom to top, the
     // left side top to bottom, each pair inner then outer, closed by the
     // left side's last pair in front.
     const auto ring = [&rows](SmoothVertex Row::*inner, SmoothVertex Row::*innerLeft, SmoothVertex Row::*outer,

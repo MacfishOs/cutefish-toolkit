@@ -6,14 +6,15 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ui/view.h"
 
 namespace cutefish::ui {
 
-// FishUI's multi-line text area. Text lays out as Qt Quick's TextEdit lays
-// it out; positions are UTF-8 byte offsets. Taller text than the area
+// A multi-line text area, laid out as Label lays out wrapped text;
+// positions are UTF-8 byte offsets. Taller text than the area
 // scrolls inside it. Read-only, the text can still be selected and copied.
 class TextArea : public View
 {
@@ -37,14 +38,33 @@ public:
     void setPlaceholder(std::string placeholder);
     void setReadOnly(bool readOnly);
     bool isReadOnly() const;
-    // WordWrap unless set, as FishUI's.
+    // WordWrap unless set.
     void setWrapMode(WrapMode mode);
-    // Around the text; 6 on every side unless set, as FishUI's.
+    // Around the text; 6 on every side unless set.
     void setPadding(const Margins& padding);
-    // FishUI's line under the text; off for an area inside a card.
+    // The line under the text; off for an area inside a card.
     void setFrameVisible(bool visible);
     // Logical pixels; 0 follows the theme.
     void setFontSize(double size);
+    // A family (empty for the theme's), a pixel size (0 for the theme's) and
+    // a weight, as a label's font for an editor over it.
+    void setFont(const std::string& family, double pixelSize, int weight);
+
+    enum class HorizontalAlignment {
+        Left,
+        Center,
+        Right,
+    };
+    // Each line placed in the width by its advance.
+    void setHorizontalAlignment(HorizontalAlignment alignment);
+    // Text shorter than the area sits in its middle.
+    void setVerticallyCentered(bool centered);
+    // The text and caret; unset follows the theme.
+    void setTextColor(std::optional<Color> color);
+    // The selection's background and text colours; unset, the theme's.
+    void setSelectionColors(std::optional<Color> background, std::optional<Color> text);
+    // The selection stays drawn without the focus.
+    void setPersistentSelection(bool persistent);
 
     size_t cursorPosition() const;
     void setCursorPosition(size_t position);

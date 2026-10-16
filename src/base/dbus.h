@@ -260,9 +260,20 @@ public:
     // owner is empty while there is none.
     NameWatch watchName(const std::string& name, std::function<void(const std::string& owner)> callback) const;
 
+    // org.freedesktop.DBus.RequestName's flags.
+    enum NameFlag : uint32_t {
+        AllowReplacement = 1,
+        ReplaceExisting = 2,
+        DoNotQueue = 4,
+    };
     // Becomes the name's primary owner, without queueing; false when another
-    // connection owns it.
+    // connection owns it, true when this one does already.
     bool requestName(const std::string& name) const;
+    // With RequestName's flags: ReplaceExisting takes the name from an owner
+    // that allows replacement. True when this connection is the primary
+    // owner; without DoNotQueue the request may wait in the queue, and false
+    // is returned.
+    bool requestName(const std::string& name, uint32_t flags) const;
     void releaseName(const std::string& name) const;
 
 private:
@@ -336,6 +347,10 @@ public:
     PendingCall setPropertyAsync(const std::string& name, const Variant& value,
                                  std::function<void(const Reply&)> done) const;
 
+    // Signals of the proxy's object. For a well-known service name only what
+    // its current owner sends gets through: other connections' objects at the
+    // same path (two players, two tray items) are not heard. Signals arriving
+    // before the owner is known wait for it.
     Match onSignal(const std::string& member, std::function<void(const Message&)> callback) const;
     Match onPropertiesChanged(
         std::function<void(const VariantMap& changed, const std::vector<std::string>& invalidated)> callback) const;

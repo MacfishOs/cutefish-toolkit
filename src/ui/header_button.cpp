@@ -23,6 +23,7 @@ HeaderButton::HeaderButton(std::string artwork, double size)
     : m_artwork(std::move(artwork))
     , m_size(size)
 {
+    setMovesWindow(true);
 }
 
 void HeaderButton::setArtwork(std::string artwork)
@@ -61,13 +62,23 @@ void HeaderButton::setPlateAlphas(PlateAlphas light, PlateAlphas dark)
     requestPaint();
 }
 
+void HeaderButton::setGlyphColor(std::optional<Color> color)
+{
+    if (color == m_glyphColor)
+        return;
+    m_glyphColor = color;
+    requestPaint();
+}
+
 void HeaderButton::paint(Painter& painter)
 {
-    const Theme& theme = Theme::current();
-    const Color tint = theme.darkMode ? Color::rgb(0xFFFFFF) : Color::rgb(0x323238);
+    const Window* window = this->window();
+    // The header's mode, which a window may set apart from the theme.
+    const bool dark = window ? window->headerDarkMode() : Theme::current().darkMode;
+    const Color tint = dark ? Color::rgb(0xFFFFFF) : Color::rgb(0x323238);
     const Rect box = painter.deviceRect(localRect());
-    // RoundImageButton: the icon at whole logical pixels in the button, then
-    // snapped onto the device grid as IconItem snaps it.
+    // The icon at whole logical pixels in the button, then snapped onto the
+    // device grid as Icon snaps it.
     const double iconSize = m_glyph.empty() ? kArtwork : m_glyphSize;
     const RectF bounds = localRect();
     const Rect icon = painter.snappedRect({std::round((bounds.width - iconSize) / 2),
@@ -76,7 +87,7 @@ void HeaderButton::paint(Painter& painter)
     // The plate keeps the icon's parity, so both stay centred on the same pixel.
     const bool pressed = m_pressed || m_checked;
     if (isEnabled() && (pressed || m_hovered || m_highlighted)) {
-        const PlateAlphas& alphas = theme.darkMode ? m_dark : m_light;
+        const PlateAlphas& alphas = dark ? m_dark : m_light;
         const double alpha = pressed ? alphas.pressed : alphas.hovered;
         const int margin = int(std::lround(m_size * 0.1 * painter.scale()));
         int plate = std::min(box.width, box.height) - 2 * margin;
@@ -90,12 +101,12 @@ void HeaderButton::paint(Painter& painter)
     const std::string artworkName = currentArtwork();
     if (artworkName.empty() && m_glyph.empty())
         return;
-    const Window* window = this->window();
     const double opacity = !isEnabled() ? 0.35 : (window && window->isActive()) ? 1.0 : 0.6;
     const int side = icon.width;
+    const Color ink = m_glyphColor.value_or(tint);
     sk_sp<SkImage> image = m_glyph.empty()
-            ? IconLoader::instance().glyph("window-" + artworkName, side, tint)
-            : IconLoader::instance().glyph(m_glyph, side, tint);
+            ? IconLoader::instance().glyph("window-" + artworkName, side, ink)
+            : IconLoader::instance().glyph(m_glyph, side, ink);
     painter.save();
     painter.multiplyOpacity(opacity);
     painter.drawImage(image.get(), icon.x, icon.y);

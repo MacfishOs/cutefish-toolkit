@@ -12,9 +12,8 @@
 using namespace cutefish::base;
 using paths::UserDirectory;
 
-// The expectations are what QStandardPaths::writableLocation() (Qt 6.8)
-// returned for the same file.
-TEST(UserDirectoryTest, ReadsUserDirsAsQtDoes)
+// The expectations are the reference results for the same file.
+TEST(UserDirectoryTest, ReadsUserDirsFile)
 {
     const std::string file = std::filesystem::temp_directory_path() / ("user-dirs-" + std::to_string(getpid()));
     ASSERT_TRUE(file::writeAtomically(file, "XDG_DESKTOP_DIR=\"$HOME\"\n"

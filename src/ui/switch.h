@@ -12,7 +12,7 @@ namespace cutefish::ui {
 
 class Animation;
 
-// FishUI's switch: a pill in the accent colour when on, its white handle
+// A switch: a pill in the accent colour when on, its white handle
 // sliding across.
 class Switch : public ToggleControl
 {

@@ -4,15 +4,15 @@
 #include <gtest/gtest.h>
 
 #include "test_views.h"
-#include "ui/quick_layout.h"
+#include "ui/cell_layout.h"
 #include "ui/window.h"
 
 using namespace cutefish::ui;
 using cutefish::ui::test::Box;
 
-// Geometry Qt 6.8's RowLayout, ColumnLayout and GridLayout give the same
-// children (QML Rectangles with these implicit sizes and Layout.*), measured
-// on the test laptop.
+// Reference geometry of row, column and grid layouts for the same children
+// (rectangles with these implicit sizes and layout hints), measured on the
+// test laptop.
 namespace {
 
 template<typename Layout>
@@ -59,7 +59,7 @@ void expectGeometry(const View* view, RectF expected)
 
 } // namespace
 
-TEST(QuickLayoutTest, RowSharesBySizeAndRounds)
+TEST(CellLayoutTest, RowSharesBySizeAndRounds)
 {
     Hosted<RowLayout> hosted({300, 44});
     Box* a = hosted.add({50.4, 17.2});
@@ -72,7 +72,7 @@ TEST(QuickLayoutTest, RowSharesBySizeAndRounds)
     EXPECT_EQ(hosted.layout->sizeHint(), (SizeF{104, 22}));
 }
 
-TEST(QuickLayoutTest, RowWithoutFillingChildrenSpreadsCells)
+TEST(CellLayoutTest, RowWithoutFillingChildrenSpreadsCells)
 {
     Hosted<RowLayout> hosted({300, 30});
     Box* a = hosted.add({50.4, 17});
@@ -82,7 +82,7 @@ TEST(QuickLayoutTest, RowWithoutFillingChildrenSpreadsCells)
     expectGeometry(b, {120, 7, 80, 17});
 }
 
-TEST(QuickLayoutTest, RowNarrowerThanPreferred)
+TEST(CellLayoutTest, RowNarrowerThanPreferred)
 {
     Hosted<RowLayout> hosted({100, 30});
     Box* a = hosted.add({80, 17}, {.fillWidth = true, .minimumWidth = 20});
@@ -92,7 +92,7 @@ TEST(QuickLayoutTest, RowNarrowerThanPreferred)
     expectGeometry(b, {63, 7, 37, 17});
 }
 
-TEST(QuickLayoutTest, ColumnAlignsAndKeepsMargins)
+TEST(CellLayoutTest, ColumnAlignsAndKeepsMargins)
 {
     Hosted<ColumnLayout> hosted({200, 150});
     hosted.layout->setSpacing(7);
@@ -110,7 +110,7 @@ TEST(QuickLayoutTest, ColumnAlignsAndKeepsMargins)
     EXPECT_EQ(hosted.layout->sizeHint(), (SizeF{51, 81}));
 }
 
-TEST(QuickLayoutTest, GridSharesRowsAndColumns)
+TEST(CellLayoutTest, GridSharesRowsAndColumns)
 {
     Hosted<GridLayout> hosted({250, 100});
     hosted.layout->setColumns(2);
@@ -129,7 +129,7 @@ TEST(QuickLayoutTest, GridSharesRowsAndColumns)
 }
 
 // A row of labels over a graph, as system-monitor's chart card.
-TEST(QuickLayoutTest, NestedRowsOfFixedChildrenDoNotGrow)
+TEST(CellLayoutTest, NestedRowsOfFixedChildrenDoNotGrow)
 {
     Hosted<ColumnLayout> hosted({544, 244});
     hosted.layout->setSpacing(10);
@@ -160,7 +160,7 @@ TEST(QuickLayoutTest, NestedRowsOfFixedChildrenDoNotGrow)
     EXPECT_EQ(hosted.layout->sizeHint(), (SizeF{186, 120}));
 }
 
-TEST(QuickLayoutTest, NestedColumnsWidenAsFarAsTheirChildren)
+TEST(CellLayoutTest, NestedColumnsWidenAsFarAsTheirChildren)
 {
     Hosted<RowLayout> hosted({300, 60});
     auto* fixed = hosted.layout->addChild<ColumnLayout>();
@@ -178,7 +178,7 @@ TEST(QuickLayoutTest, NestedColumnsWidenAsFarAsTheirChildren)
     expectGeometry(d, {170, 25, 130, 10});
 }
 
-TEST(QuickLayoutTest, NestedRowShrinksToItsChildrensMinimum)
+TEST(CellLayoutTest, NestedRowShrinksToItsChildrensMinimum)
 {
     Hosted<RowLayout> hosted({120, 30});
     auto* inner = hosted.layout->addChild<RowLayout>();
@@ -192,7 +192,7 @@ TEST(QuickLayoutTest, NestedRowShrinksToItsChildrensMinimum)
     expectGeometry(c, {109, 10, 11, 10});
 }
 
-TEST(QuickLayoutTest, NestedRowsHeightenUpToTheirChildrensMaximum)
+TEST(CellLayoutTest, NestedRowsHeightenUpToTheirChildrensMaximum)
 {
     Hosted<ColumnLayout> hosted({100, 200});
     hosted.layout->setSpacing(4);
@@ -209,8 +209,8 @@ TEST(QuickLayoutTest, NestedRowsHeightenUpToTheirChildrensMaximum)
     expectGeometry(c, {0, 0, 30, 126});
 }
 
-// A column anchored with fractional margins in a card, as RoundedItem.
-TEST(QuickLayoutTest, PaddingIsAnchorsMargins)
+// A column anchored with fractional margins in a card.
+TEST(CellLayoutTest, PaddingIsAnchorsMargins)
 {
     Hosted<ColumnLayout> hosted({260, 120});
     hosted.layout->setSpacing(6);
@@ -227,7 +227,7 @@ TEST(QuickLayoutTest, PaddingIsAnchorsMargins)
 }
 
 // An item's own size counts only when its implicit size is not positive.
-TEST(QuickLayoutTest, OwnSizeIsAFallback)
+TEST(CellLayoutTest, OwnSizeIsAFallback)
 {
     Hosted<RowLayout> hosted({200, 60});
     Box* field = hosted.add({80, 34.7}, {.fallbackHeight = 40});
@@ -239,9 +239,9 @@ TEST(QuickLayoutTest, OwnSizeIsAFallback)
     EXPECT_EQ(hosted.layout->sizeHint(), (SizeF{80 + 5 + 1 + 5 + 30, 35}));
 }
 
-TEST(QuickLayoutTest, AnchorsCentreRoundsEachHalf)
+TEST(CellLayoutTest, AnchorsCentreRoundsEachHalf)
 {
-    EXPECT_EQ(qml::anchorsCenter(44, 17), 13);
-    EXPECT_EQ(qml::anchorsCenter(45, 17), 14);
-    EXPECT_EQ(qml::anchorsCenter(30, 15.5), 7);
+    EXPECT_EQ(rounding::centeredStart(44, 17), 13);
+    EXPECT_EQ(rounding::centeredStart(45, 17), 14);
+    EXPECT_EQ(rounding::centeredStart(30, 15.5), 7);
 }

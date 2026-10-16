@@ -27,7 +27,7 @@ static constexpr double kShadowSigma = 9.9;
 // At most this many earlier messages stay when another comes.
 static constexpr size_t kKept = 3;
 
-// One message: FishUI.Control with large padding, a label and an optional button.
+// One message: a control with large padding, a label and an optional button.
 class Bubble : public View
 {
 public:
@@ -211,7 +211,7 @@ private:
     bool m_pressed = false;
 };
 
-// The Popup at the bottom centre: smallSpacing around its column of
+// The popup at the bottom centre: smallSpacing around its column of
 // messages and a largeSpacing below, largeSpacing above the window's bottom.
 class Toast::Stack : public View
 {

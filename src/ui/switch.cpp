@@ -66,12 +66,12 @@ void Switch::paintIndicator(Painter& painter, const RectF& rect)
     if (!isEnabled())
         painter.multiplyOpacity(0.5);
     const Color off = theme.text.withAlpha(0.2);
-    // Plain Qt Quick Rectangles in FishUI's SwitchIndicator.
-    painter.drawQuickRectangle(rect, rect.height / 2, mix(off, theme.highlight, m_color));
+    // Plain antialiased rectangles, not snapped.
+    painter.drawSmoothRectangle(rect, rect.height / 2, mix(off, theme.highlight, m_color));
     const double travel = rect.width - kHandle - 2 * kHandleMargin;
     const RectF handle = {rect.x + kHandleMargin + travel * m_handle,
                           rect.y + (rect.height - kHandle) / 2, kHandle, kHandle};
-    painter.drawQuickRectangle(handle, kHandle / 2, Color::rgb(0xFFFFFF));
+    painter.drawSmoothRectangle(handle, kHandle / 2, Color::rgb(0xFFFFFF));
     painter.restore();
 }
 

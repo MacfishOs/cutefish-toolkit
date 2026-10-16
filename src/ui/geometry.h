@@ -125,8 +125,7 @@ struct Color
         return uint32_t(a) << 24 | uint32_t(r) << 16 | uint32_t(g) << 8 | b;
     }
 
-    // As FishUI's Qt.darker and Qt.lighter: the HSV value divided or
-    // multiplied by the factor.
+    // The HSV value divided or multiplied by the factor.
     Color darker(double factor) const;
     Color lighter(double factor) const;
 

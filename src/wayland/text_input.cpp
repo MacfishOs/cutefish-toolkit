@@ -23,6 +23,8 @@ static uint32_t wirePurpose(TextPurpose purpose)
         return ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_EMAIL;
     case TextPurpose::Url:
         return ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_URL;
+    case TextPurpose::Digits:
+        return ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DIGITS;
     case TextPurpose::Normal:
         break;
     }
@@ -149,7 +151,7 @@ void TextInput::apply()
     const bool fresh = !m_sent;
     const bool textChanged = fresh || m_sent->surroundingText != state.surroundingText
             || m_sent->cursor != state.cursor || m_sent->anchor != state.anchor;
-    const bool purposeChanged = fresh || m_sent->purpose != state.purpose;
+    const bool purposeChanged = fresh || m_sent->purpose != state.purpose || m_sent->hints != state.hints;
     const bool rectangleChanged = fresh || !(m_sent->cursorRectangle == state.cursorRectangle);
     // Every commit is a new state for the input method to work on.
     if (!textChanged && !purposeChanged && !rectangleChanged)
@@ -162,8 +164,7 @@ void TextInput::apply()
                                         : ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_OTHER);
     }
     if (purposeChanged)
-        zwp_text_input_v3_set_content_type(m_input, ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE,
-                                           wirePurpose(state.purpose));
+        zwp_text_input_v3_set_content_type(m_input, state.hints, wirePurpose(state.purpose));
     const RectF& rect = state.cursorRectangle;
     if (rectangleChanged)
         zwp_text_input_v3_set_cursor_rectangle(m_input, int32_t(std::floor(rect.x)),

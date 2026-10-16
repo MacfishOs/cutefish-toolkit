@@ -16,7 +16,7 @@ static constexpr const char* kService = "com.cutefish.Services";
 static constexpr const char* kPath = "/com/cutefish/Services/Appearance";
 static constexpr const char* kInterface = "com.cutefish.Services.Appearance";
 
-// FishUI's accents, in the order of the setting's index.
+// The accents, in the order of the setting's index.
 static const Color kAccents[] = {
     accent::blue, accent::red, accent::green, accent::purple, accent::pink, accent::orange, accent::grey,
 };
@@ -77,6 +77,7 @@ void AppearanceWatcher::apply(sd_bus_message* reply)
     int accent = 0;
     double pointSize = Theme::current().fontPointSize;
     std::string family = Theme::current().fontFamily;
+    std::string fixedFamily = Theme::current().fixedFontFamily;
     std::string iconTheme = Theme::current().iconTheme;
     bool continuous = Theme::current().continuousCorners;
 
@@ -113,6 +114,8 @@ void AppearanceWatcher::apply(sd_bus_message* reply)
             sd_bus_message_read(reply, "s", &value);
             if (key == "systemFont" && value)
                 family = value;
+            else if (key == "systemFixedFont" && value)
+                fixedFamily = value;
             else if (key == "iconTheme" && value && *value)
                 iconTheme = value;
         } else {
@@ -128,6 +131,7 @@ void AppearanceWatcher::apply(sd_bus_message* reply)
         theme.highlight = kAccents[accent];
     theme.fontPointSize = pointSize;
     theme.fontFamily = family;
+    theme.fixedFontFamily = fixedFamily;
     theme.iconTheme = iconTheme;
     theme.continuousCorners = continuous;
     Theme::setCurrent(theme);

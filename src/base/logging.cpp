@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "base/file.h"
 #include "base/strings.h"
 
 namespace cutefish::base {
@@ -222,7 +223,8 @@ LogStream::~LogStream()
         line += '\n';
         size_t written = 0;
         while (written < line.size()) {
-            const ssize_t result = ::write(STDERR_FILENO, line.data() + written, line.size() - written);
+            const ssize_t result = file::writeWithoutSigpipe(STDERR_FILENO, line.data() + written,
+                                                             line.size() - written);
             if (result <= 0)
                 break;
             written += size_t(result);

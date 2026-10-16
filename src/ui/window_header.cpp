@@ -4,6 +4,7 @@
 #include "ui/window_header.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "ui/application.h"
 #include "ui/header_button.h"
@@ -91,14 +92,22 @@ void WindowHeader::setButtonMargin(double margin)
     requestLayout();
 }
 
+void WindowHeader::setButtonsCentered(bool centered)
+{
+    m_buttonsCentered = centered;
+    requestLayout();
+}
+
 void WindowHeader::layout()
 {
+    // A RowLayout centres on whole pixels.
+    const double top = m_buttonsCentered ? std::floor((geometry().height - kButton) / 2) : m_buttonMargin;
     double x = geometry().width - m_buttonMargin;
     for (HeaderButton* button : {m_close, m_maximize, m_minimize}) {
         if (!button->isVisible())
             continue;
         x -= kButton;
-        button->setGeometry({x, m_buttonMargin, kButton, kButton});
+        button->setGeometry({x, top, kButton, kButton});
         x -= kButtonSpacing;
     }
     if (m_content)

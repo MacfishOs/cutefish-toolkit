@@ -4,11 +4,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "ui/event.h"
+#include "ui/path.h"
 #include "ui/window.h"
 
 struct wl_callback;
@@ -21,6 +23,12 @@ struct xdg_dialog_v1;
 struct xdg_popup;
 struct xdg_surface;
 struct xdg_toplevel;
+struct zxdg_imported_v2;
+struct cutefish_shell_surface_v1;
+
+namespace cutefish::ui {
+class DropOffer;
+}
 
 namespace cutefish::ui::wayland {
 
@@ -65,6 +73,15 @@ public:
         virtual void configureBounds(int, int) {}
         // The user started or ended resizing the window by an edge.
         virtual void interactiveResize(bool) {}
+
+        // A drag over the surface; enter and motion return the action the
+        // window would take, drop the one it took.
+        virtual uint32_t dragEnter(double, double, DropOffer*, uint32_t) { return 0; }
+        virtual uint32_t dragMotion(double, double, uint32_t) { return 0; }
+        virtual void dragLeave() {}
+        virtual uint32_t drop() { return 0; }
+        // A desktop surface's work area, surface-local logical pixels.
+        virtual void workArea(const RectF&) {}
     };
 
     // A toplevel.
@@ -80,6 +97,8 @@ public:
 
     Delegate* delegate() const { return m_delegate; }
     wl_surface* surface() const { return m_surface; }
+    // Null for a popup.
+    xdg_toplevel* toplevel() const { return m_xdgToplevel; }
     Connection& connection() const { return m_connection; }
 
     void setTitle(const std::string& title);
@@ -92,11 +111,14 @@ public:
     void minimize();
     // A dialog of the parent: kept above it, modal when asked.
     void setParent(ShellSurface* parent, bool modal);
+    // A dialog of another client's toplevel, from its exported handle
+    // (with or without the "wayland:" prefix); empty clears it.
+    void setForeignParent(const std::string& handle, bool modal);
     // The size a window mapped maximized returns to; before map().
     void setRestoreSize(int width, int height);
 
     // The logical size of the output the surface is on, its parent's while it
-    // is on none, or the first output's, as Qt picks a window's screen.
+    // is on none, or the first output's.
     SizeF outputSize() const;
 
     // The initial commit, without a buffer; the compositor answers with a configure.
@@ -105,6 +127,19 @@ public:
     // The rounded body the compositor blurs behind, outlines and shadows; an
     // empty rect turns it off. Applies with the next commit.
     void setBlur(const RectF& rect, double radius);
+    // The outline masking the blur; an empty path goes back to the rect.
+    void setBlurShape(const Path& path);
+    // Glass over the blur rect, or the plain blur without a material.
+    void setGlass(const std::optional<GlassMaterial>& material);
+    void setResizeAroundCenter(bool aroundCenter);
+    void setSkipTaskbar(bool skip);
+    void setAlwaysOnTop(bool onTop);
+    void setRestoreId(const std::string& id);
+    // cutefish_shell_v1 on a trusted connection: the desktop role on the
+    // output, normal focus; before map().
+    bool setDesktop(const std::string& outputName);
+    void setShellOutput(const std::string& outputName);
+    void activateShellSurface();
 
     // Everything that has to land in the same commit as the next buffer:
     // the configure ack, the viewport, the opaque region, the next frame
@@ -125,6 +160,8 @@ private:
     xdg_toplevel* m_xdgToplevel = nullptr;
     xdg_popup* m_xdgPopup = nullptr;
     xdg_dialog_v1* m_dialog = nullptr;
+    zxdg_imported_v2* m_imported = nullptr;
+    cutefish_shell_surface_v1* m_shellSurface = nullptr;
     wl_callback* m_frameCallback = nullptr;
     ShellSurface* m_parent = nullptr;
     // The outputs the surface is on, the first entered first.

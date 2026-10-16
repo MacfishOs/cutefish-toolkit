@@ -31,6 +31,11 @@ public:
     // written, or an empty name when the directory itself goes.
     static FileWatch directory(const std::string& path, std::function<void(const std::string& name)> changed,
                                EventLoop* loop = nullptr);
+    // The same, and `overflowed` when the kernel's event queue overflowed
+    // and changes were lost, so a listing should be read again. A file watch
+    // takes an overflow as a change.
+    static FileWatch directory(const std::string& path, std::function<void(const std::string& name)> changed,
+                               std::function<void()> overflowed, EventLoop* loop = nullptr);
 
     bool isActive() const { return m_id != 0; }
     void reset();

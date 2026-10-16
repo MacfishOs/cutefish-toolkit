@@ -21,9 +21,9 @@ struct Expected
 
 } // namespace
 
-// What Qt 6.8's QLocale returns for these locales, keyed as the measuring
-// tool printed it: "<function>.<form>.<argument>".
-static const Expected kQt[] = {
+// Reference results for these locales, keyed as the measuring tool printed
+// them: "<function>.<form>.<argument>".
+static const Expected kReference[] = {
     {"C", "name", "C"},
     {"C", "dateFormat.long", "dddd, d MMMM yyyy"},
     {"C", "dateFormat.short", "d MMM yyyy"},
@@ -341,9 +341,9 @@ static std::string evaluate(const Locale& locale, std::string_view key)
     return "<unknown key>";
 }
 
-TEST(LocaleTest, MatchesQt)
+TEST(LocaleTest, MatchesReferenceFormats)
 {
-    for (const Expected& expected : kQt) {
+    for (const Expected& expected : kReference) {
         const Locale locale(expected.locale);
         EXPECT_EQ(evaluate(locale, expected.key), expected.value) << expected.locale << " " << expected.key;
     }

@@ -16,9 +16,8 @@
 
 namespace cutefish::ui {
 
-// FishUI's SegmentedControl: 32 high inside a padding of 2, the plate 2
-// inside its button. Its TabBar: a TabButton high, a medium icon and a small
-// spacing, without padding.
+// 32 high inside a padding of 2, the plate 2 inside its button. A tab bar: a
+// tab button high, a medium icon and a small spacing, without padding.
 static constexpr double kSegmentedHeight = 32;
 static constexpr double kTabHeight = 38;
 static constexpr double kSegmentedPadding = 2;
@@ -32,7 +31,7 @@ public:
         : m_control(control)
         , m_label(addChild<Label>(std::move(text)))
     {
-        // TabButton's contentItem is a plain Text, coloured rather than faded.
+        // The label is plain text, coloured rather than faded.
         m_label->setFadesWhenDisabled(false);
         m_label->setTextAlignment(Label::TextAlignment::Center);
         m_label->setVerticallyCentered(true);
@@ -153,7 +152,7 @@ SizeF SegmentedControl::sizeHint() const
     return {width + 2 * padding() + Theme::current().smallSpacing, m_contentHeight + 2 * padding()};
 }
 
-// QQuickTabBar gives buttons without a width of their own equal shares.
+// Buttons without a width of their own get equal shares.
 RectF SegmentedControl::itemRect(size_t index) const
 {
     const RectF inner = localRect().adjusted(padding(), padding(), -padding(), -padding());
@@ -193,11 +192,11 @@ void SegmentedControl::paint(Painter& painter)
 
     const RectF item = itemRect(size_t(m_current));
     if (m_style == Style::Segmented) {
-        // A plain Rectangle with a DropShadow layer: Gaussian deviation (radius + 1) / 3.33.
+        // A plain rectangle with a drop shadow: Gaussian deviation (radius + 1) / 3.33.
         const RectF highlight = item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset);
         painter.drawShadow(highlight, highlight.height / 2, 1.2,
                            Color::rgb(0).withAlpha(theme.darkMode ? 0.18 : 0.12), {0, 1});
-        painter.drawQuickRectangle(highlight, highlight.height / 2, plate);
+        painter.drawSmoothRectangle(highlight, highlight.height / 2, plate);
     } else {
         // Concentric with the bar through the inset.
         if (theme.darkMode)
@@ -217,7 +216,7 @@ void SegmentedControl::updateColors()
 {
     const Theme& theme = Theme::current();
     for (size_t i = 0; i < m_segments.size(); ++i) {
-        // TabButton: disabledTextColor, half the text colour while pressed.
+        // The disabled text colour, half the text colour while pressed.
         Label* label = m_segments[i]->label();
         if (!isEnabled())
             label->setColor(theme.disabledText);
@@ -233,8 +232,7 @@ void SegmentedControl::setPressed(int index)
     if (index == m_pressed)
         return;
     m_pressed = index;
-    // A quick click shows no pressed label, as Qt's TabButtons in a TabBar
-    // show none; a held press does.
+    // A quick click shows no pressed label; a held press does.
     m_pressShown = false;
     if (m_pressTimer) {
         Application::instance()->loop().stopTimer(m_pressTimer);

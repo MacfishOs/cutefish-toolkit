@@ -30,6 +30,8 @@ public:
     EglContext& operator=(const EglContext&) = delete;
 
     GrDirectContext* skiaContext() const { return m_skiaContext.get(); }
+    EGLDisplay display() const { return m_display; }
+    EGLConfig config() const { return m_config; }
     int stencilBits() const { return m_stencilBits; }
 
     // Swaps never wait for a frame callback: windows pace themselves.

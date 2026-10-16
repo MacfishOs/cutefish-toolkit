@@ -7,13 +7,16 @@
 #include <functional>
 #include <vector>
 
+#include "ui/drag.h"
 #include "ui/event.h"
 #include "ui/geometry.h"
+#include "ui/path.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
 
 class EmbeddedGpu;
+class EmbeddedHost;
 class EmbeddedPlatformWindow;
 
 // A window inside a process that owns the screen, such as the compositor,
@@ -28,8 +31,8 @@ public:
     // a change of size or scale.
     struct Frame
     {
-        // RGBA8888, premultiplied, row by row: QImage's
-        // Format_RGBA8888_Premultiplied. Null before the first render.
+        // RGBA8888, premultiplied, row by row. Null before the first
+        // render.
         const uint8_t* pixels = nullptr;
         // round(logical size * scale) on each axis.
         int width = 0;
@@ -41,8 +44,16 @@ public:
     };
 
     EmbeddedWindow();
-    // Window's destructor is not virtual: destroy it as an EmbeddedWindow.
-    ~EmbeddedWindow();
+    // A popup of the parent, as Window::createPopup() makes them on Embedded:
+    // the host hears of it through EmbeddedHost::popupShown() and places it.
+    EmbeddedWindow(Window* parent, const PopupPlacement& placement, bool grab);
+    ~EmbeddedWindow() override;
+
+    // The process's host, for popups, activation, text input, blur and
+    // drags; null (the default) refuses or ignores them. Set it before
+    // the first window.
+    static void setHost(EmbeddedHost* host);
+    static EmbeddedHost* host();
 
     // The logical size; fractional sizes are kept as they are. The window
     // shows from the first size on.
@@ -52,6 +63,31 @@ public:
     void setKeyboardFocus(bool focused);
     // isActive(): focus rings and other active looks.
     void setActive(bool active);
+
+    // Popups: the window the popup hangs off, null for others.
+    EmbeddedWindow* popupParent() const;
+    const PopupPlacement& popupPlacement() const;
+    // It holds an xdg_popup grab, see EmbeddedHost::popupShown().
+    bool isGrabbingPopup() const;
+    // Where the host placed the popup, in the parent's logical coordinates;
+    // a size other than size() resizes it, as a positioner allowed to
+    // resize does.
+    void setPopupGeometry(const RectF& geometry);
+    const RectF& popupGeometry() const { return m_popupGeometry; }
+    // xdg_popup.popup_done, or a toplevel's close button: the window's
+    // onCloseRequested. A menu closes itself.
+    void requestClose();
+    // Dismisses every popup of the window, innermost first, as a broken
+    // grab does.
+    void closePopups();
+
+    // The rounded rect the host blurs behind, in logical coordinates, and
+    // its corner radius; an empty rect for none.
+    RectF blurRect() const;
+    double blurRadius() const;
+    // The outline masking the blur instead of the rounded rect, in logical
+    // coordinates, as cutefish_surface_blur_v1.set_shape; empty for none.
+    const Path& blurShape() const;
 
     // Lays the views out now rather than at the next render, e.g. to read a
     // view's place before the first frame.
@@ -105,6 +141,31 @@ public:
     // Tab, and control characters drop out of the text, as on Wayland. The
     // host repeats keys itself, with repeat set.
     void key(const KeyEvent& event, bool pressed);
+    // What the input method sent, as text-input-v3's done gathers it, for
+    // the focused text view.
+    void textInput(const TextInputEvent& event);
+
+    // Touch points in the window's logical coordinates. The first point
+    // drives the pointer as synthesized mouse events: a press,
+    // moves and a release with PointerEvent::device TouchScreen and no
+    // hover left behind; other points are not taken. Cancel releases
+    // without a click.
+    void touchDown(int32_t id, PointF position);
+    void touchMotion(int32_t id, PointF position);
+    void touchUp(int32_t id);
+    void touchCancel();
+    // A touchpad gesture over the window, see View::gesture(). A hold's
+    // begin also stops whatever coasts, as on Wayland.
+    void gesture(const GestureEvent& event);
+
+    // A drag over the window, in logical coordinates. The offer is the
+    // host's and stays valid until leave or drop. Enter and motion return
+    // the action the target would take (one DropAction; NoAction refuses);
+    // drop() returns the one it took.
+    uint32_t dragEnter(PointF position, DropOffer* offer, uint32_t modifiers = NoModifier);
+    uint32_t dragMotion(PointF position, uint32_t modifiers = NoModifier);
+    void dragLeave();
+    uint32_t drop();
 
     // What the pointer asks for over the view under it, or the view holding
     // a press.
@@ -113,11 +174,13 @@ public:
 
 private:
     EmbeddedPlatformWindow* platform() const;
+    void connectPlatform();
     // Damage and the next request, after either render.
     void finishFrame();
 
     Frame m_frame;
     CursorShape m_reportedShape = CursorShape::Default;
+    RectF m_popupGeometry;
 };
 
 } // namespace cutefish::ui

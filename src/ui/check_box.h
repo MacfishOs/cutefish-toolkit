@@ -14,7 +14,7 @@ namespace cutefish::ui {
 class Icon;
 class RadioButton;
 
-// FishUI's check box: a rounded square, filled with the accent colour and
+// A check box: a rounded square, filled with the accent colour and
 // checked when on.
 class CheckBox : public ToggleControl
 {
@@ -52,7 +52,7 @@ private:
     std::vector<RadioButton*> m_buttons;
 };
 
-// FishUI's radio button: a round indicator with a dot when on. Picking one
+// A radio button: a round indicator with a dot when on. Picking one
 // turns the others of its group off.
 class RadioButton : public ToggleControl
 {

@@ -363,7 +363,7 @@ TEST_F(ImageViewTest, TurnsByExifOnlyWhenAsked)
 TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
 {
     const std::string path = writePng("a b[1].png", 300, 150);
-    // QUrl::fromLocalFile(path).toEncoded() is file:///tmp/cutefish-toolkit-image-test/a%20b[1].png.
+    // The URI key is file:///tmp/cutefish-toolkit-image-test/a%20b[1].png.
     const fs::path cached = fs::path(cutefish::base::paths::cacheHome()) / "thumbnails/large/9a737e188c4c86903f69ad5fa7ef1ee9.png";
     fs::remove(cached);
 
@@ -394,11 +394,11 @@ TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
     fs::remove(marker);
 }
 
-TEST_F(ImageViewTest, DrawsAsAQtQuickMaskedLayer)
+TEST_F(ImageViewTest, DrawsAsAMaskedLayer)
 {
-    // What Qt 6.8 put on the screen for ImageSelectionItem.qml's Image (mipmap
-    // and smooth, layer.enabled, FishUI.OpacityMask of a RoundedRectangle of
-    // radius 12 with continuous corners) showing this picture at 150%.
+    // Reference pixels of the wallpaper selection's image (mipmapped and
+    // smooth, masked through layers by a rounded rectangle of radius 12 with
+    // continuous corners) showing this picture at 150%.
     std::vector<uint32_t> pixels(256 * 160);
     for (int y = 0; y < 160; ++y)
         for (int x = 0; x < 256; ++x)
@@ -409,12 +409,12 @@ TEST_F(ImageViewTest, DrawsAsAQtQuickMaskedLayer)
     window.setBackgroundColor(kWhite);
     auto content = std::make_unique<View>();
     auto* view = content->addChild<ImageView>();
-    // The item as ImageSelectionItem.qml anchors it, 0.375 / dpr down and right.
+    // The item as the wallpaper selection anchors it, 0.375 / dpr down and right.
     view->setGeometry({30.1666 + 4 + 0.25, 40.5 + 4 + 0.25, 128.75 - 8, 80.333 - 8});
     view->setFillMode(ImageView::FillMode::PreserveAspectCrop);
     view->setMipmap(true);
     view->setCornerRadius(12, Corners::Continuous);
-    view->setRendering(ImageView::Rendering::QuickMaskedLayer);
+    view->setRendering(ImageView::Rendering::MaskedLayer);
     view->setPixels(256, 160, pixels.data(), 256 * 4, false);
     window.setContentView(std::move(content));
     window.show();

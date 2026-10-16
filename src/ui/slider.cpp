@@ -11,7 +11,7 @@
 
 #include "ui/keys.h"
 #include "ui/painter.h"
-#include "ui/quick_rectangle.h"
+#include "ui/smooth_rectangle.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 
@@ -19,7 +19,7 @@ namespace cutefish::ui {
 
 static constexpr double kTrack = 4;
 static constexpr double kHandle = 22;
-// FishUI's DropShadow: radius 10, 21 samples, four pixels down.
+// The handle's drop shadow: radius 10, 21 samples, four pixels down.
 static constexpr double kShadowSigma = 5;
 static constexpr double kShadowRadius = 10;
 static constexpr double kShadowOffset = 4;
@@ -57,7 +57,7 @@ Slider::SnapMode Slider::snapMode() const
     return m_snapMode.value_or(m_stepped ? SnapMode::SnapAlways : SnapMode::SnapOnRelease);
 }
 
-// As Qt's: a value set from outside is clamped, not snapped.
+// A value set from outside is clamped, not snapped.
 void Slider::setValue(double value)
 {
     value = std::clamp(value, std::min(m_from, m_to), std::max(m_from, m_to));
@@ -85,7 +85,7 @@ void Slider::updateValueToolTip()
         window->unpinToolTip(this);
 }
 
-// QQuickSlider::valueAt: on a step whenever there are steps.
+// On a step whenever there are steps.
 double Slider::valueAt(double position) const
 {
     const double value = (m_to - m_from) * position;
@@ -146,7 +146,7 @@ void Slider::paint(Painter& painter)
     painter.save();
     if (!isEnabled())
         painter.multiplyOpacity(0.4);
-    // FishUI.RoundedRectangles, snapped as FishUI's shader draws them.
+    // Rounded rectangles, snapped as the rounded-rectangle shader draws them.
     painter.drawRoundedRect({start, centreY - kTrack / 2, length, kTrack}, {kTrack / 2},
                             theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.3)
                                            : Color::rgb(0x000000).withAlpha(0.1));
@@ -179,15 +179,15 @@ void Slider::paint(Painter& painter)
         painter.drawShadow(handle, kHandle / 2, sigma, Color::rgb(0).withAlpha(m_pressed ? 0.15 : 0.1),
                            {0, kShadowOffset});
     }
-    // A plain Qt Quick Rectangle, its border not pixel aligned.
+    // A plain antialiased rectangle, its border not pixel aligned.
     const Color fill = m_pressed ? Color::rgb(0xFAFAFA) : Color::rgb(0xFFFFFF);
     const Color border = Color::rgb(0).withAlpha(0.04);
     if (!isEnabled()) {
-        painter.drawQuickRectangle(handle, kHandle / 2, fill, 0.5, border);
+        painter.drawSmoothRectangle(handle, kHandle / 2, fill, 0.5, border);
         painter.restore();
         return;
     }
-    // Enabled, it is a layer under FishUI.DropShadow: the layer texture is
+    // Enabled, it is a layer under a drop shadow: the layer texture is
     // copied into the effect's source, padded across by the blur radius
     // (device pixels counted as logical ones), and that drawn where the
     // handle lies. Each copy filters the edge again.
@@ -207,7 +207,7 @@ void Slider::paint(Painter& painter)
     const sk_sp<SkSurface> layer = surface(texture, texture);
     const sk_sp<SkSurface> source = surface(padded, texture);
     if (layer && source) {
-        drawQuickRoundedRectangle(layer->getCanvas(), {0, 0, kHandle, kHandle}, kHandle / 2, scale, fill, 0.5,
+        drawSmoothRoundedRectangle(layer->getCanvas(), {0, 0, kHandle, kHandle}, kHandle / 2, scale, fill, 0.5,
                                   border, 1);
         source->getCanvas()->drawImageRect(layer->makeImageSnapshot(),
                                            SkRect::MakeXYWH(SkScalar(padding * scale), 0, SkScalar(kHandle * scale),
@@ -281,7 +281,7 @@ void Slider::pointerRelease(const PointerEvent&)
 
 bool Slider::keyPress(const KeyEvent& event)
 {
-    // As QQuickSlider's increase() and decrease().
+    // A step, or 0.1 without one.
     const double step = m_step > 0 ? m_step : 0.1;
     const double direction = m_to >= m_from ? 1 : -1;
     switch (event.key) {

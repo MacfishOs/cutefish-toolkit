@@ -27,9 +27,9 @@ enum class Corners {
 // RoundedRectangle's corners unless an item sets them: the theme's.
 Corners themeCorners();
 
-// FishUI's RoundedRectangle: a rounded rect, and the parallel curve of its
-// shape `inset` beyond it (inside when negative), which keeps frames, rings
-// and thumbnails concentric with continuous corners.
+// A rounded rect, and the parallel curve of its shape `inset` beyond it (inside
+// when negative), which keeps frames, rings and thumbnails concentric with
+// continuous corners.
 struct RoundedShape
 {
     double radius = 0;
@@ -53,6 +53,10 @@ public:
     void save();
     void restore();
     void translate(PointF offset);
+    // Turns what is drawn from here on by the degrees, clockwise, about a
+    // point in logical coordinates; inside save() and restore(). Edges are
+    // still snapped before the turn, so draw smooth content (images, paths).
+    void rotate(double degrees, PointF centre);
     PointF offset() const { return m_offset; }
     // Multiplies into what is drawn from here on.
     void multiplyOpacity(double opacity) { m_opacity *= opacity; }
@@ -63,18 +67,18 @@ public:
     // to a card's or a thumbnail's corners; the rect snapped as a shape.
     void clipRoundedRect(const RectF& rect, double radius, Corners corners = Corners::Circular);
 
-    // Each edge on its own, as a GPU rasterises Qt Quick's plain Rectangle:
-    // halves round down. Rounded shapes and icons snap instead.
+    // Each edge on its own, as a GPU rasterises a plain rectangle: halves
+    // round down. Rounded shapes and icons snap instead.
     int toDevice(double logical) const;
     Rect deviceRect(const RectF& rect) const;
-    // The whole device pixels a logical border takes, at least one, as FishUI's.
+    // The whole device pixels a logical border takes, at least one.
     int borderWidth(double logical) const;
-    // FishUI's PixelGrid::snapped: the first edge on the next whole device
-    // pixel, and as many pixels as the rect encloses, at least one.
+    // The first edge on the next whole device pixel, and as many pixels as the
+    // rect encloses, at least one.
     Rect snappedRect(const RectF& rect) const;
 
     void fillRect(const RectF& rect, Color color);
-    // FishUI's RoundedRectangle, which most of its controls draw with: the
+    // The rounded rectangle most controls draw with: the
     // shape snapped, the inset and a border of logical width in whole device
     // pixels (at least one), and its shader's coverage. The border lies
     // inside the shape's outline.
@@ -84,10 +88,10 @@ public:
                          Corners corners = Corners::Circular);
     void fillRoundedRect(const RectF& rect, double radius, const LinearGradient& gradient,
                          Corners corners = Corners::Circular);
-    // Qt Quick's Rectangle with a radius, which FishUI's switch, slider handle
-    // and scroll bar use: antialiased where it lies, not snapped, with a border
-    // of logical width inside its outline.
-    void drawQuickRectangle(const RectF& rect, double radius, Color fill, double borderWidth = 0,
+    // A rectangle with a radius, which the switch, slider handle and scroll
+    // bar use: antialiased where it lies, not snapped, with a border of
+    // logical width inside its outline.
+    void drawSmoothRectangle(const RectF& rect, double radius, Color fill, double borderWidth = 0,
                             Color border = {});
     // Exactly the device pixels given, for shapes centred by their own rules.
     void fillDeviceRoundedRect(const Rect& rect, double radiusPx, Color color);

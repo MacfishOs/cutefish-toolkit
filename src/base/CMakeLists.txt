@@ -4,6 +4,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
     application_registry.h
     auto_reset.h
     byte_stream.h
+    collator.h
     command_line.h
     dbus.h
     dbus_types.h
@@ -37,6 +38,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
 
 add_library(cutefish-toolkit-base SHARED
     application_registry.cpp
+    collator.cpp
     command_line.cpp
     dbus.cpp
     desktop_entry.cpp
@@ -51,6 +53,7 @@ add_library(cutefish-toolkit-base SHARED
     logging.cpp
     mime_apps.cpp
     mime_database.cpp
+    mime_detection.cpp
     paths.cpp
     process.cpp
     region.cpp

@@ -9,7 +9,7 @@
 
 namespace cutefish::base::json {
 
-// As deep as QJsonDocument reads.
+// Deeper nesting fails to parse.
 static constexpr int kMaximumDepth = 1024;
 
 namespace {
@@ -416,7 +416,7 @@ static void writeString(std::string& out, const std::string& text)
 
 static void writeNumber(std::string& out, double value)
 {
-    // As Qt: no number for NaN or infinity, whole numbers without a fraction.
+    // null for NaN or infinity; whole numbers below 2^53 without a fraction.
     if (!std::isfinite(value)) {
         out += "null";
         return;

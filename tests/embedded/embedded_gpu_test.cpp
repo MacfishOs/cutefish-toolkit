@@ -125,7 +125,7 @@ protected:
     {
         painter.drawRoundedRect({10, 130, 120, 32}, {16}, fill, 1, Color{255, 255, 255, 82});
         painter.drawRoundedRect({150, 125, 64, 64}, {32}, Color{40, 120, 220, 255});
-        painter.drawQuickRectangle({230, 20, 40, 24}, 12, Color{20, 200, 90, 200});
+        painter.drawSmoothRectangle({230, 20, 40, 24}, 12, Color{20, 200, 90, 200});
         painter.fillRect({230, 60, 40.5, 10.25}, Color{200, 30, 30, 255});
         painter.fillEllipse({230, 80, 30, 30}, Color{250, 200, 20, 255});
         painter.drawShadow({20, 170, 60, 20}, 10, 4, Color{0, 0, 0, 80});
@@ -493,4 +493,125 @@ TEST(EmbeddedGpuTest, FallsBackWhenItCannotDraw)
     EXPECT_EQ(window.render(*gpu, {texture, 100, 50, true}), nullptr);
     EXPECT_NE(window.render().pixels, nullptr);
     glDeleteTextures(1, &texture);
+}
+
+TEST(EmbeddedGpuTest, BatchRendersSeveralWindowsWithOneReset)
+{
+    GlHost host;
+    if (!host.isValid())
+        GTEST_SKIP() << "no surfaceless EGL";
+    std::unique_ptr<EmbeddedGpu> gpu = EmbeddedGpu::createForCurrentContext();
+    ASSERT_TRUE(gpu);
+
+    struct Target
+    {
+        std::unique_ptr<EmbeddedWindow> window;
+        Panel* panel = nullptr;
+        GLuint texture = 0;
+    };
+    std::vector<Target> targets;
+    for (const double scale : {1.0, 1.5, 1.75}) {
+        Target target;
+        target.window = std::make_unique<EmbeddedWindow>();
+        auto content = std::make_unique<Panel>();
+        target.panel = content.get();
+        target.window->setContentView(std::move(content));
+        target.window->setScale(scale);
+        target.window->setSize({300, 200});
+        target.texture = GlHost::texture(target.window->pixelWidth(), target.window->pixelHeight());
+        targets.push_back(std::move(target));
+    }
+
+    // The host's own state, which only the batch's end restores.
+    const GLuint own = GlHost::texture(64, 64);
+    GLuint framebuffer = 0;
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, own, 0);
+    glViewport(3, 4, 50, 60);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(1, 2, 30, 40);
+
+    for (int pass = 0; pass < 2; ++pass) {
+        ASSERT_TRUE(gpu->beginBatch());
+        EXPECT_TRUE(gpu->inBatch());
+        for (Target& target : targets) {
+            if (pass == 1) {
+                target.panel->fill = Color{255, 255, 255, 120};
+                target.panel->requestPaint();
+            }
+            const int width = target.window->pixelWidth();
+            const int height = target.window->pixelHeight();
+            const EmbeddedWindow::GpuTexture texture{target.texture, width, height, pass == 1};
+            const EmbeddedWindow::Frame* frame = target.window->render(*gpu, texture, 1000000000 + pass * 16000000);
+            ASSERT_NE(frame, nullptr);
+            // The damage is filled for the host's scene.
+            EXPECT_FALSE(frame->damage.empty());
+        }
+        gpu->endBatch();
+        EXPECT_FALSE(gpu->inBatch());
+        EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
+
+        GLint value = -1;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &value);
+        EXPECT_EQ(value, GLint(framebuffer));
+        GLint box[4] = {};
+        glGetIntegerv(GL_VIEWPORT, box);
+        EXPECT_EQ(std::vector<GLint>(box, box + 4), (std::vector<GLint>{3, 4, 50, 60}));
+        glGetIntegerv(GL_SCISSOR_BOX, box);
+        EXPECT_EQ(std::vector<GLint>(box, box + 4), (std::vector<GLint>{1, 2, 30, 40}));
+        glGetIntegerv(GL_CURRENT_PROGRAM, &value);
+        EXPECT_EQ(value, 0);
+        EXPECT_FALSE(glIsEnabled(GL_BLEND));
+
+        for (Target& target : targets) {
+            const int width = target.window->pixelWidth();
+            const int height = target.window->pixelHeight();
+            const std::vector<uint8_t> pixels = GlHost::read(target.texture, width, height);
+            target.window->requestPaint();
+            const EmbeddedWindow::Frame& cpu = target.window->render(1100000000 + pass * 16000000);
+            const Difference difference = compare(pixels.data(), cpu.pixels, size_t(width) * size_t(height));
+            EXPECT_LT(difference.large, size_t(width * height) / 200) << target.window->scale();
+        }
+    }
+
+    // Not current: no batch, and renders refuse as before.
+    host.release();
+    EXPECT_FALSE(gpu->beginBatch());
+    gpu->endBatch();
+    host.makeCurrent();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(1, &own);
+    for (Target& target : targets)
+        glDeleteTextures(1, &target.texture);
+    targets.clear();
+}
+
+TEST(EmbeddedGpuTest, ReportsAndTrimsItsCache)
+{
+    GlHost host;
+    if (!host.isValid())
+        GTEST_SKIP() << "no surfaceless EGL";
+    std::unique_ptr<EmbeddedGpu> gpu = EmbeddedGpu::createForCurrentContext();
+    ASSERT_TRUE(gpu);
+    {
+        EmbeddedWindow window;
+        window.setContentView(std::make_unique<Panel>());
+        window.setScale(1.5);
+        window.setSize({300, 200});
+        const GLuint texture = GlHost::texture(window.pixelWidth(), window.pixelHeight());
+        ASSERT_NE(window.render(*gpu, {texture, window.pixelWidth(), window.pixelHeight(), false}), nullptr);
+        glDeleteTextures(1, &texture);
+    }
+    const EmbeddedGpu::CacheUsage used = gpu->cacheUsage();
+    EXPECT_GT(used.resources, 0);
+    EXPECT_GT(used.bytes, 0u);
+    EXPECT_LE(used.purgeableBytes, used.bytes);
+    gpu->performDeferredCleanup(std::chrono::milliseconds(0));
+    EXPECT_LE(gpu->cacheUsage().bytes, used.bytes);
+    gpu->setCacheLimit(64 << 20);
+    gpu->release();
+    EXPECT_EQ(gpu->cacheUsage().bytes, 0u);
 }

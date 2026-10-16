@@ -18,6 +18,9 @@
 
 #include "base/event_loop.h"
 #include "ui/application.h"
+#include "ui/drag.h"
+#include "ui/embedded_platform_window.h"
+#include "ui/embedded_window.h"
 #include "ui/frame_client.h"
 #include "ui/keys.h"
 #include "ui/label.h"
@@ -26,13 +29,16 @@
 #include "ui/platform_window.h"
 #include "ui/text_context.h"
 #include "ui/theme.h"
+#include "ui/trusted_connection.h"
 #include "ui/view.h"
+#include "ui/window_header.h"
+#include "wayland/wayland_window.h"
 
 namespace cutefish::ui {
 
 static constexpr uint64_t kDoubleClickNs = 400000000;
 static constexpr auto kToolTipDelay = std::chrono::milliseconds(700);
-// FishUI's tool tip: six pixels of padding, a small spacing and a half above
+// The tool tip: six pixels of padding, a small spacing and a half above
 // what it explains.
 static constexpr double kToolTipPadding = 6;
 static constexpr double kToolTipGap = 9;
@@ -64,8 +70,12 @@ public:
 protected:
     void layout() override
     {
-        m_label->setGeometry(localRect().adjusted(kToolTipPadding, kToolTipPadding,
-                                                  -kToolTipPadding, -kToolTipPadding));
+        // The tip is rounded up to whole pixels: the text keeps its own size,
+        // centred, so the slack goes to both sides instead of the right.
+        const SizeF text = m_label->sizeHint();
+        const RectF bounds = localRect();
+        m_label->setGeometry({(bounds.width - text.width) / 2, (bounds.height - text.height) / 2, text.width,
+                              text.height});
     }
 
     void paint(Painter& painter) override
@@ -82,6 +92,9 @@ private:
 
 } // namespace
 static constexpr double kDoubleClickDistance = 4;
+// How far a press on a view in the window header travels before it moves the
+// window instead.
+static constexpr double kWindowDragDistance = 8;
 
 static uint64_t monotonicNs()
 {
@@ -112,6 +125,15 @@ Window::Window()
     Application::instance()->m_windows.push_back(this);
 }
 
+Window::Window(TrustedConnection& connection)
+    : m_frameDamage(std::make_unique<FrameDamage>())
+    , m_self(std::make_shared<Window*>(this))
+{
+    m_platform = std::make_unique<wayland::WaylandWindow>(this, *connection.m_connection, *connection.m_gpu);
+    m_platform->setAppId(Application::instance()->applicationId());
+    Application::instance()->m_windows.push_back(this);
+}
+
 static bool familyActivated(const Window* window);
 
 Window::Window(Window* parent, const PopupPlacement& placement, bool grab)
@@ -122,12 +144,23 @@ Window::Window(Window* parent, const PopupPlacement& placement, bool grab)
     , m_scale(parent->m_scale)
 {
     m_platform = PlatformWindow::create(this, parent->m_platform.get(), placement, grab);
+    parent->m_popups.push_back(this);
     if (grab)
         parent->m_grabbingPopups.push_back(this);
     // The keyboard goes where the root's goes.
     m_keyboardFocus = parent->m_keyboardFocus;
+    // A popup's text is drawn as its window's.
+    m_hintedTextLayout = parent->m_hintedTextLayout;
+    m_translucentSubpixel = parent->m_translucentSubpixel;
     Application::instance()->m_windows.push_back(this);
     m_active = familyActivated(this);
+}
+
+std::unique_ptr<Window> Window::createPopup(Window* parent, const PopupPlacement& placement, bool grab)
+{
+    if (Application::instance()->platform() == Application::Platform::Embedded)
+        return std::make_unique<EmbeddedWindow>(parent, placement, grab);
+    return std::make_unique<Window>(parent, placement, grab);
 }
 
 Window::~Window()
@@ -144,9 +177,11 @@ Window::~Window()
             window->m_transientParent = nullptr;
     }
     hideToolTip();
-    if (m_parent)
+    if (m_parent) {
         std::erase(m_parent->m_grabbingPopups, this);
-    for (Window* popup : m_grabbingPopups)
+        std::erase(m_parent->m_popups, this);
+    }
+    for (Window* popup : m_popups)
         popup->m_parent = nullptr;
     m_self.reset();
     for (FrameClient* client : m_frameClients)
@@ -236,6 +271,7 @@ void Window::updateActive()
 void Window::setTransientParent(Window* parent, bool modal)
 {
     m_transientParent = parent;
+    m_modal = parent && modal;
     m_platform->setTransientParent(parent ? parent->m_platform.get() : nullptr, modal);
     m_active = familyActivated(this);
     // Opened over the parent, it most likely shows at the parent's scale.
@@ -245,8 +281,12 @@ void Window::setTransientParent(Window* parent, bool modal)
 
 void Window::resize(SizeF size)
 {
+    const SizeF previous = m_size;
     m_size = {std::round(size.width), std::round(size.height)};
     requestLayout();
+    // An embedded popup's host places it again.
+    if (m_shown && m_parent && m_platform->isEmbedded() && !(m_size == previous))
+        static_cast<EmbeddedPlatformWindow*>(m_platform.get())->popupResized();
 }
 
 void Window::setFitsContentHeight(bool fits)
@@ -283,13 +323,113 @@ void Window::handleThemeChanged()
     damageAll();
 }
 
+void Window::setHintedTextLayout(bool hinted)
+{
+    if (hinted == m_hintedTextLayout)
+        return;
+    m_hintedTextLayout = hinted;
+    requestLayout();
+    damageAll();
+}
+
+void Window::setTranslucentSubpixelText(bool subpixel)
+{
+    if (subpixel == m_translucentSubpixel)
+        return;
+    m_translucentSubpixel = subpixel;
+    damageAll();
+    requestPaint();
+}
+
 void Window::setBackgroundBlur(const RectF& rect, double radius)
 {
     m_platform->setBlur(rect, radius);
     requestPaint();
 }
 
-// Qt Quick's Overlay: every child covers the window and places its own views.
+void Window::setBackgroundBlurShape(const Path& path)
+{
+    m_platform->setBlurShape(path);
+    // The shape is surface state the next commit carries.
+    scheduleFrame();
+}
+
+void Window::setBackgroundGlass(const std::optional<GlassMaterial>& material)
+{
+    m_platform->setGlass(material);
+    scheduleFrame();
+}
+
+void Window::setTransientForForeign(const std::string& handle, bool modal)
+{
+    m_platform->setForeignParent(handle, modal);
+}
+
+bool Window::setDesktopRole(const std::string& outputName)
+{
+    return m_platform->setDesktopRole(outputName);
+}
+
+void Window::setDesktopOutput(const std::string& outputName)
+{
+    m_platform->setShellOutput(outputName);
+}
+
+void Window::activateDesktop()
+{
+    m_platform->activateShellSurface();
+}
+
+void Window::handleWorkArea(const RectF& area)
+{
+    if (area == m_workArea)
+        return;
+    m_workArea = area;
+    if (onWorkAreaChanged)
+        onWorkAreaChanged();
+}
+
+SizeF Window::availableSize() const
+{
+    if (m_bounds.width > 0 && m_bounds.height > 0)
+        return m_bounds;
+    return screenSize();
+}
+
+void Window::setResizeAroundCenter(bool aroundCenter)
+{
+    m_platform->setResizeAroundCenter(aroundCenter);
+}
+
+void Window::setSkipTaskbar(bool skip)
+{
+    m_platform->setSkipTaskbar(skip);
+}
+
+void Window::setAlwaysOnTop(bool onTop)
+{
+    m_platform->setAlwaysOnTop(onTop);
+}
+
+void Window::setRestoreId(const std::string& id)
+{
+    m_platform->setRestoreId(id);
+}
+
+void Window::setHeaderDarkMode(std::optional<bool> dark)
+{
+    if (dark == m_headerDarkMode)
+        return;
+    m_headerDarkMode = dark;
+    requestPaint();
+}
+
+bool Window::headerDarkMode() const
+{
+    return m_headerDarkMode.value_or(Theme::current().darkMode);
+}
+
+// Every child covers the window and places its own views.
 class OverlayView final : public View
 {
 protected:
@@ -339,6 +479,11 @@ void Window::activate()
     m_platform->activate();
 }
 
+void Window::requestActivationToken(std::function<void(const std::string& token)> done)
+{
+    m_platform->requestActivationToken(std::move(done));
+}
+
 void Window::exportHandle(std::function<void(const std::string& handle)> done)
 {
     m_platform->exportHandle(std::move(done));
@@ -346,13 +491,51 @@ void Window::exportHandle(std::function<void(const std::string& handle)> done)
 
 void Window::show()
 {
-    // As QWindow::show on a shown window: nothing, the size stays.
-    if (m_shown)
+    // On a shown window: nothing, the size stays. A hidden
+    // embedded window maps again, a popup through the host's popupShown().
+    if (m_shown) {
+        if (!m_hidden)
+            return;
+        m_hidden = false;
+        if (m_parent && static_cast<EmbeddedPlatformWindow*>(m_platform.get())->grabs()
+            && std::find(m_parent->m_grabbingPopups.begin(), m_parent->m_grabbingPopups.end(), this)
+                    == m_parent->m_grabbingPopups.end())
+            m_parent->m_grabbingPopups.push_back(this);
+        m_platform->show(int(std::ceil(m_size.width)), int(std::ceil(m_size.height)));
         return;
+    }
     m_shown = true;
     restoreSize();
     fitContentHeight();
     m_platform->show(int(std::ceil(m_size.width)), int(std::ceil(m_size.height)));
+    // A modal dialog takes the pointer from its parent, which it blocks.
+    if (m_modal && m_transientParent && m_transientParent->m_pointerInside)
+        m_transientParent->handlePointerLeave();
+}
+
+bool Window::blockedByModal() const
+{
+    for (const Window* window : Application::instance()->m_windows) {
+        if (window != this && window->m_modal && window->m_transientParent == this && window->m_shown
+            && !window->m_hidden)
+            return true;
+    }
+    return false;
+}
+
+void Window::hide()
+{
+    if (m_hidden || !m_platform->isEmbedded())
+        return;
+    m_hidden = true;
+    hideToolTip();
+    // Its popups go first, as xdg_popups are dismissed innermost first.
+    for (Window* popup : std::vector<Window*>(m_popups))
+        popup->hide();
+    // Keys go back to the parent at once.
+    if (m_parent)
+        std::erase(m_parent->m_grabbingPopups, this);
+    m_platform->hide();
 }
 
 void Window::startMove()
@@ -410,6 +593,7 @@ Image Window::grab(uint64_t frameTimeNs)
         info, image.bits(), size_t(image.width()) * 4, &properties);
     if (!surface)
         return {};
+    Application::instance()->text().setTranslucentSubpixel(m_translucentSubpixel);
     paintContent(surface->getCanvas(), nullptr);
     return image;
 }
@@ -522,6 +706,8 @@ void Window::handleDiscarded()
 
 void Window::handlePointerEnter(double x, double y)
 {
+    if (blockedByModal())
+        return;
     m_pointer = {x, y};
     m_pointerInside = true;
     m_cursorShape = -1;
@@ -543,11 +729,39 @@ void Window::handlePointerLeave()
 
 void Window::handlePointerMotion(double x, double y)
 {
+    if (blockedByModal()) {
+        if (m_pointerInside)
+            handlePointerLeave();
+        return;
+    }
     m_pointer = {x, y};
     m_pointerInside = true;
     if (m_pressed)
         m_pressed->pointerMove(pointerEvent(m_pressed));
+    if (m_pressed && pressMovesWindow()) {
+        View* view = m_pressed;
+        // As an ungrab: the release lands nowhere, so nothing is clicked.
+        PointerEvent event = pointerEvent(view);
+        event.position = view->mapFromWindow({-1e9, -1e9});
+        view->pointerRelease(event);
+        startMove();
+        return;
+    }
     updateHover();
+}
+
+bool Window::pressMovesWindow() const
+{
+    if (m_pressedButton != MouseButton::Left || !m_pressed->movesWindow() || states().fullScreen)
+        return false;
+    if (std::abs(m_pointer.x - m_lastPressPosition.x) <= kWindowDragDistance
+        && std::abs(m_pointer.y - m_lastPressPosition.y) <= kWindowDragDistance)
+        return false;
+    for (const View* view = m_pressed->parent(); view; view = view->parent()) {
+        if (dynamic_cast<const WindowHeader*>(view))
+            return true;
+    }
+    return false;
 }
 
 void Window::handlePointerButton(MouseButton button, bool pressed, uint32_t modifiers)
@@ -668,6 +882,155 @@ void Window::handleHold()
     interruptFrameClients(int(FrameClient::Interruption::FingersDown));
 }
 
+void Window::handleGesture(const GestureEvent& event)
+{
+    using Type = GestureEvent::Type;
+    m_modifiers = event.modifiers;
+    const bool begin = event.type == Type::SwipeBegin || event.type == Type::PinchBegin
+            || event.type == Type::HoldBegin;
+    const bool end = event.type == Type::SwipeEnd || event.type == Type::PinchEnd || event.type == Type::HoldEnd;
+    // Fingers resting on the touchpad stop what coasts, as on Wayland.
+    if (event.type == Type::HoldBegin)
+        handleHold();
+    if (begin) {
+        hideToolTip();
+        m_gestureTarget = nullptr;
+        if (!m_contentView || !m_pointerInside)
+            return;
+        for (View* view = viewAt(m_pointer, false); view; view = view->parent()) {
+            if (view->isEnabled() && view->gesture(event)) {
+                m_gestureTarget = view;
+                return;
+            }
+        }
+        return;
+    }
+    View* target = m_gestureTarget;
+    if (end)
+        m_gestureTarget = nullptr;
+    if (target)
+        target->gesture(event);
+}
+
+// The first touch point drives the pointer as synthesized mouse events; the
+// others are not taken.
+void Window::handleTouchDown(int32_t id, double x, double y)
+{
+    if (m_touchId >= 0)
+        return;
+    m_touchId = id;
+    m_pointerDevice = PointerDevice::TouchScreen;
+    handlePointerEnter(x, y);
+    handlePointerButton(MouseButton::Left, true, m_modifiers);
+}
+
+void Window::handleTouchMotion(int32_t id, double x, double y)
+{
+    if (id != m_touchId)
+        return;
+    handlePointerMotion(x, y);
+}
+
+void Window::handleTouchUp(int32_t id)
+{
+    if (id != m_touchId)
+        return;
+    handlePointerButton(MouseButton::Left, false, m_modifiers);
+    // A finger leaves no hover behind.
+    handlePointerLeave();
+    m_touchId = -1;
+    m_pointerDevice = PointerDevice::TouchPad;
+}
+
+void Window::handleTouchCancel()
+{
+    if (m_touchId < 0)
+        return;
+    // As an ungrab: the release lands nowhere, so nothing is clicked.
+    m_pointer = {-1e9, -1e9};
+    handlePointerButton(MouseButton::Left, false, m_modifiers);
+    handlePointerLeave();
+    m_touchId = -1;
+    m_pointerDevice = PointerDevice::TouchPad;
+}
+
+void Window::handleDragEnter(double x, double y, DropOffer* offer, uint32_t modifiers)
+{
+    handleDragLeave();
+    m_dropOffer = offer;
+    hideToolTip();
+    handleDragMotion(x, y, modifiers);
+}
+
+uint32_t Window::handleDragMotion(double x, double y, uint32_t modifiers)
+{
+    if (!m_dropOffer)
+        return NoAction;
+    m_dropPosition = {x, y};
+    m_dropModifiers = modifiers;
+    View* target = nullptr;
+    if (m_contentView) {
+        for (View* view = viewAt(m_dropPosition, false); view; view = view->parent()) {
+            if (view->isEnabled() && view->canDrop(*m_dropOffer)) {
+                target = view;
+                break;
+            }
+        }
+    }
+    const auto event = [this](const View* view) {
+        return DragEvent{view->mapFromWindow(m_dropPosition), m_dropOffer, m_dropModifiers};
+    };
+    if (target != m_dropTarget) {
+        View* previous = m_dropTarget;
+        m_dropTarget = target;
+        m_dropAction = NoAction;
+        if (previous)
+            previous->dragLeave();
+        if (target && target == m_dropTarget)
+            target->dragEnter(event(target));
+    }
+    m_dropAction = m_dropTarget ? m_dropTarget->dragUpdate(event(m_dropTarget)) : NoAction;
+    return m_dropAction;
+}
+
+void Window::handleDragLeave()
+{
+    View* target = m_dropTarget;
+    m_dropTarget = nullptr;
+    m_dropOffer = nullptr;
+    m_dropAction = NoAction;
+    if (target)
+        target->dragLeave();
+}
+
+uint32_t Window::handleDrop()
+{
+    View* target = m_dropTarget;
+    const uint32_t action = m_dropAction;
+    DropOffer* offer = m_dropOffer;
+    m_dropTarget = nullptr;
+    m_dropOffer = nullptr;
+    m_dropAction = NoAction;
+    if (!target)
+        return NoAction;
+    // A target that would take nothing hears a leave, as views::View's.
+    if (action == NoAction) {
+        target->dragLeave();
+        return NoAction;
+    }
+    return target->drop(DragEvent{target->mapFromWindow(m_dropPosition), offer, m_dropModifiers});
+}
+
+bool Window::startDrag(DragSource source)
+{
+    if (!m_platform->startDrag(std::move(source)))
+        return false;
+    // The drag takes the pointer and sends no release.
+    m_pressed = nullptr;
+    hideToolTip();
+    return true;
+}
+
 void Window::handleKey(const KeyEvent& event, bool pressed)
 {
     if (!m_grabbingPopups.empty()) {
@@ -771,6 +1134,7 @@ PointerEvent Window::pointerEvent(const View* view) const
 {
     PointerEvent event;
     event.position = view->mapFromWindow(m_pointer);
+    event.device = m_pointerDevice;
     event.button = m_pressedButton;
     event.modifiers = m_modifiers;
     event.clickCount = std::max(1, m_clickCount);
@@ -785,18 +1149,32 @@ void Window::viewRemoved(View* view)
         m_toolTipDismissed = nullptr;
     if (m_scrollTarget && view->contains(m_scrollTarget))
         m_scrollTarget = nullptr;
-    if (m_hovered && view->contains(m_hovered))
-        m_hovered = nullptr;
-    std::erase_if(m_hoverChain, [view](View* hovered) {
+    if (m_gestureTarget && view->contains(m_gestureTarget))
+        m_gestureTarget = nullptr;
+    if (m_dropTarget && view->contains(m_dropTarget)) {
+        m_dropTarget = nullptr;
+        m_dropAction = 0;
+    }
+    std::vector<View*> untracked;
+    std::erase_if(m_hoverChain, [view, &untracked](View* hovered) {
         if (!view->contains(hovered))
             return false;
         hovered->m_hoverTracked = false;
+        untracked.push_back(hovered);
         return true;
     });
     if (m_pressed && view->contains(m_pressed))
         m_pressed = nullptr;
     if (m_focusView && view->contains(m_focusView))
         setFocusView(nullptr, FocusReason::Other);
+    // Disabled, hidden or taken out, a view is no longer hovered; it hears no
+    // leave from the pointer.
+    for (View* hovered : untracked)
+        hovered->hoverChanged();
+    if (m_hovered && view->contains(m_hovered)) {
+        View* hovered = std::exchange(m_hovered, nullptr);
+        hovered->pointerLeave();
+    }
 }
 
 void Window::viewDestroyed(View* view)
@@ -817,6 +1195,12 @@ void Window::viewDestroyed(View* view)
     }
     if (m_scrollTarget == view)
         m_scrollTarget = nullptr;
+    if (m_gestureTarget == view)
+        m_gestureTarget = nullptr;
+    if (m_dropTarget == view) {
+        m_dropTarget = nullptr;
+        m_dropAction = 0;
+    }
     if (m_hovered == view)
         m_hovered = nullptr;
     std::erase(m_hoverChain, view);

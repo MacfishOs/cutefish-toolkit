@@ -5,14 +5,23 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
+#include <optional>
+#include <variant>
 
+#include "include/core/SkBlender.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkData.h"
 #include "include/core/SkFont.h"
+#include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
+#include "include/effects/SkRuntimeEffect.h"
 #include "modules/skparagraph/include/Paragraph.h"
+#include "modules/skparagraph/src/ParagraphPainterImpl.h"
 
 #include "ui/application.h"
 #include "ui/line_breaks.h"
@@ -23,11 +32,11 @@ namespace textlayout = skia::textlayout;
 namespace cutefish::ui {
 
 std::vector<TextLineBox> textLineBoxes(textlayout::Paragraph* paragraph, const SkTypeface* typeface,
-                                       double pixelSize, double scale)
+                                       double pixelSize, double scale, bool hintedLayout)
 {
     const TextContext& context = Application::instance()->text();
-    // The typefaces each line's glyphs use: fallback fonts count, as each
-    // QScriptItem takes the ascent of the engines its glyphs came from.
+    // The typefaces each line's glyphs use: fallback fonts count, each run
+    // taking the ascent of the fonts its glyphs came from.
     const size_t count = std::max<size_t>(1, paragraph ? paragraph->lineNumber() : 0);
     std::vector<std::vector<sk_sp<SkTypeface>>> typefaces(count);
     if (paragraph) {
@@ -49,7 +58,7 @@ std::vector<TextLineBox> textLineBoxes(textlayout::Paragraph* paragraph, const S
         int64_t ascent = 0;
         int64_t descent = 0;
         const auto add = [&](const SkTypeface* face) {
-            const QtFontMetrics metrics = context.metrics(face, pixelSize, scale);
+            const VerticalMetrics metrics = context.metrics(face, pixelSize, scale, hintedLayout);
             ascent = std::max(ascent, int64_t(std::lround(metrics.ascent * 64)));
             descent = std::max(descent, int64_t(std::lround(metrics.descent * 64)));
         };
@@ -57,7 +66,7 @@ std::vector<TextLineBox> textLineBoxes(textlayout::Paragraph* paragraph, const S
             add(typeface);
         for (const sk_sp<SkTypeface>& face : typefaces[i])
             add(face.get());
-        // QTextLine::height(): the 26.6 sum rounded up.
+        // The 26.6 sum rounded up to whole pixels.
         const double height = ((ascent + descent + 63) & -64) / 64.0;
         lines[i] = {top, height, ascent / 64.0};
         top += height;
@@ -70,7 +79,7 @@ double textHeight(const std::vector<TextLineBox>& lines)
     return lines.empty() ? 0 : lines.back().top + lines.back().height;
 }
 
-// Qt's 26.6 advances: truncated, as QFontEngineFT takes linearHoriAdvance.
+// Advances in 26.6 fixed point, truncated from FreeType's linear advance.
 static double truncated(double advance)
 {
     return std::floor(advance * 64) / 64;
@@ -92,21 +101,21 @@ struct GlyphRun
     double clipRight = 0;
 };
 
-// A line's runs in visual order, each glyph with the advance Qt gives it.
+// A line's runs in visual order, each glyph with its truncated advance.
 struct GlyphLine
 {
     std::vector<GlyphRun> runs;
     std::vector<std::vector<double>> advances;
-    // QScriptLine's textAdvance, which alignment uses, and textWidth, which
-    // adds the last glyph's overhang and sizes the text.
+    // The advance, which alignment uses, and the width, which adds the last
+    // glyph's overhang and sizes the text.
     double advance = 0;
     double width = 0;
 };
 
 } // namespace
 
-// QFontEngine::getGlyphBearings: a whole-pixel advance less the glyph's
-// whole-pixel right edge.
+// The right bearing: a whole-pixel advance less the glyph's whole-pixel
+// right edge.
 static double rightBearing(const SkFont& runFont, SkGlyphID glyph, double advance)
 {
     SkFont font = runFont;
@@ -120,7 +129,7 @@ static double rightBearing(const SkFont& runFont, SkGlyphID glyph, double advanc
     return std::floor(advance + 0.5) - std::ceil(bounds.right());
 }
 
-static std::vector<GlyphLine> glyphLines(textlayout::Paragraph* paragraph, bool round)
+static std::vector<GlyphLine> glyphLines(textlayout::Paragraph* paragraph, const AdvanceRule& rule)
 {
     std::vector<GlyphLine> lines(paragraph->lineNumber());
     paragraph->visit([&](int lineNumber, const textlayout::Paragraph::VisitorInfo* info) {
@@ -158,13 +167,15 @@ static std::vector<GlyphLine> glyphLines(textlayout::Paragraph* paragraph, bool 
                     advance = width;
                 }
                 advance = truncated(advance);
-                advances[i] = round ? std::floor(advance + 0.5) : advance;
+                // Spacing comes on top of the glyph's own advance, after
+                // rounding.
+                advances[i] = (rule.round ? std::floor(advance + 0.5) : advance) + rule.letterSpacing;
                 line.width += advances[i];
             }
             line.advances.push_back(std::move(advances));
         }
         line.advance = line.width;
-        // QTextLine counts the last glyph's overhang past its advance.
+        // The width counts the last glyph's overhang past its advance.
         if (!line.runs.empty()) {
             const GlyphRun& last = line.runs.back();
             const double bearing = rightBearing(last.font, last.glyphs.back(), line.advances.back().back());
@@ -175,7 +186,7 @@ static std::vector<GlyphLine> glyphLines(textlayout::Paragraph* paragraph, bool 
     return lines;
 }
 
-double naturalWidth(textlayout::Paragraph* paragraph, bool roundAdvances)
+double naturalWidth(textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances)
 {
     double widest = 0;
     for (const GlyphLine& line : glyphLines(paragraph, roundAdvances))
@@ -185,8 +196,8 @@ double naturalWidth(textlayout::Paragraph* paragraph, bool roundAdvances)
 
 namespace {
 
-// A glyph cluster in text order, with what QTextLine::layout_helper asks of
-// the characters it starts at.
+// A glyph cluster in text order, with what line breaking asks of the
+// characters it starts at.
 struct Cluster
 {
     size_t start = 0;
@@ -215,7 +226,7 @@ static bool isSeparator(const std::string& text, size_t offset)
                 || static_cast<unsigned char>(text[offset + 2]) == 0xA9);
 }
 
-static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const std::string& text, bool round)
+static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const std::string& text, const AdvanceRule& round)
 {
     std::vector<Cluster> clusters;
     for (const GlyphLine& line : glyphLines(paragraph, round)) {
@@ -251,7 +262,7 @@ static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const s
         merged.push_back(cluster);
     }
 
-    // Qt's attributes, at the UTF-16 position of each cluster.
+    // The break attributes, at the UTF-16 position of each cluster.
     std::u16string utf16;
     std::vector<size_t> utf16At(text.size() + 1, 0);
     for (size_t i = 0; i < text.size();) {
@@ -270,7 +281,7 @@ static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const s
         i += length;
     }
     utf16At[text.size()] = utf16.size();
-    const QtCharAttributes attributes = qtCharAttributes(utf16);
+    const BreakAttributes attributes = breakAttributes(utf16);
     for (Cluster& cluster : merged) {
         const size_t position = utf16At[std::min(cluster.start, text.size())];
         cluster.separator = isSeparator(text, cluster.start);
@@ -282,8 +293,8 @@ static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const s
     return merged;
 }
 
-// QTextLine::layout_helper on clusters, from the cluster that starts the
-// line: the cluster the next line starts at and the line's textWidth.
+// Fills one line with clusters, from the cluster that starts the line: the
+// cluster the next line starts at and the line's width.
 static std::pair<size_t, double> layoutLine(const std::vector<Cluster>& clusters, size_t from, double width,
                                             bool manualWrap, bool breakany)
 {
@@ -365,7 +376,7 @@ static std::pair<size_t, double> layoutLine(const std::vector<Cluster>& clusters
             }
         } while (!breakany);
         if (boundary || breakany) {
-            // Qt skips this while the font's worst overhang fits; the result is the same.
+            // Could be skipped while the font's worst overhang fits; the result is the same.
             const double previousBearing = rightBearing;
             rightBearing = bearingOf(ptrdiff_t(k) - 1);
             if (full()) {
@@ -386,17 +397,17 @@ static std::pair<size_t, double> layoutLine(const std::vector<Cluster>& clusters
     return {from + lineLength + spaceLength, textWidth};
 }
 
-std::vector<size_t> qtLineStarts(textlayout::Paragraph* unbounded, const std::string& text, double width, QtWrap wrap,
-                                 bool roundAdvances)
+std::vector<size_t> lineStarts(textlayout::Paragraph* unbounded, const std::string& text, double width, LineWrap wrap,
+                                 const AdvanceRule& roundAdvances)
 {
     std::vector<size_t> starts = {0};
     const std::vector<Cluster> clusters = clustersOf(unbounded, text, roundAdvances);
-    const bool manualWrap = wrap == QtWrap::None;
+    const bool manualWrap = wrap == LineWrap::None;
     size_t from = 0;
     while (from < clusters.size()) {
-        auto [next, textWidth] = layoutLine(clusters, from, width, manualWrap, wrap == QtWrap::Anywhere);
+        auto [next, textWidth] = layoutLine(clusters, from, width, manualWrap, wrap == LineWrap::Anywhere);
         // A word wider than the line starts it and breaks anywhere.
-        if (wrap == QtWrap::WordOrAnywhere && textWidth > width)
+        if (wrap == LineWrap::WordOrAnywhere && textWidth > width)
             next = layoutLine(clusters, from, width, manualWrap, true).first;
         next = std::max(next, from + 1);
         if (next >= clusters.size()) {
@@ -411,41 +422,240 @@ std::vector<size_t> qtLineStarts(textlayout::Paragraph* unbounded, const std::st
     return starts;
 }
 
+std::vector<double> lineWidths(textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances)
+{
+    std::vector<double> widths;
+    for (const GlyphLine& line : glyphLines(paragraph, roundAdvances))
+        widths.push_back(line.width);
+    return widths;
+}
+
+// Subpixel text, also on translucent targets: the glyph's per-channel
+// coverage m, times the text's alpha, blended with the text colour as the
+// blend constant, and the alpha the average coverage: rgb = C m + dst
+// (1 - m), a = avg(m) + dst.a (1 - avg(m)).
+static const sk_sp<SkBlender>& subpixelBlender(SkColor color, sk_sp<SkBlender>* made)
+{
+    static const sk_sp<SkRuntimeEffect> effect = [] {
+        const SkRuntimeEffect::Result result = SkRuntimeEffect::MakeForBlender(SkString(R"(
+uniform half4 color;
+half4 main(half4 src, half4 dst)
+{
+    half3 m = src.rgb * color.a;
+    half average = (src.r + src.g + src.b) / 3 * color.a;
+    return half4(color.rgb * m + dst.rgb * (1 - m), average + dst.a * (1 - average));
+}
+)"));
+        if (!result.effect)
+            fprintf(stderr, "cutefish-toolkit: %s\n", result.errorText.c_str());
+        return result.effect;
+    }();
+    if (!effect) {
+        made->reset();
+        return *made;
+    }
+    const SkV4 value = {SkColorGetR(color) / 255.0f, SkColorGetG(color) / 255.0f, SkColorGetB(color) / 255.0f,
+                        SkColorGetA(color) / 255.0f};
+    *made = effect->makeBlender(SkData::MakeWithCopy(&value, sizeof(value)));
+    return *made;
+}
+
+// Whether glyphs drawn on the canvas go through subpixelBlender(): the
+// fonts ask for subpixel edging, but the target, being translucent, has no
+// pixel geometry, so Skia would draw them grey.
+static bool drawsSubpixelBlended(SkCanvas* canvas, SkFont::Edging edging)
+{
+    return edging == SkFont::Edging::kSubpixelAntiAlias && Application::instance()->text().translucentSubpixel()
+            && canvas->getBaseProps().pixelGeometry() == kUnknown_SkPixelGeometry
+            && Application::instance()->text().pixelGeometry() != kUnknown_SkPixelGeometry;
+}
+
+// Whether the canvas draws at a fractional device scale, where glyphs go
+// unhinted (TextContext::drawsUnhinted).
+static bool drawsUnhinted(SkCanvas* canvas)
+{
+    const SkMatrix& matrix = canvas->getTotalMatrix();
+    return matrix.isScaleTranslate() && TextContext::drawsUnhinted(matrix.getScaleY());
+}
+
+// Unhinted at quarter-pixel positions at a fractional scale; at a whole
+// scale hinted as fontconfig asks, on whole pixels when that hints
+// horizontally too, as the hinted glyphs of the reference are.
+static void hintFor(SkFont& font, bool unhinted)
+{
+    if (unhinted) {
+        font.setHinting(SkFontHinting::kNone);
+        font.setSubpixel(true);
+        font.setBaselineSnap(true);
+        return;
+    }
+    const SkFontHinting hinting = Application::instance()->text().fontconfigHinting();
+    font.setHinting(hinting);
+    if (hinting == SkFontHinting::kNormal || hinting == SkFontHinting::kFull)
+        font.setSubpixel(false);
+}
+
+// The blob with its fonts hinted as hintFor() says; Skia's paragraph
+// positions each glyph.
+static sk_sp<SkTextBlob> hinted(const sk_sp<SkTextBlob>& blob, bool unhinted)
+{
+    SkTextBlobBuilder builder;
+    SkTextBlob::Iter it(*blob);
+    SkTextBlob::Iter::ExperimentalRun run;
+    while (it.experimentalNext(&run)) {
+        if (!run.positions)
+            return blob;
+        SkFont font = run.font;
+        hintFor(font, unhinted);
+        const auto& buffer = builder.allocRunPos(font, run.count);
+        std::copy(run.glyphs, run.glyphs + run.count, buffer.glyphs);
+        std::copy(run.positions, run.positions + run.count, buffer.points());
+    }
+    sk_sp<SkTextBlob> made = builder.make();
+    return made ? made : blob;
+}
+
+// The run's per-channel coverage, white subpixel text on opaque black with
+// the fontconfig's pixel geometry and Skia's linear masks, then blended into
+// the canvas at whole device pixels.
+static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob, SkPoint origin, SkColor color)
+{
+    const SkMatrix matrix = canvas->getTotalMatrix();
+    SkRect bounds = blob->bounds().makeOffset(origin.x(), origin.y());
+    bounds = matrix.mapRect(bounds);
+    SkIRect device = bounds.roundOut().makeOutset(1, 1);
+    if (!device.intersect(canvas->getDeviceClipBounds()))
+        return;
+    const SkImageInfo info = SkImageInfo::MakeN32(device.width(), device.height(), kOpaque_SkAlphaType);
+    const SkSurfaceProps properties(0, Application::instance()->text().pixelGeometry(), 0, 1);
+    // On the CPU on both paths: Ganesh's LCD masks differ from the raster
+    // backend's, which is the pixel reference.
+    const sk_sp<SkSurface> surface = SkSurfaces::Raster(info, &properties);
+    if (!surface)
+        return;
+    SkCanvas* coverage = surface->getCanvas();
+    coverage->clear(SK_ColorBLACK);
+    coverage->translate(SkScalar(-device.x()), SkScalar(-device.y()));
+    coverage->concat(matrix);
+    SkPaint white;
+    white.setAntiAlias(true);
+    white.setColor(SK_ColorWHITE);
+    coverage->drawTextBlob(blob, origin.x(), origin.y(), white);
+
+    sk_sp<SkBlender> blender;
+    SkPaint paint;
+    paint.setBlender(subpixelBlender(color, &blender));
+    if (!paint.getBlender())
+        return;
+    canvas->save();
+    canvas->resetMatrix();
+    canvas->drawImage(surface->makeImageSnapshot(), SkScalar(device.x()), SkScalar(device.y()), SkSamplingOptions(),
+                      &paint);
+    canvas->restore();
+}
+
+namespace {
+
+// Skia's own paragraph painting, with its glyphs drawn by the subpixel blend
+// above when the target is translucent.
+class SubpixelBlendPainter final : public textlayout::CanvasParagraphPainter
+{
+public:
+    explicit SubpixelBlendPainter(SkCanvas* canvas)
+        : CanvasParagraphPainter(canvas)
+        , m_canvas(canvas)
+    {
+    }
+
+    void drawTextBlob(const sk_sp<SkTextBlob>& original, SkScalar x, SkScalar y, const SkPaintOrID& paint) override
+    {
+        const sk_sp<SkTextBlob> blob = hinted(original, drawsUnhinted(m_canvas));
+        const SkPaint* plain = std::get_if<SkPaint>(&paint);
+        if (plain && drawsSubpixelBlended(m_canvas, Application::instance()->text().edging())) {
+            drawSubpixelBlended(m_canvas, blob, SkPoint::Make(x, y), plain->getColor());
+            return;
+        }
+        CanvasParagraphPainter::drawTextBlob(blob, x, y, paint);
+    }
+
+private:
+    SkCanvas* m_canvas;
+};
+
+} // namespace
+
+void paintParagraph(SkCanvas* canvas, textlayout::Paragraph* paragraph, double x, double y)
+{
+    SubpixelBlendPainter painter(canvas);
+    paragraph->paint(&painter, SkScalar(x), SkScalar(y));
+}
+
 void paintTextLines(SkCanvas* canvas, textlayout::Paragraph* paragraph, const std::vector<TextLineBox>& lines,
-                    PointF offset, double width, double align, bool roundAdvances,
-                    const std::function<SkColor(size_t utf8Offset)>& color)
+                    PointF offset, double width, double align, const AdvanceRule& roundAdvances,
+                    const std::function<SkColor(size_t utf8Offset)>& color, bool subpixel)
 {
     const std::vector<GlyphLine> glyphs = glyphLines(paragraph, roundAdvances);
+    const bool unhinted = drawsUnhinted(canvas);
     for (size_t l = 0; l < glyphs.size() && l < lines.size(); ++l) {
         const GlyphLine& line = glyphs[l];
         if (line.runs.empty())
             continue;
-        // QTextEngine::alignLine: by the line's advance, without the overhang.
+        // Aligned by the line's advance, without the overhang.
         double pen = line.runs.front().x.front() + (width - line.advance) * align;
-        const SkScalar baseline = SkScalar(offset.y + lines[l].top + lines[l].ascent);
+        double logicalBaseline = offset.y + lines[l].top + lines[l].ascent;
+        const SkMatrix& matrix = canvas->getTotalMatrix();
+        if (matrix.isScaleTranslate() && matrix.getScaleY() > 0) {
+            // On the nearest device row, a half to the row below as Qt rounds
+            // it; float noise in the mapping must not flip a half upwards.
+            const double device = logicalBaseline * matrix.getScaleY() + matrix.getTranslateY();
+            logicalBaseline = (std::floor(device + 0.5 + 1e-3) - matrix.getTranslateY()) / matrix.getScaleY();
+        }
+        const SkScalar baseline = SkScalar(logicalBaseline);
         for (size_t r = 0; r < line.runs.size(); ++r) {
             const GlyphRun& run = line.runs[r];
             const double runStart = pen;
-            SkTextBlobBuilder builder;
-            const auto& buffer = builder.allocRunPos(run.font, int(run.glyphs.size()));
-            std::copy(run.glyphs.begin(), run.glyphs.end(), buffer.glyphs);
-            SkPoint* points = buffer.points();
+            SkFont font = run.font;
+            if (!subpixel && font.getEdging() == SkFont::Edging::kSubpixelAntiAlias)
+                font.setEdging(SkFont::Edging::kAntiAlias);
+            hintFor(font, unhinted);
+            // Each glyph's pen position from the run's start.
+            std::vector<SkScalar> positions(run.glyphs.size());
             for (size_t i = 0; i < run.glyphs.size(); ++i) {
-                points[i] = {SkScalar(pen - runStart), 0};
+                positions[i] = SkScalar(pen - runStart);
                 pen += line.advances[r][i];
             }
-            const sk_sp<SkTextBlob> blob = builder.make();
-            if (!blob)
-                continue;
-            SkPaint paint;
-            paint.setAntiAlias(true);
-            paint.setColor(color(run.utf8Offset));
-            canvas->save();
-            // Runs end where the paragraph clips them, as at an ellipsis.
-            const double clipRight = run.clipRight + (runStart - run.x.front());
-            canvas->clipRect(SkRect::MakeLTRB(-1e6f, -1e6f, SkScalar(offset.x + clipRight), 1e6f));
-            canvas->drawTextBlob(blob, SkScalar(offset.x + runStart), baseline, paint);
-            canvas->restore();
+            // Runs end where the paragraph cuts them, as at an ellipsis: the
+            // glyphs it places before its clip, whole. A clip in pixels would
+            // cut the rounded advances, wider than the paragraph's at 1.0.
+            size_t visible = 0;
+            while (visible < run.glyphs.size() && run.x[visible] < run.clipRight - 1e-3)
+                ++visible;
+            // A run is one font; its colours may change within it, span by span.
+            size_t begin = 0;
+            while (begin < visible) {
+                const SkColor segmentColor = color(run.clusters.empty() ? run.utf8Offset : run.clusters[begin]);
+                size_t end = begin + 1;
+                while (end < visible && !run.clusters.empty() && color(run.clusters[end]) == segmentColor)
+                    ++end;
+                SkTextBlobBuilder builder;
+                const auto& buffer = builder.allocRunPos(font, int(end - begin));
+                std::copy(run.glyphs.begin() + long(begin), run.glyphs.begin() + long(end), buffer.glyphs);
+                SkPoint* points = buffer.points();
+                for (size_t i = begin; i < end; ++i)
+                    points[i - begin] = {positions[i], 0};
+                begin = end;
+                const sk_sp<SkTextBlob> blob = builder.make();
+                if (!blob)
+                    continue;
+                SkPaint paint;
+                paint.setAntiAlias(true);
+                paint.setColor(segmentColor);
+                if (drawsSubpixelBlended(canvas, font.getEdging()))
+                    drawSubpixelBlended(canvas, blob, SkPoint::Make(SkScalar(offset.x + runStart), baseline),
+                                   paint.getColor());
+                else
+                    canvas->drawTextBlob(blob, SkScalar(offset.x + runStart), baseline, paint);
+            }
         }
     }
 }
@@ -466,7 +676,7 @@ static size_t utf8Offset(const std::string& text, size_t utf16)
 }
 
 TextGeometry textGeometry(textlayout::Paragraph* paragraph, const std::string& text, double width, double align,
-                          bool roundAdvances)
+                          const AdvanceRule& roundAdvances)
 {
     TextGeometry geometry;
     std::vector<textlayout::LineMetrics> metrics;
@@ -539,9 +749,9 @@ size_t TextGeometry::offsetAt(size_t index, double x) const
     return stops.back().first;
 }
 
-RectF tightBoundingRect(textlayout::Paragraph* paragraph, double pixelSize, double scale)
+RectF tightBoundingRect(textlayout::Paragraph* paragraph, double pixelSize, double scale, bool hintedLayout)
 {
-    const bool hinted = Application::instance()->text().hintsGlyphMetrics(scale);
+    const bool hinted = Application::instance()->text().hintsGlyphMetrics(scale, hintedLayout);
     double left = std::numeric_limits<double>::max();
     double top = std::numeric_limits<double>::max();
     double right = std::numeric_limits<double>::lowest();
@@ -549,8 +759,8 @@ RectF tightBoundingRect(textlayout::Paragraph* paragraph, double pixelSize, doub
     paragraph->visit([&](int lineNumber, const textlayout::Paragraph::VisitorInfo* info) {
         if (lineNumber != 0 || !info)
             return;
-        // QFontEngineFT::boundingBox: the glyph's box on whole pixels at the
-        // pixel size, hinted only when Qt hints; the pen follows the shaped
+        // The glyph's box on whole pixels at the pixel size, hinted only
+        // when metrics are hinted; the pen follows the shaped
         // advances, in 26.6.
         SkFont font = info->font;
         font.setSize(SkScalar(pixelSize));

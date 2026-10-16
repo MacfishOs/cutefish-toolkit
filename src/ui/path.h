@@ -62,6 +62,12 @@ public:
     void quadTo(PointF control, PointF end);
     void cubicTo(PointF control1, PointF control2, PointF end);
     void close();
+    // The common 2D path class's arcTo: a line from the current point (a
+    // move on an empty path) to the arc's start, then the arc of the
+    // ellipse inside the rect from startAngle over sweepLength degrees,
+    // counter-clockwise on screen for positive angles, 0 at three o'clock.
+    // Nothing for an empty rect.
+    void arcTo(const RectF& rect, double startAngle, double sweepLength);
 
     void moveTo(double x, double y) { moveTo(PointF{x, y}); }
     void lineTo(double x, double y) { lineTo(PointF{x, y}); }

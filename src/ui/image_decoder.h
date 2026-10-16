@@ -42,12 +42,13 @@ struct DecodedImage
 };
 
 // Reads PNG, JPEG, BMP, ICO and WBMP through Skia, WebP, TIFF, HEIF, AVIF and
-// JPEG XL through their libraries, and SVG; on any thread. The image is null
-// when the file cannot be read or holds more than Qt's 256 MiB limit.
+// JPEG XL through their libraries, GIF (its first frame), Netpbm, XBM, TGA
+// and ICNS through the toolkit's own readers, and SVG; on any thread. The image is null
+// when the file cannot be read or holds more than 256 MiB of pixels.
 DecodedImage decodeImage(const ImageRequest& request);
 
-// The size QSize::scaled() gives: Fit is KeepAspectRatio, Cover
-// KeepAspectRatioByExpanding, with Qt's integer rounding.
+// The size scaled into the box: Fit keeps the aspect inside it, Cover
+// keeps the aspect covering it, truncated to whole pixels.
 void scaledSize(int width, int height, int boxWidth, int boxHeight, ImageScaling scaling, int* outWidth,
                 int* outHeight);
 

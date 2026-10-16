@@ -21,7 +21,7 @@ Button::Button(std::string text)
 {
     m_label->setTextAlignment(Label::TextAlignment::Center);
     m_label->setVerticallyCentered(true);
-    // FishUI's Button colours its IconLabel instead of fading it.
+    // A button colours its icon and label instead of fading them.
     m_label->setFadesWhenDisabled(false);
 }
 

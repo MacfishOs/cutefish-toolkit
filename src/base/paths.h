@@ -39,10 +39,9 @@ enum class UserDirectory {
     Videos,
 };
 
-// As QStandardPaths::writableLocation() gives it: the user's choice in
-// ~/.config/user-dirs.dirs, with $HOME expanded, else ~/Desktop, ~/Documents,
-// ~/Downloads, ~/Music, ~/Pictures, ~/Public, ~/Templates or ~/Videos. The
-// directory may not exist.
+// The user's choice in ~/.config/user-dirs.dirs, with $HOME expanded, else
+// ~/Desktop, ~/Documents, ~/Downloads, ~/Music, ~/Pictures, ~/Public,
+// ~/Templates or ~/Videos. The directory may not exist.
 std::string userDirectory(UserDirectory directory);
 // The same from another user-dirs.dirs file, for tests.
 std::string userDirectory(UserDirectory directory, const std::string& userDirsFile);

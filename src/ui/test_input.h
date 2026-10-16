@@ -53,6 +53,10 @@ public:
     // The device pixels the view's own paint inks at the scale, without its
     // children, relative to its top left.
     static Rect inkRect(View& view, double scale);
+    // The tool tip the window shows, or null.
+    static View* toolTip(Window& window);
+    // How often the window asked the window system to move it.
+    static int moveRequests(Window& window);
 };
 
 } // namespace cutefish::ui

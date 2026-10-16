@@ -11,7 +11,7 @@ namespace cutefish::ui {
 
 class Window;
 
-// FishUI's Toast: short messages at the bottom centre of a window, the
+// A toast: short messages at the bottom centre of a window, the
 // newest on top, each sliding and fading in and out over 400 ms. A message
 // goes after its time unless the pointer rests on it, or when clicked.
 class Toast

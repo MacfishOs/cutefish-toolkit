@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "ui/clipboard.h"
 #include "ui/keys.h"
 #include "ui/layout.h"
 #include "ui/test_input.h"
@@ -45,7 +46,7 @@ TEST(TextAreaTest, TypesLinesAndGrows)
     EXPECT_EQ(hosted.area->text(), "First line\nSecond");
     hosted.window.grab();
     EXPECT_GT(hosted.area->geometry().height, oneLine);
-    // FishUI's padding of 6 around two lines.
+    // The padding of 6 around two lines.
     EXPECT_DOUBLE_EQ(hosted.area->geometry().height, 2 * (oneLine - 12) + 12);
 }
 
@@ -113,4 +114,63 @@ TEST(TextAreaTest, InputMethodsComposeInPlace)
     TestInput::inputMethod(hosted.window, {.commit = "XY"});
     EXPECT_EQ(hosted.area->text(), "abXY");
     EXPECT_TRUE(hosted.area->preedit().empty());
+}
+
+TEST(TextAreaTest, MiddleClickPastesThePrimarySelectionWhereItLands)
+{
+    Hosted hosted(1.0);
+    hosted.area->setText("one two");
+    hosted.window.grab();
+    // Select "one" by double click: it becomes the primary selection.
+    TestInput::click(hosted.window, {8, 10});
+    TestInput::click(hosted.window, {8, 10});
+    std::string selected;
+    Clipboard::requestText([&](std::string text) { selected = std::move(text); }, ClipboardMode::Selection);
+    EXPECT_EQ(selected, "one");
+    // A middle click at the start inserts it there.
+    TestInput::click(hosted.window, {1, 10}, MouseButton::Middle);
+    EXPECT_EQ(hosted.area->text(), "oneone two");
+}
+
+TEST(TextAreaTest, CentresTextForAnInlineEditor)
+{
+    Window window;
+    auto view = std::make_unique<TextArea>("name.txt");
+    TextArea* area = view.get();
+    area->setFrameVisible(false);
+    area->setPadding(Margins::all(4));
+    area->setWrapMode(TextArea::WrapMode::Wrap);
+    area->setHorizontalAlignment(TextArea::HorizontalAlignment::Center);
+    area->setVerticallyCentered(true);
+    area->setFont({}, 13, 600);
+    area->setTextColor(Color::rgb(0x000000));
+    area->setSelectionColors(Color::rgb(0x2050E0), Color::rgb(0xFFFFFF));
+    area->setPersistentSelection(true);
+    window.resize({200, 60});
+    window.setBackgroundColor(Color::rgb(0xFFFFFF));
+    window.setContentView(std::move(view));
+    window.show();
+    area->selectAll();
+    const Image image = window.grab();
+    // The selection's blue, centred both ways, though the area has no focus.
+    int left = image.width();
+    int right = -1;
+    int top = image.height();
+    int bottom = -1;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const Color c = image.pixel(x, y);
+            if (c.b > 180 && c.r < 80) {
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+    }
+    ASSERT_GE(right, 0);
+    EXPECT_NEAR((left + right) / 2.0, 100, 2);
+    EXPECT_NEAR((top + bottom) / 2.0, 30, 2);
+    // Grows with the text: the height for a width includes the padding.
+    EXPECT_GT(area->heightForWidth(40), area->heightForWidth(200));
 }

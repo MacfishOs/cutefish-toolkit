@@ -10,7 +10,7 @@
 
 namespace cutefish::ui {
 
-// FishUI's colours and metrics. Lengths are logical pixels; font sizes are
+// The desktop's colours and metrics. Lengths are logical pixels; font sizes are
 // kept in points, as the appearance settings store them.
 struct Theme
 {
@@ -36,6 +36,8 @@ struct Theme
 
     // Empty: fontconfig's sans-serif.
     std::string fontFamily;
+    // The appearance's fixed-pitch family; empty for the platform's default.
+    std::string fixedFontFamily;
     double fontPointSize = 9;
     std::string iconTheme = "Cutefish";
     // The compositor's window corners on large panels.

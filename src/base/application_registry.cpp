@@ -49,7 +49,7 @@ static std::string fileName(const std::string& path)
     return fs::path(path).filename().string();
 }
 
-// QFileInfo::completeBaseName: the name up to its last dot.
+// The file name up to its last dot.
 static std::string completeBaseName(const std::string& path)
 {
     const std::string name = fileName(path);

@@ -4,6 +4,7 @@
 #include "wayland/wayland_window.h"
 
 #include <GLES3/gl3.h>
+#include <algorithm>
 #include <cmath>
 #include <wayland-egl.h>
 
@@ -19,20 +20,29 @@
 #include "ui/application.h"
 #include "ui/text_context.h"
 #include "wayland/connection.h"
+#include "wayland/data_device.h"
 #include "wayland/text_input.h"
 
 namespace cutefish::ui::wayland {
 
 WaylandWindow::WaylandWindow(Window* window)
+    : WaylandWindow(window, Application::instance()->connection(), Application::instance()->gpu())
+{
+}
+
+WaylandWindow::WaylandWindow(Window* window, Connection& connection, gpu::EglContext& context)
     : PlatformWindow(window)
-    , m_shell(std::make_unique<ShellSurface>(Application::instance()->connection(),
-                                            static_cast<ShellSurface::Delegate*>(this)))
+    , m_connection(&connection)
+    , m_gpu(&context)
+    , m_shell(std::make_unique<ShellSurface>(connection, static_cast<ShellSurface::Delegate*>(this)))
 {
 }
 
 WaylandWindow::~WaylandWindow()
 {
-    auto& gpu = Application::instance()->gpu();
+    for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
+        client->parentGone();
+    auto& gpu = *m_gpu;
     if (m_eglSurface != EGL_NO_SURFACE) {
         gpu.makeCurrent(m_eglSurface);
         m_surface.reset();
@@ -63,6 +73,8 @@ void WaylandWindow::setMinimumSize(int width, int height)
 WaylandWindow::WaylandWindow(Window* window, WaylandWindow* parent,
                              const PopupPlacement& placement, bool grab)
     : PlatformWindow(window)
+    , m_connection(parent->m_connection)
+    , m_gpu(parent->m_gpu)
     , m_parent(parent)
     , m_placement(placement)
     , m_grab(grab)
@@ -96,22 +108,27 @@ void WaylandWindow::minimize()
 void WaylandWindow::activate()
 {
     if (m_shell)
-        Application::instance()->connection().activate(m_shell.get(), Application::instance()->applicationId());
+        m_connection->activate(m_shell.get(), Application::instance()->applicationId());
 }
 
 SizeF WaylandWindow::screenSize() const
 {
     if (m_shell)
         return m_shell->outputSize();
-    return Application::instance()->connection().primaryOutputSize();
+    return m_connection->primaryOutputSize();
 }
 
 void WaylandWindow::exportHandle(std::function<void(const std::string&)> done)
 {
     if (m_shell && !m_parent)
-        Application::instance()->connection().exportToplevel(m_shell.get(), std::move(done));
+        m_connection->exportToplevel(m_shell.get(), std::move(done));
     else
         done({});
+}
+
+void WaylandWindow::requestActivationToken(std::function<void(const std::string&)> done)
+{
+    m_connection->requestActivationToken(m_shell.get(), std::move(done));
 }
 
 void WaylandWindow::setTransientParent(PlatformWindow* parent, bool modal)
@@ -130,11 +147,15 @@ void WaylandWindow::setRestoreSize(int width, int height)
 void WaylandWindow::show(int width, int height)
 {
     if (!m_shell && m_parent) {
-        m_shell = std::make_unique<ShellSurface>(Application::instance()->connection(),
+        m_shell = std::make_unique<ShellSurface>(*m_connection,
                                                  static_cast<ShellSurface::Delegate*>(this),
                                                  m_parent->m_shell.get(), m_placement, width,
                                                  height, m_grab);
         m_shell->setBlur(m_blurRect, m_blurRadius);
+        if (!m_blurShape.isEmpty())
+            m_shell->setBlurShape(m_blurShape);
+        if (m_glass)
+            m_shell->setGlass(m_glass);
     }
     m_shell->map();
 }
@@ -145,6 +166,86 @@ void WaylandWindow::setBlur(const RectF& rect, double radius)
     m_blurRadius = radius;
     if (m_shell)
         m_shell->setBlur(rect, radius);
+}
+
+void WaylandWindow::setBlurShape(const Path& path)
+{
+    if (path == m_blurShape)
+        return;
+    m_blurShape = path;
+    if (m_shell)
+        m_shell->setBlurShape(path);
+}
+
+void WaylandWindow::setGlass(const std::optional<GlassMaterial>& material)
+{
+    if (material == m_glass)
+        return;
+    m_glass = material;
+    if (m_shell)
+        m_shell->setGlass(material);
+}
+
+void WaylandWindow::setResizeAroundCenter(bool aroundCenter)
+{
+    if (m_shell)
+        m_shell->setResizeAroundCenter(aroundCenter);
+}
+
+void WaylandWindow::setSkipTaskbar(bool skip)
+{
+    if (m_shell)
+        m_shell->setSkipTaskbar(skip);
+}
+
+void WaylandWindow::setAlwaysOnTop(bool onTop)
+{
+    if (m_shell)
+        m_shell->setAlwaysOnTop(onTop);
+}
+
+void WaylandWindow::setRestoreId(const std::string& id)
+{
+    if (m_shell)
+        m_shell->setRestoreId(id);
+}
+
+bool WaylandWindow::setDesktopRole(const std::string& outputName)
+{
+    return m_shell && m_shell->setDesktop(outputName);
+}
+
+void WaylandWindow::setShellOutput(const std::string& outputName)
+{
+    if (m_shell)
+        m_shell->setShellOutput(outputName);
+}
+
+void WaylandWindow::activateShellSurface()
+{
+    if (m_shell)
+        m_shell->activateShellSurface();
+}
+
+void WaylandWindow::workArea(const RectF& area)
+{
+    notifyWorkArea(area);
+}
+
+void WaylandWindow::setForeignParent(const std::string& handle, bool modal)
+{
+    if (m_shell)
+        m_shell->setForeignParent(handle, modal);
+}
+
+void WaylandWindow::addSubsurface(SubsurfaceClient* client)
+{
+    m_subsurfaces.push_back(client);
+}
+
+void WaylandWindow::removeSubsurface(SubsurfaceClient* client)
+{
+    std::erase(m_subsurfaces, client);
 }
 
 void WaylandWindow::startMove()
@@ -172,7 +273,7 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
     if (!m_shell)
         return false;
     auto* application = Application::instance();
-    auto& gpu = application->gpu();
+    auto& gpu = *m_gpu;
     const int width = int(std::lround(size.width * scale));
     const int height = int(std::lround(size.height * scale));
     if (!m_eglWindow) {
@@ -209,6 +310,10 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
     const std::vector<Rect> damage = paint(m_surface->getCanvas(), bufferAge);
     gpu.skiaContext()->flushAndSubmit(m_surface.get());
 
+    // Subsurface positions, and buffers a synchronised one owes this size,
+    // land with this commit.
+    for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
+        client->parentCommitting();
     m_shell->prepareCommit(int(size.width), int(size.height), opaque);
     gpu.swapBuffers(m_eglSurface, damage, height);
     return true;
@@ -227,6 +332,39 @@ void WaylandWindow::configureBounds(int width, int height)
 void WaylandWindow::interactiveResize(bool active)
 {
     notifyInteractiveResize(active);
+}
+
+uint32_t WaylandWindow::dragEnter(double x, double y, DropOffer* offer, uint32_t modifiers)
+{
+    return notifyDragEnter(x, y, offer, modifiers);
+}
+
+uint32_t WaylandWindow::dragMotion(double x, double y, uint32_t modifiers)
+{
+    return notifyDragMotion(x, y, modifiers);
+}
+
+void WaylandWindow::dragLeave()
+{
+    notifyDragLeave();
+}
+
+uint32_t WaylandWindow::drop()
+{
+    return notifyDrop();
+}
+
+bool WaylandWindow::startDrag(DragSource source)
+{
+    DataDevice* device = m_connection->dataDevice();
+    if (!m_shell || !device)
+        return false;
+    ShellSurface* attached = nullptr;
+    if (source.attachedWindow) {
+        auto* platform = static_cast<WaylandWindow*>(platformOf(source.attachedWindow));
+        attached = platform ? platform->m_shell.get() : nullptr;
+    }
+    return device->startDrag(m_shell.get(), std::move(source), attached, m_window->scale());
 }
 
 void WaylandWindow::scaleChanged(double scale)

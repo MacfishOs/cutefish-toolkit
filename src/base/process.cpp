@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "base/event_loop.h"
+#include "base/file.h"
 
 extern char** environ;
 
@@ -32,8 +33,8 @@ struct SpawnSetup
     {
         posix_spawn_file_actions_init(&actions);
         posix_spawnattr_init(&attributes);
-        // The program starts with no signal blocked and default handlers, as
-        // QProcess's child does, whatever this process changed.
+        // The program starts with no signal blocked and default handlers,
+        // whatever this process changed.
         sigset_t none;
         sigemptyset(&none);
         posix_spawnattr_setsigmask(&attributes, &none);
@@ -111,6 +112,30 @@ void Process::setWorkingDirectory(std::string directory)
 void Process::setStandardInput(std::string data)
 {
     m_input = std::move(data);
+}
+
+void Process::setStandardInputOpen(bool open)
+{
+    m_inputOpen = open;
+}
+
+bool Process::writeStandardInput(std::string_view data)
+{
+    // Closed, though what was queued before may still be on its way.
+    if (m_stdin < 0 || m_pid <= 0 || !m_inputOpen)
+        return false;
+    m_input.erase(0, m_inputWritten);
+    m_inputWritten = 0;
+    m_input.append(data);
+    writeInput();
+    return true;
+}
+
+void Process::closeStandardInput()
+{
+    m_inputOpen = false;
+    if (m_stdin >= 0 && m_inputWritten >= m_input.size())
+        writeInput();
 }
 
 void Process::setEnvironment(std::vector<std::string> environment)
@@ -213,10 +238,10 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
             readAvailable(m_stderr, m_error, onStandardError);
         });
     }
-    if (m_input.empty())
+    if (m_input.empty() && !m_inputOpen)
         closeFd(m_stdin);
-    else
-        m_stdinWatch = m_loop.watch(m_stdin, EPOLLOUT, [this](uint32_t) { writeInput(); });
+    else if (!m_input.empty())
+        watchInput();
     m_pidWatch = m_loop.watch(m_pidfd, EPOLLIN, [this](uint32_t) { finish(); });
     return true;
 }
@@ -248,24 +273,41 @@ void Process::readAvailable(int fd, std::string& into, const std::function<void(
     }
 }
 
+void Process::watchInput()
+{
+    if (!m_stdinWatch)
+        m_stdinWatch = m_loop.watch(m_stdin, EPOLLOUT, [this](uint32_t) { writeInput(); });
+}
+
+// A write to a pipe nobody reads raises SIGPIPE; it is blocked around the
+// write and a pending one taken back, so the program only sees EPIPE.
 void Process::writeInput()
 {
+    bool failed = false;
     while (m_inputWritten < m_input.size()) {
-        const ssize_t n = ::write(m_stdin, m_input.data() + m_inputWritten, m_input.size() - m_inputWritten);
+        const ssize_t n = file::writeWithoutSigpipe(m_stdin, m_input.data() + m_inputWritten,
+                                              m_input.size() - m_inputWritten);
         if (n > 0) {
             m_inputWritten += size_t(n);
             continue;
         }
         if (n < 0 && errno == EINTR)
             continue;
-        if (n < 0 && errno == EAGAIN)
+        if (n < 0 && errno == EAGAIN) {
+            watchInput();
             return;
+        }
+        failed = true;
         break;
     }
     if (m_stdinWatch) {
         m_loop.unwatch(m_stdinWatch);
         m_stdinWatch = 0;
     }
+    m_input.clear();
+    m_inputWritten = 0;
+    if (m_inputOpen && !failed)
+        return;
     closeFd(m_stdin);
 }
 

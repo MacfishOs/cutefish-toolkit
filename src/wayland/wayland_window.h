@@ -5,6 +5,8 @@
 
 #include <EGL/egl.h>
 #include <memory>
+#include <optional>
+#include <vector>
 
 #include "include/core/SkRefCnt.h"
 
@@ -14,13 +16,32 @@
 class SkSurface;
 struct wl_egl_window;
 
+namespace cutefish::ui::gpu {
+class EglContext;
+}
+
 namespace cutefish::ui::wayland {
+
+class Connection;
+
+// A child surface that hears of the window's commits.
+class SubsurfaceClient
+{
+public:
+    virtual ~SubsurfaceClient() = default;
+    // On the UI thread, right before the window commits a frame.
+    virtual void parentCommitting() = 0;
+    // The window's surface is going.
+    virtual void parentGone() = 0;
+};
 
 // An xdg_toplevel drawn with GLES through Skia.
 class WaylandWindow final : public PlatformWindow, private ShellSurface::Delegate
 {
 public:
     explicit WaylandWindow(Window* window);
+    // A toplevel on another connection, such as the session's trusted one.
+    WaylandWindow(Window* window, Connection& connection, gpu::EglContext& context);
     WaylandWindow(Window* window, WaylandWindow* parent, const PopupPlacement& placement, bool grab);
     ~WaylandWindow() override;
 
@@ -34,6 +55,7 @@ public:
     void minimize() override;
     void activate() override;
     void exportHandle(std::function<void(const std::string&)> done) override;
+    void requestActivationToken(std::function<void(const std::string&)> done) override;
     SizeF screenSize() const override;
     void setTransientParent(PlatformWindow* parent, bool modal) override;
     void setRestoreSize(int width, int height) override;
@@ -41,9 +63,27 @@ public:
     void startMove() override;
     void setCursorShape(CursorShape shape) override;
     void setBlur(const RectF& rect, double radius) override;
+    void setBlurShape(const Path& path) override;
+    void setGlass(const std::optional<GlassMaterial>& material) override;
+    void setResizeAroundCenter(bool aroundCenter) override;
+    void setSkipTaskbar(bool skip) override;
+    void setAlwaysOnTop(bool onTop) override;
+    void setRestoreId(const std::string& id) override;
+    void setForeignParent(const std::string& handle, bool modal) override;
+    bool setDesktopRole(const std::string& outputName) override;
+    void setShellOutput(const std::string& outputName) override;
+    void activateShellSurface() override;
     void setTextInput(const TextInputState* state) override;
+    bool startDrag(DragSource source) override;
 
     bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) override;
+
+    // Null for a popup not shown yet.
+    ShellSurface* shell() const { return m_shell.get(); }
+    Connection& connection() const { return *m_connection; }
+    gpu::EglContext& gpuContext() const { return *m_gpu; }
+    void addSubsurface(SubsurfaceClient* client);
+    void removeSubsurface(SubsurfaceClient* client);
 
 private:
     void configure(int width, int height, const WindowStates& states) override;
@@ -64,7 +104,14 @@ private:
     void textInput(const TextInputEvent& event) override;
     void configureBounds(int width, int height) override;
     void interactiveResize(bool active) override;
+    uint32_t dragEnter(double x, double y, DropOffer* offer, uint32_t modifiers) override;
+    uint32_t dragMotion(double x, double y, uint32_t modifiers) override;
+    void dragLeave() override;
+    uint32_t drop() override;
+    void workArea(const RectF& area) override;
 
+    Connection* m_connection;
+    gpu::EglContext* m_gpu;
     std::unique_ptr<ShellSurface> m_shell;
     // A popup is made on show(), when its size is known.
     WaylandWindow* m_parent = nullptr;
@@ -72,6 +119,9 @@ private:
     bool m_grab = false;
     RectF m_blurRect;
     double m_blurRadius = 0;
+    Path m_blurShape;
+    std::optional<GlassMaterial> m_glass;
+    std::vector<SubsurfaceClient*> m_subsurfaces;
     wl_egl_window* m_eglWindow = nullptr;
     EGLSurface m_eglSurface = EGL_NO_SURFACE;
     sk_sp<SkSurface> m_surface;

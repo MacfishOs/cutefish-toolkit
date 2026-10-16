@@ -3,6 +3,7 @@
 
 #include "ui/embedded_window.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,7 @@
 
 #include "ui/application.h"
 #include "ui/embedded_gpu_private.h"
+#include "ui/embedded_host.h"
 #include "ui/embedded_platform_window.h"
 #include "ui/layer.h"
 #include "ui/text_context.h"
@@ -34,9 +36,89 @@ static uint64_t monotonicNs()
     return uint64_t(now.tv_sec) * 1000000000 + uint64_t(now.tv_nsec);
 }
 
+static EmbeddedHost* s_host = nullptr;
+
+EmbeddedPlatformWindow::EmbeddedPlatformWindow(Window* window, EmbeddedPlatformWindow* parent,
+                                               const PopupPlacement& placement, bool grab)
+    : PlatformWindow(window)
+    , m_popup(parent != nullptr)
+    , m_placement(placement)
+    , m_grab(grab)
+{
+}
+
+EmbeddedPlatformWindow::~EmbeddedPlatformWindow() = default;
+
 void EmbeddedPlatformWindow::show(int width, int height)
 {
     notifyConfigure(width, height, m_states);
+    // Configured first, so the host finds it sized and wanting a render.
+    if (m_popup && owner && !m_popupShown) {
+        m_popupShown = true;
+        if (s_host)
+            s_host->popupShown(owner);
+    }
+}
+
+void EmbeddedPlatformWindow::hide()
+{
+    if (!m_popupShown)
+        return;
+    m_popupShown = false;
+    if (s_host && owner)
+        s_host->popupHidden(owner);
+}
+
+void EmbeddedPlatformWindow::popupResized()
+{
+    if (m_popupShown && s_host && owner)
+        s_host->popupResized(owner);
+}
+
+void EmbeddedPlatformWindow::activate()
+{
+    if (s_host && owner)
+        s_host->activationRequested(owner);
+}
+
+void EmbeddedPlatformWindow::setBlur(const RectF& rect, double radius)
+{
+    if (rect == m_blurRect && radius == m_blurRadius)
+        return;
+    m_blurRect = rect;
+    m_blurRadius = radius;
+    if (s_host && owner)
+        s_host->blurChanged(owner);
+}
+
+void EmbeddedPlatformWindow::setBlurShape(const Path& path)
+{
+    if (path == m_blurShape)
+        return;
+    m_blurShape = path;
+    if (s_host && owner)
+        s_host->blurChanged(owner);
+}
+
+// As over text-input-v3: only changes go out, and the cause
+// stays with the input method until a state is sent.
+void EmbeddedPlatformWindow::setTextInput(const TextInputState* state)
+{
+    if (state ? (m_textInput && *m_textInput == *state) : !m_textInput)
+        return;
+    if (state)
+        m_textInput = *state;
+    else
+        m_textInput.reset();
+    const bool fromInputMethod = inputMethodCause;
+    inputMethodCause = false;
+    if (s_host && owner)
+        s_host->textInputChanged(owner, state, fromInputMethod);
+}
+
+bool EmbeddedPlatformWindow::startDrag(DragSource source)
+{
+    return s_host && owner && s_host->startDrag(owner, std::move(source));
 }
 
 void EmbeddedPlatformWindow::setCursorShape(CursorShape shape)
@@ -79,7 +161,8 @@ bool EmbeddedPlatformWindow::present(SizeF size, double scale, bool opaque, cons
             return false;
         const bool holdsFrame = m_gpuTarget->keepsLastFrame && m_lastTexture == m_gpuTarget->texture;
         paint(surface->getCanvas(), holdsFrame ? 1 : 0);
-        m_gpuTarget->context->flushAndSubmit(surface.get(), GrSyncCpu::kNo);
+        // Submitted once the render, or the host's batch, ends.
+        m_gpuTarget->context->flush(surface.get());
         m_lastTexture = m_gpuTarget->texture;
         m_holdsFrame = false;
         return true;
@@ -104,11 +187,36 @@ bool EmbeddedPlatformWindow::present(SizeF size, double scale, bool opaque, cons
 
 EmbeddedWindow::EmbeddedWindow()
 {
+    connectPlatform();
+}
+
+EmbeddedWindow::EmbeddedWindow(Window* parent, const PopupPlacement& placement, bool grab)
+    : Window(parent, placement, grab)
+{
+    connectPlatform();
+}
+
+void EmbeddedWindow::setHost(EmbeddedHost* host)
+{
+    s_host = host;
+}
+
+EmbeddedHost* EmbeddedWindow::host()
+{
+    return s_host;
+}
+
+void EmbeddedWindow::connectPlatform()
+{
     EmbeddedPlatformWindow* embedded = platform();
     if (!embedded) {
         fprintf(stderr, "EmbeddedWindow needs Application::Platform::Embedded\n");
         std::abort();
     }
+    embedded->owner = this;
+    // The shell's references at 1.0 match the unrounded layout: far fewer
+    // pixels off than whole-pixel placement on every surface measured.
+    m_hintedTextLayout = false;
     // What the host composites it over shows through.
     setBackgroundColor(Color{0, 0, 0, 0});
     embedded->onRenderRequested = [this] {
@@ -126,7 +234,12 @@ EmbeddedWindow::EmbeddedWindow()
 
 EmbeddedWindow::~EmbeddedWindow()
 {
+    // The host hears of these while the window is still whole.
+    for (Window* popup : std::vector<Window*>(m_popups))
+        popup->hide();
     if (EmbeddedPlatformWindow* embedded = platform()) {
+        embedded->hide();
+        embedded->owner = nullptr;
         embedded->onRenderRequested = nullptr;
         embedded->onCursorShape = nullptr;
     }
@@ -164,6 +277,66 @@ void EmbeddedWindow::setActive(bool active)
     Application::instance()->scheduleActiveUpdate();
     if (onStatesChanged)
         onStatesChanged();
+}
+
+EmbeddedWindow* EmbeddedWindow::popupParent() const
+{
+    return dynamic_cast<EmbeddedWindow*>(parentWindow());
+}
+
+const PopupPlacement& EmbeddedWindow::popupPlacement() const
+{
+    return platform()->placement();
+}
+
+bool EmbeddedWindow::isGrabbingPopup() const
+{
+    return platform()->isPopup() && platform()->grabs();
+}
+
+void EmbeddedWindow::setPopupGeometry(const RectF& geometry)
+{
+    m_popupGeometry = geometry;
+    if (geometry.width > 0 && geometry.height > 0)
+        setSize({geometry.width, geometry.height});
+}
+
+void EmbeddedWindow::requestClose()
+{
+    handleCloseRequested();
+}
+
+void EmbeddedWindow::closePopups()
+{
+    const std::vector<Window*> popups = m_popups;
+    for (auto it = popups.rbegin(); it != popups.rend(); ++it) {
+        // Closing one may have closed or destroyed others.
+        if (std::find(m_popups.begin(), m_popups.end(), *it) == m_popups.end() || (*it)->isHidden())
+            continue;
+        if (auto* popup = dynamic_cast<EmbeddedWindow*>(*it)) {
+            popup->closePopups();
+            popup->requestClose();
+        }
+        // Off screen whatever its owner did, as a compositor unmaps a
+        // dismissed popup.
+        if (std::find(m_popups.begin(), m_popups.end(), *it) != m_popups.end())
+            (*it)->hide();
+    }
+}
+
+RectF EmbeddedWindow::blurRect() const
+{
+    return platform()->blurRect();
+}
+
+double EmbeddedWindow::blurRadius() const
+{
+    return platform()->blurRadius();
+}
+
+const Path& EmbeddedWindow::blurShape() const
+{
+    return platform()->blurShape();
 }
 
 void EmbeddedWindow::updateLayout()
@@ -243,11 +416,15 @@ int EmbeddedWindow::pixelHeight() const
 
 void EmbeddedWindow::pointerEnter(PointF position)
 {
+    if (m_hidden)
+        return;
     handlePointerEnter(position.x, position.y);
 }
 
 void EmbeddedWindow::pointerMove(PointF position)
 {
+    if (m_hidden)
+        return;
     if (!m_pointerInside)
         handlePointerEnter(position.x, position.y);
     else
@@ -269,16 +446,22 @@ void EmbeddedWindow::pointerLeave()
 
 void EmbeddedWindow::pointerButton(MouseButton button, bool pressed, uint32_t modifiers)
 {
+    if (m_hidden)
+        return;
     handlePointerButton(button, pressed, modifiers);
 }
 
 void EmbeddedWindow::scroll(const ScrollEvent& event)
 {
+    if (m_hidden)
+        return;
     handlePointerScroll(event);
 }
 
 void EmbeddedWindow::key(const KeyEvent& event, bool pressed)
 {
+    if (m_hidden)
+        return;
     KeyEvent normalized = event;
     normalized.key = event.key == XKB_KEY_ISO_Left_Tab ? XKB_KEY_Tab : xkb_keysym_to_lower(event.key);
     // Control characters are what Ctrl turns letters into, not text.
@@ -288,6 +471,66 @@ void EmbeddedWindow::key(const KeyEvent& event, bool pressed)
             normalized.text.clear();
     }
     handleKey(normalized, pressed);
+}
+
+void EmbeddedWindow::textInput(const TextInputEvent& event)
+{
+    if (m_hidden)
+        return;
+    platform()->inputMethodCause = true;
+    handleTextInput(event);
+}
+
+void EmbeddedWindow::touchDown(int32_t id, PointF position)
+{
+    if (m_hidden)
+        return;
+    handleTouchDown(id, position.x, position.y);
+}
+
+void EmbeddedWindow::touchMotion(int32_t id, PointF position)
+{
+    handleTouchMotion(id, position.x, position.y);
+}
+
+void EmbeddedWindow::touchUp(int32_t id)
+{
+    handleTouchUp(id);
+}
+
+void EmbeddedWindow::touchCancel()
+{
+    handleTouchCancel();
+}
+
+void EmbeddedWindow::gesture(const GestureEvent& event)
+{
+    if (m_hidden)
+        return;
+    handleGesture(event);
+}
+
+uint32_t EmbeddedWindow::dragEnter(PointF position, DropOffer* offer, uint32_t modifiers)
+{
+    if (m_hidden)
+        return NoAction;
+    handleDragEnter(position.x, position.y, offer, modifiers);
+    return m_dropAction;
+}
+
+uint32_t EmbeddedWindow::dragMotion(PointF position, uint32_t modifiers)
+{
+    return handleDragMotion(position.x, position.y, modifiers);
+}
+
+void EmbeddedWindow::dragLeave()
+{
+    handleDragLeave();
+}
+
+uint32_t EmbeddedWindow::drop()
+{
+    return handleDrop();
 }
 
 } // namespace cutefish::ui

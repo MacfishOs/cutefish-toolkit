@@ -70,7 +70,7 @@ SizeF ToggleControl::sizeHint() const
             std::max(m_indicator.height, label.height) + pad.top + pad.bottom};
 }
 
-// As the FishUI controls place their indicators.
+// Where the indicator goes in the padded control.
 RectF ToggleControl::indicatorRect() const
 {
     const RectF bounds = localRect();

@@ -35,10 +35,11 @@
 
 #include "base/file.h"
 #include "ui/icon_loader.h"
+#include "ui/image_formats.h"
 
 namespace cutefish::ui {
 
-// QImageReader's default allocation limit.
+// The allocation limit, 256 MiB.
 static constexpr int64_t kAllocationLimit = int64_t(256) * 1024 * 1024;
 
 namespace {
@@ -338,6 +339,23 @@ static bool startsWith(const std::string& data, size_t offset, std::string_view 
     return data.size() >= offset + magic.size() && std::memcmp(data.data() + offset, magic.data(), magic.size()) == 0;
 }
 
+static Source fromRaw(const image_formats::RawImage& raw)
+{
+    Source source;
+    if (raw.isNull() || !withinLimit(raw.width, raw.height))
+        return source;
+    const SkImageInfo info = SkImageInfo::MakeN32Premul(raw.width, raw.height);
+    SkBitmap bitmap;
+    if (!bitmap.tryAllocPixels(info))
+        return source;
+    bitmap.writePixels(SkPixmap(info, raw.pixels.data(), size_t(raw.width) * 4));
+    bitmap.setImmutable();
+    source.image = bitmap.asImage();
+    source.width = raw.width;
+    source.height = raw.height;
+    return source;
+}
+
 static bool looksLikeSvg(const std::string& data, const std::string& path)
 {
     if (path.ends_with(".svg") || path.ends_with(".svgz"))
@@ -363,6 +381,17 @@ DecodedImage decodeImage(const ImageRequest& request)
     } else if (JxlSignatureCheck(reinterpret_cast<const uint8_t*>(data->data()), std::min<size_t>(data->size(), 32))
                >= JXL_SIG_CODESTREAM) {
         source = decodeJxl(*data);
+    } else if (image_formats::isGif(*data)) {
+        source = fromRaw(image_formats::decodeGif(*data));
+    } else if (image_formats::isPnm(*data)) {
+        source = fromRaw(image_formats::decodePnm(*data));
+    } else if (image_formats::isIcns(*data)) {
+        if (const std::optional<std::string> png = image_formats::largestIcnsPng(*data))
+            source = decodeWithSkia(SkData::MakeWithCopy(png->data(), png->size()), request.width, request.height);
+    } else if (image_formats::isXbm(*data)) {
+        source = fromRaw(image_formats::decodeXbm(*data));
+    } else if (image_formats::isTga(*data, request.path)) {
+        source = fromRaw(image_formats::decodeTga(*data));
     } else if (looksLikeSvg(*data, request.path)) {
         source = decodeSvg(request.path, *data, request.width, request.height, request.scaling);
     } else {
@@ -402,7 +431,7 @@ DecodedImage decodeImage(const ImageRequest& request)
     canvas->concat(SkEncodedOriginToMatrix(origin, width, height));
     const int drawWidth = swaps ? height : width;
     const int drawHeight = swaps ? width : height;
-    // Mipmaps average what a shrink drops, as Qt's smooth scaling does.
+    // Mipmaps average what a shrink drops, for smooth scaling.
     const bool shrinks = drawWidth < source.image->width() || drawHeight < source.image->height();
     const SkSamplingOptions sampling = shrinks ? SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear)
                                                : SkSamplingOptions(SkFilterMode::kLinear);

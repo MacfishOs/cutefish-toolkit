@@ -227,8 +227,8 @@ protected:
 
 } // namespace
 
-// As Qt Quick's hoverEnabled: a view stays hovered while the pointer is over
-// a child of it, and hears every move.
+// A view stays hovered while the pointer is over a child of it, and hears every
+// move.
 TEST(InputTest, HoverTracksTheViewAndItsChildren)
 {
     Window window;
@@ -268,4 +268,29 @@ TEST(InputTest, HoverTracksTheViewAndItsChildren)
     TestInput::leavePointer(window);
     EXPECT_FALSE(outer->isHovered());
     EXPECT_FALSE(inner->isHovered());
+}
+
+// Disabling a view clears its hover, and the pointer over it again counts once
+// it is enabled.
+TEST(InputTest, DisablingAViewEndsItsHover)
+{
+    Fixture fixture;
+    const PointF over = fixture.first->mapToWindow({5, 5});
+    TestInput::movePointer(fixture.window, over);
+    EXPECT_TRUE(fixture.first->hovered);
+    fixture.first->setEnabled(false);
+    EXPECT_FALSE(fixture.first->hovered);
+
+    // Re-enabled with the pointer elsewhere: no hover.
+    TestInput::movePointer(fixture.window, {90, 99});
+    fixture.first->setEnabled(true);
+    fixture.window.grab();
+    EXPECT_FALSE(fixture.first->hovered);
+
+    // Re-enabled under a still pointer: hovered again after a frame.
+    TestInput::movePointer(fixture.window, over);
+    fixture.first->setEnabled(false);
+    fixture.first->setEnabled(true);
+    fixture.window.grab();
+    EXPECT_TRUE(fixture.first->hovered);
 }

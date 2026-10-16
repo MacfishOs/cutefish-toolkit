@@ -55,8 +55,8 @@ void IconImage::paint(Painter& painter)
     const PointF origin = painter.offset();
     SkPaint paint;
     paint.setAlphaf(float(painter.opacity()));
-    // At its own size Qt's software renderer copies the pixmap to the
-    // rounded device position, unfiltered; otherwise it scales it smoothly.
+    // At its own size the pixmap is copied to the rounded device position,
+    // unfiltered; otherwise it scales it smoothly.
     const double width = geometry().width * scale;
     const double height = geometry().height * scale;
     if (std::abs(width - image->width()) < 1e-6 && std::abs(height - image->height()) < 1e-6) {

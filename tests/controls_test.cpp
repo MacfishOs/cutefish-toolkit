@@ -11,6 +11,7 @@
 #include "ui/header_button.h"
 #include "ui/icon.h"
 #include "ui/keys.h"
+#include "ui/label.h"
 #include "ui/layout.h"
 #include "ui/menu.h"
 #include "ui/segmented_control.h"
@@ -52,10 +53,10 @@ TEST(ControlsTest, SwitchTogglesByPointerAndSpace)
     EXPECT_EQ(changes.size(), 2u);
 }
 
-// FishUI's paddings: 4 on every side of a check box or radio button, the
-// indicator at the left; a switch's 8 only across without text, and its
-// indicator centred then.
-TEST(ControlsTest, TogglesKeepFishUIPadding)
+// Paddings: 4 on every side of a check box or radio button, the indicator at
+// the left; a switch's 8 only across without text, and its indicator centred
+// then.
+TEST(ControlsTest, TogglesKeepTheirPadding)
 {
     Window window;
     auto column = std::make_unique<Column>();
@@ -134,8 +135,8 @@ TEST(ControlsTest, SliderSnapModes)
     Slider* control = host(window, std::move(slider));
     std::vector<bool> pressed;
     control->onPressedChanged = [&pressed, control] { pressed.push_back(control->isPressed()); };
-    // Unstepped: as tall as FishUI's, no marks, and the handle follows the
-    // pointer between steps until it is let go.
+    // Unstepped: 27 tall, no marks, and the handle follows the pointer between
+    // steps until it is let go.
     EXPECT_EQ(control->geometry().height, 27);
     TestInput::press(window, {11 + 200 * 0.36, 13});
     EXPECT_EQ(control->value(), 4);
@@ -188,8 +189,7 @@ TEST(ControlsTest, SliderShowsItsValueWhileHeld)
     EXPECT_EQ(below(), 0);
 }
 
-// Each button a Tab stop of its own, Space picking it on release, as
-// FishUI's TabButtons in a TabBar.
+// Each button a Tab stop of its own, Space picking it on release.
 TEST(ControlsTest, SegmentedControlPicksByPointerAndSpace)
 {
     Window window;
@@ -230,7 +230,34 @@ TEST(ControlsTest, ComboBoxMenuChecksTheCurrentItem)
     EXPECT_EQ(activated, 2);
 }
 
-// FishUI's ComboBox: the disabled text is disabledTextColor at FishUI.Label's 0.6.
+// At its size hint the box leaves its longest item the width it is drawn at,
+// at whole and fractional scales, hinted or not.
+TEST(ControlsTest, ComboBoxFitsItsLongestItem)
+{
+    const std::vector<std::string> items {"Capture Selected Window", "Record Selected Portion", "Wi-Fi"};
+    for (const bool hinted : {true, false}) {
+        for (const double scale : {1.0, 1.5}) {
+            Window window;
+            window.setScale(scale);
+            window.setHintedTextLayout(hinted);
+            ComboBox* box = host(window, std::make_unique<ComboBox>(items), {500, 120});
+            const SizeF hint = box->sizeHint();
+            box->setGeometry({0, 0, hint.width, hint.height});
+            box->setLayoutHints({.preferredWidth = hint.width});
+            window.grab();
+            const auto* label = static_cast<const Label*>(box->children().front().get());
+            double widest = 0;
+            for (size_t i = 0; i < items.size(); ++i) {
+                box->setCurrentIndex(int(i));
+                widest = std::max(widest, label->sizeHint().width);
+            }
+            SCOPED_TRACE(std::to_string(scale) + (hinted ? " hinted" : " unhinted"));
+            EXPECT_DOUBLE_EQ(widest, label->geometry().width);
+        }
+    }
+}
+
+// A disabled combo box: its text is the disabled text colour at 0.6.
 TEST(ControlsTest, ComboBoxGreysItsTextWhenDisabled)
 {
     Window window;

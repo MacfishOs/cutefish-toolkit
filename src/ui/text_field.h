@@ -13,7 +13,7 @@
 
 namespace cutefish::ui {
 
-// FishUI's single-line text field. Positions are UTF-8 byte offsets; input
+// A single-line text field. Positions are UTF-8 byte offsets; input
 // methods compose text in it while it has focus, and only then.
 class TextField : public View
 {
@@ -34,27 +34,31 @@ public:
     void setEchoMode(EchoMode mode);
     EchoMode echoMode() const;
     void setReadOnly(bool readOnly);
+    // Hints for the input method: the content purpose and a mask of
+    // TextHint (a field that allows prediction sets CompletionHint). A
+    // password field takes no input method.
+    void setInputPurpose(TextPurpose purpose);
+    void setInputHints(uint32_t hints);
     bool isReadOnly() const;
-    // TextInput.maximumLength, in UTF-16 units as Qt counts; 0 for none.
+    // The maximum length, in UTF-16 units; 0 for none.
     // Typing and pasting stop at it.
     void setMaximumLength(size_t length);
-    // An edit the validator refuses does not happen, as with a QValidator
-    // that finds the text Invalid.
+    // An edit the validator refuses does not happen.
     void setValidator(std::function<bool(const std::string& text)> validator);
     // Logical pixels; 0 follows the theme.
     void setFontSize(double size);
-    // Around the text, left and right; FishUI's large spacing unless set.
+    // Around the text, left and right; the theme's large spacing unless set.
     void setTextMargins(double left, double right);
     // The rounded background and its border; off for a field drawn into
-    // something else, as a background: null TextField.
+    // something else.
     void setFrameVisible(bool visible);
-    // Qt Quick's bare TextInput, with the frame off and no margins:
-    // FishUI fades a disabled field to half; a TextInput does not.
+    // A disabled field fades to half unless this is off, as for a bare
+    // text input with the frame off and no margins.
     void setFadesWhenDisabled(bool fades);
     // The text and the caret, in every state; unset follows the theme.
     void setTextColor(std::optional<Color> color);
     void setPlaceholderColor(std::optional<Color> color);
-    // TextInput's selectionColor and selectedTextColor; unset, the theme's
+    // The selection's background and text colours; unset, the theme's
     // highlight colours.
     void setSelectionColors(std::optional<Color> background, std::optional<Color> text);
     // A family as Label::setFontFamily takes it; empty follows the theme.
@@ -64,16 +68,16 @@ public:
     // Logical; drawn as whole device pixels, at least one. Unset, one device
     // pixel per whole scale.
     void setCaretWidth(double width);
-    // QStyleHints::cursorFlashTime: the caret is shown and hidden for half
-    // of it each, as Qt's coarse timer runs it (5% early); 1000 unless set.
+    // The cursor flash time: the caret is shown and hidden for half of it
+    // each, on a coarse timer that may fire 5% early; 1000 unless set.
     void setCursorFlashTime(int milliseconds);
-    // TextInput.selectByMouse: off, a press only moves the cursor.
+    // Selecting by mouse: off, a press only moves the cursor.
     void setSelectByMouse(bool select);
     // Off, copy, cut and paste do nothing, from keys or the menu.
     void setClipboardEnabled(bool enabled);
     // The menu on a right press; embedded windows never show one.
     void setContextMenuEnabled(bool enabled);
-    // Empties the field, as TextInput.clear().
+    // Empties the field.
     void clear();
 
     size_t cursorPosition() const;

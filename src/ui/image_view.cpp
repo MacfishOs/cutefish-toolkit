@@ -20,7 +20,7 @@
 #include "base/event_loop.h"
 #include "base/thread_pool.h"
 #include "ui/image_decoder.h"
-#include "ui/quick_layer.h"
+#include "ui/masked_layer.h"
 #include "ui/thumbnail_cache.h"
 #include "ui/window.h"
 
@@ -34,15 +34,14 @@ struct ImageView::Picture
     double width = 0;
     double height = 0;
     double devicePixelRatio = 1;
-    // QuickMaskedLayer's textures, made with the picture off the UI thread,
+    // MaskedLayer's textures, made with the picture off the UI thread,
     // for the item described by the key.
     std::string layerKey;
-    QuickLayerTextures layer;
+    MaskedLayerTextures layer;
 };
 
 // Pictures that finish within a refresh of one another are shown together,
-// in one frame, as Qt shows those its reader thread finishes before the
-// next frame; one held back waits for the others at most that long.
+// in one frame; one held back waits for the others at most that long.
 static constexpr std::chrono::milliseconds kDeliveryWindow(16);
 
 namespace {
@@ -73,7 +72,7 @@ static Deliveries& deliveries()
 struct ImageView::Composed
 {
     std::string key;
-    QuickLayerTextures textures;
+    MaskedLayerTextures textures;
 };
 
 struct ImageView::Loading
@@ -179,7 +178,7 @@ static void store(const std::string& key, std::shared_ptr<const ImageView::Pictu
 
 static base::ThreadPool& decodePool()
 {
-    // Two, as the Qt thumbnailer's pool: scrolling a grid queues many.
+    // Two threads: scrolling a grid queues many.
     static base::ThreadPool pool(2);
     return pool;
 }
@@ -317,7 +316,7 @@ SizeF ImageView::sizeHint() const
 
 RectF ImageView::visualRect() const
 {
-    return m_rendering == Rendering::QuickMaskedLayer ? localRect().adjusted(-1, -1, 1, 1) : localRect();
+    return m_rendering == Rendering::MaskedLayer ? localRect().adjusted(-1, -1, 1, 1) : localRect();
 }
 
 void ImageView::layout()
@@ -326,7 +325,7 @@ void ImageView::layout()
         load(window->scale());
 }
 
-static std::string layerKey(const QuickLayerItem& item);
+static std::string layerKey(const MaskedLayerItem& item);
 
 // Starts decoding for the size the view now needs, unless that is what it has
 // or is getting; meanwhile the picture it has stays.
@@ -345,13 +344,13 @@ void ImageView::load(double scale)
             return;
         if (m_fillMode == FillMode::PreserveAspectCrop)
             scaling = ImageScaling::Cover;
-        // A source size bounds the picture as QML's does; without one it is drawn
+        // A source size bounds the picture; without one it is drawn
         // at the view's exact size.
         else if (m_fillMode == FillMode::Stretch && !(m_sourceSize.width > 0 && m_sourceSize.height > 0))
             scaling = ImageScaling::Stretch;
     }
 
-    // As QML's cache, by name and size: a file changed under the same name
+    // Cached by name and size: a file changed under the same name
     // shows again once its entry is gone.
     const std::string key = std::string(m_thumbnail ? "thumbnail:" : "file:") + m_source + "|"
             + std::to_string(width) + "x" + std::to_string(height) + "|" + std::to_string(int(scaling))
@@ -375,9 +374,9 @@ void ImageView::load(double scale)
     request.autoTransform = m_autoTransform;
     const bool thumbnail = m_thumbnail;
     const double ratio = m_sourceSize.width > 0 && m_sourceSize.height > 0 ? scale : 1;
-    const bool layered = m_rendering == Rendering::QuickMaskedLayer && m_fillMode != FillMode::Pad
+    const bool layered = m_rendering == Rendering::MaskedLayer && m_fillMode != FillMode::Pad
                          && geometry().width > 0 && geometry().height > 0;
-    const QuickLayerItem item = layerItem(scale);
+    const MaskedLayerItem item = layerItem(scale);
     m_loading = std::make_unique<Loading>();
     std::shared_ptr<std::atomic<bool>> abandoned = m_loading->abandoned;
     m_loading->job = decodePool().run(
@@ -397,13 +396,13 @@ void ImageView::load(double scale)
                     const DecodedImage decoded = decodeImage(request);
                     picture->image = decoded.image;
                     // Without a source size the picture keeps its own size in
-                    // logical pixels, as QML's implicit size.
+                    // logical pixels.
                     picture->width = ratio == 1 ? decoded.originalWidth : (decoded.image ? decoded.image->width() : 0);
                     picture->height = ratio == 1 ? decoded.originalHeight : (decoded.image ? decoded.image->height() : 0);
                     picture->devicePixelRatio = ratio;
                 }
                 if (picture->image && layered) {
-                    picture->layer = renderQuickLayerTextures(*picture->image, item);
+                    picture->layer = renderMaskedLayerTextures(*picture->image, item);
                     picture->layerKey = layerKey(item);
                 }
                 return picture->image ? picture : nullptr;
@@ -432,8 +431,8 @@ void ImageView::paint(Painter& painter)
 {
     if (!m_picture || !m_picture->image)
         return;
-    if (m_rendering == Rendering::QuickMaskedLayer && m_fillMode != FillMode::Pad) {
-        paintQuickLayer(painter);
+    if (m_rendering == Rendering::MaskedLayer && m_fillMode != FillMode::Pad) {
+        paintMaskedLayer(painter);
         return;
     }
     const SkImage* image = m_picture->image.get();
@@ -483,15 +482,15 @@ void ImageView::paint(Painter& painter)
     painter.restore();
 }
 
-QuickLayerItem ImageView::layerItem(double scale) const
+MaskedLayerItem ImageView::layerItem(double scale) const
 {
-    QuickLayerItem item;
+    MaskedLayerItem item;
     item.width = geometry().width;
     item.height = geometry().height;
     item.scale = scale;
-    item.fillMode = m_fillMode == FillMode::PreserveAspectFit ? QuickLayerItem::FillMode::PreserveAspectFit
-                    : m_fillMode == FillMode::PreserveAspectCrop ? QuickLayerItem::FillMode::PreserveAspectCrop
-                                                                 : QuickLayerItem::FillMode::Stretch;
+    item.fillMode = m_fillMode == FillMode::PreserveAspectFit ? MaskedLayerItem::FillMode::PreserveAspectFit
+                    : m_fillMode == FillMode::PreserveAspectCrop ? MaskedLayerItem::FillMode::PreserveAspectCrop
+                                                                 : MaskedLayerItem::FillMode::Stretch;
     item.smooth = m_smooth;
     item.mipmap = m_mipmap;
     item.radius = m_radius;
@@ -499,7 +498,7 @@ QuickLayerItem ImageView::layerItem(double scale) const
     return item;
 }
 
-static std::string layerKey(const QuickLayerItem& item)
+static std::string layerKey(const MaskedLayerItem& item)
 {
     char key[160];
     std::snprintf(key, sizeof(key), "%.6f %.6f %.4f %d %d %d %.4f %d", item.width, item.height, item.scale,
@@ -509,11 +508,11 @@ static std::string layerKey(const QuickLayerItem& item)
 
 // The textures come with the picture, or are made here when the size or the
 // scale changed since; moving the view only draws them elsewhere.
-void ImageView::paintQuickLayer(Painter& painter)
+void ImageView::paintMaskedLayer(Painter& painter)
 {
-    const QuickLayerItem item = layerItem(painter.scale());
+    const MaskedLayerItem item = layerItem(painter.scale());
     const std::string key = layerKey(item);
-    const QuickLayerTextures* textures = nullptr;
+    const MaskedLayerTextures* textures = nullptr;
     if (m_picture->layerKey == key) {
         textures = &m_picture->layer;
     } else {
@@ -521,10 +520,10 @@ void ImageView::paintQuickLayer(Painter& painter)
         std::snprintf(picture, sizeof(picture), "%p ", static_cast<const void*>(m_picture->image.get()));
         const std::string composedKey = picture + key;
         if (!m_composed || m_composed->key != composedKey)
-            m_composed = std::make_unique<Composed>(Composed{composedKey, renderQuickLayerTextures(*m_picture->image, item)});
+            m_composed = std::make_unique<Composed>(Composed{composedKey, renderMaskedLayerTextures(*m_picture->image, item)});
         textures = &m_composed->textures;
     }
-    drawQuickLayer(painter.canvas(), *textures, painter.offset().x, painter.offset().y, float(painter.opacity()));
+    drawMaskedLayer(painter.canvas(), *textures, painter.offset().x, painter.offset().y, float(painter.opacity()));
 }
 
 } // namespace cutefish::ui

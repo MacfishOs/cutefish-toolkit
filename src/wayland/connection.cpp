@@ -6,27 +6,32 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <linux/input-event-codes.h>
 #include <sys/epoll.h>
 #include <wayland-client.h>
 
 #include <cursor-shape-v1-client-protocol.h>
+#include <cutefish-shell-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <text-input-unstable-v3-client-protocol.h>
 #include <presentation-time-client-protocol.h>
+#include <primary-selection-unstable-v1-client-protocol.h>
 #include <viewporter-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-dialog-v1-client-protocol.h>
 #include <xdg-foreign-unstable-v2-client-protocol.h>
 #include <xdg-output-unstable-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
+#include <xdg-toplevel-drag-v1-client-protocol.h>
 
 #include "base/event_loop.h"
 #include "wayland/data_device.h"
 #include "wayland/keyboard.h"
+#include "wayland/primary_selection.h"
 #include "wayland/text_input.h"
 #include "wayland/shell_surface.h"
 
@@ -54,6 +59,9 @@ struct ConnectionListeners
         if (strcmp(interface, wl_compositor_interface.name) == 0) {
             self->m_compositor = bind<wl_compositor>(registry, name, &wl_compositor_interface,
                                                      version, 4);
+        } else if (strcmp(interface, wl_subcompositor_interface.name) == 0) {
+            self->m_subcompositor = bind<wl_subcompositor>(registry, name, &wl_subcompositor_interface,
+                                                           version, 1);
         } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
             self->m_wmBase = bind<xdg_wm_base>(registry, name, &xdg_wm_base_interface, version, 5);
             xdg_wm_base_add_listener(self->m_wmBase, &wmBase, self);
@@ -76,11 +84,16 @@ struct ConnectionListeners
         } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
             self->m_dataDeviceManager = bind<wl_data_device_manager>(
                 registry, name, &wl_data_device_manager_interface, version, 3);
+        } else if (strcmp(interface, zwp_primary_selection_device_manager_v1_interface.name) == 0) {
+            self->m_primarySelectionManager = bind<zwp_primary_selection_device_manager_v1>(
+                registry, name, &zwp_primary_selection_device_manager_v1_interface, version, 1);
         } else if (strcmp(interface, zwp_text_input_manager_v3_interface.name) == 0) {
             self->m_textInputManager = bind<zwp_text_input_manager_v3>(
                 registry, name, &zwp_text_input_manager_v3_interface, version, 1);
         } else if (strcmp(interface, zxdg_exporter_v2_interface.name) == 0) {
             self->m_exporter = bind<zxdg_exporter_v2>(registry, name, &zxdg_exporter_v2_interface, version, 1);
+        } else if (strcmp(interface, zxdg_importer_v2_interface.name) == 0) {
+            self->m_importer = bind<zxdg_importer_v2>(registry, name, &zxdg_importer_v2_interface, version, 1);
         } else if (strcmp(interface, xdg_activation_v1_interface.name) == 0) {
             self->m_activation = bind<xdg_activation_v1>(registry, name, &xdg_activation_v1_interface, version, 1);
         } else if (strcmp(interface, xdg_wm_dialog_v1_interface.name) == 0) {
@@ -103,6 +116,13 @@ struct ConnectionListeners
             wl_output_add_listener(output, &outputListener, self);
             self->m_outputs.push_back({name, output, nullptr, {}});
             self->watchOutput(self->m_outputs.back());
+        } else if (strcmp(interface, cutefish_shell_v1_interface.name) == 0) {
+            self->m_shell = bind<cutefish_shell_v1>(registry, name, &cutefish_shell_v1_interface, version, 1);
+        } else if (strcmp(interface, wl_shm_interface.name) == 0) {
+            self->m_shm = bind<wl_shm>(registry, name, &wl_shm_interface, version, 1);
+        } else if (strcmp(interface, xdg_toplevel_drag_manager_v1_interface.name) == 0) {
+            self->m_toplevelDragManager = bind<xdg_toplevel_drag_manager_v1>(
+                registry, name, &xdg_toplevel_drag_manager_v1_interface, version, 1);
         } else if (strcmp(interface, wl_seat_interface.name) == 0 && !self->m_seat) {
             self->m_seat = bind<wl_seat>(registry, name, &wl_seat_interface, version, 8);
             wl_seat_add_listener(self->m_seat, &seat, self);
@@ -112,12 +132,15 @@ struct ConnectionListeners
     static void globalRemove(void* data, wl_registry*, uint32_t name)
     {
         auto* self = static_cast<Connection*>(data);
+        const size_t before = self->m_outputs.size();
         std::erase_if(self->m_outputs, [name](const Connection::Output& output) {
             if (output.name != name)
                 return false;
             Connection::releaseOutput(output);
             return true;
         });
+        if (self->m_outputs.size() != before && self->onOutputsChanged)
+            self->onOutputsChanged();
     }
 
     static void outputGeometry(void*, wl_output*, int32_t, int32_t, int32_t, int32_t, int32_t, const char*,
@@ -126,10 +149,26 @@ struct ConnectionListeners
     }
 
     static void outputMode(void*, wl_output*, uint32_t, int32_t, int32_t, int32_t) {}
-    static void outputDone(void*, wl_output*) {}
+
+    // wl_output.done closes every update, xdg_output's included from its
+    // version 3 on.
+    static void outputDone(void* data, wl_output*)
+    {
+        auto* self = static_cast<Connection*>(data);
+        if (self->onOutputsChanged)
+            self->onOutputsChanged();
+    }
+
     static void outputScale(void*, wl_output*, int32_t) {}
 
-    static void xdgOutputPosition(void*, zxdg_output_v1*, int32_t, int32_t) {}
+    static void xdgOutputPosition(void* data, zxdg_output_v1* xdgOutput, int32_t x, int32_t y)
+    {
+        auto* self = static_cast<Connection*>(data);
+        for (Connection::Output& output : self->m_outputs) {
+            if (output.xdgOutput == xdgOutput)
+                output.position = {double(x), double(y)};
+        }
+    }
 
     static void xdgOutputSize(void* data, zxdg_output_v1* xdgOutput, int32_t width, int32_t height)
     {
@@ -140,8 +179,22 @@ struct ConnectionListeners
         }
     }
 
-    static void xdgOutputDone(void*, zxdg_output_v1*) {}
-    static void xdgOutputName(void*, zxdg_output_v1*, const char*) {}
+    // Below version 3 only, where wl_output.done may not follow.
+    static void xdgOutputDone(void* data, zxdg_output_v1* xdgOutput)
+    {
+        auto* self = static_cast<Connection*>(data);
+        if (zxdg_output_v1_get_version(xdgOutput) < 3 && self->onOutputsChanged)
+            self->onOutputsChanged();
+    }
+
+    static void xdgOutputName(void* data, zxdg_output_v1* xdgOutput, const char* name)
+    {
+        auto* self = static_cast<Connection*>(data);
+        for (Connection::Output& output : self->m_outputs) {
+            if (output.xdgOutput == xdgOutput)
+                output.outputName = name ? name : "";
+        }
+    }
     static void xdgOutputDescription(void*, zxdg_output_v1*, const char*) {}
 
     static void interactiveResize(void*, cutefish_window_hints_v1*, wl_surface* surface, uint32_t active)
@@ -249,6 +302,15 @@ struct ConnectionListeners
             break;
         case BTN_MIDDLE:
             mouseButton = MouseButton::Middle;
+            break;
+        // The side and extra buttons go back and forward.
+        case BTN_SIDE:
+        case BTN_BACK:
+            mouseButton = MouseButton::Back;
+            break;
+        case BTN_EXTRA:
+        case BTN_FORWARD:
+            mouseButton = MouseButton::Forward;
             break;
         default:
             return;
@@ -359,6 +421,30 @@ std::unique_ptr<Connection> Connection::open(base::EventLoop& loop)
     return connection;
 }
 
+std::unique_ptr<Connection> Connection::openFd(base::EventLoop& loop, int fd)
+{
+    // wl_display_connect_to_fd leaves the flags alone: a program this one
+    // starts must not inherit a privileged connection.
+    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+    wl_display* display = wl_display_connect_to_fd(fd);
+    if (!display) {
+        fprintf(stderr, "cutefish-toolkit: cannot connect over the descriptor given\n");
+        return nullptr;
+    }
+    std::unique_ptr<Connection> connection(new Connection(loop, display));
+    if (!connection->initialize())
+        return nullptr;
+    return connection;
+}
+
+std::vector<Connection::OutputInfo> Connection::outputs() const
+{
+    std::vector<OutputInfo> list;
+    for (const Output& output : m_outputs)
+        list.push_back({output.outputName, output.position, output.logicalSize});
+    return list;
+}
+
 Connection::Connection(base::EventLoop& loop, wl_display* display)
     : m_loop(loop)
     , m_display(display)
@@ -409,6 +495,9 @@ Connection::~Connection()
         zxdg_output_manager_v1_destroy(m_outputManager);
     m_textInput.reset();
     m_dataDevice.reset();
+    m_primarySelection.reset();
+    if (m_primarySelectionManager)
+        zwp_primary_selection_device_manager_v1_destroy(m_primarySelectionManager);
     if (m_textInputManager)
         zwp_text_input_manager_v3_destroy(m_textInputManager);
     if (m_dataDeviceManager)
@@ -431,11 +520,13 @@ Connection::~Connection()
     if (m_dialogManager)
         xdg_wm_dialog_v1_destroy(m_dialogManager);
     for (const auto& pending : m_activations)
-        xdg_activation_token_v1_destroy(pending.first);
+        xdg_activation_token_v1_destroy(pending.token);
     for (const Export& e : m_exports)
         zxdg_exported_v2_destroy(e.exported);
     if (m_exporter)
         zxdg_exporter_v2_destroy(m_exporter);
+    if (m_importer)
+        zxdg_importer_v2_destroy(m_importer);
     if (m_activation)
         xdg_activation_v1_destroy(m_activation);
     if (m_cursorShapeManager)
@@ -448,6 +539,14 @@ Connection::~Connection()
         wp_viewporter_destroy(m_viewporter);
     if (m_wmBase)
         xdg_wm_base_destroy(m_wmBase);
+    if (m_toplevelDragManager)
+        xdg_toplevel_drag_manager_v1_destroy(m_toplevelDragManager);
+    if (m_shell)
+        cutefish_shell_v1_destroy(m_shell);
+    if (m_shm)
+        wl_shm_destroy(m_shm);
+    if (m_subcompositor)
+        wl_subcompositor_destroy(m_subcompositor);
     if (m_compositor)
         wl_compositor_destroy(m_compositor);
     if (m_registry)
@@ -471,11 +570,19 @@ bool Connection::initialize()
     }
     if (m_seat && m_dataDeviceManager)
         m_dataDevice = std::make_unique<DataDevice>(*this, m_loop, m_dataDeviceManager, m_seat);
+    if (m_seat && m_primarySelectionManager) {
+        m_primarySelection = std::make_unique<PrimarySelection>(*this, m_loop, m_primarySelectionManager,
+                                                                m_seat);
+    }
     if (m_seat && m_textInputManager)
         m_textInput = std::make_unique<TextInput>(m_textInputManager, m_seat);
 
+    // Reads without blocking: a drawing thread waiting on a queue of its own
+    // may have read what woke the loop already.
     m_watch = m_loop.watch(wl_display_get_fd(m_display), EPOLLIN, [this](uint32_t) {
-        if (wl_display_dispatch(m_display) < 0) {
+        while (wl_display_prepare_read(m_display) != 0)
+            wl_display_dispatch_pending(m_display);
+        if (wl_display_read_events(m_display) < 0 || wl_display_dispatch_pending(m_display) < 0) {
             fprintf(stderr, "cutefish-toolkit: lost the Wayland connection\n");
             m_loop.quit(1);
         }
@@ -489,9 +596,22 @@ bool Connection::initialize()
     return true;
 }
 
+uint32_t Connection::keyboardModifiers() const
+{
+    return m_keyboard ? m_keyboard->modifiers() : 0;
+}
+
 void Connection::setCursorShape(ShellSurface* shell, CursorShape shape)
 {
-    if (!m_cursorShapeDevice || shell != m_pointerFocus)
+    if (shell != m_pointerFocus)
+        return;
+    // No surface hides the pointer over the window.
+    if (shape == CursorShape::Blank) {
+        if (m_pointer)
+            wl_pointer_set_cursor(m_pointer, m_enterSerial, nullptr, 0, 0);
+        return;
+    }
+    if (!m_cursorShapeDevice)
         return;
     uint32_t wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     switch (shape) {
@@ -520,6 +640,8 @@ void Connection::setCursorShape(ShellSurface* shell, CursorShape shape)
         break;
     case CursorShape::ResizeVertical:
         wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+        break;
+    case CursorShape::Blank:
         break;
     }
     wp_cursor_shape_device_v1_set_shape(m_cursorShapeDevice, m_enterSerial, wire);
@@ -563,21 +685,42 @@ void Connection::activate(ShellSurface* shell, const std::string& appId)
         xdg_activation_token_v1_set_app_id(token, appId.c_str());
     xdg_activation_token_v1_add_listener(token, &activationTokenListener, this);
     xdg_activation_token_v1_commit(token);
-    m_activations.emplace_back(token, shell);
+    m_activations.push_back({token, shell, nullptr});
+    flush();
+}
+
+void Connection::requestActivationToken(ShellSurface* shell, std::function<void(const std::string&)> done)
+{
+    if (!m_activation) {
+        done({});
+        return;
+    }
+    xdg_activation_token_v1* token = xdg_activation_v1_get_activation_token(m_activation);
+    if (m_inputSerial && m_seat)
+        xdg_activation_token_v1_set_serial(token, m_inputSerial, m_seat);
+    if (shell)
+        xdg_activation_token_v1_set_surface(token, shell->surface());
+    xdg_activation_token_v1_add_listener(token, &activationTokenListener, this);
+    xdg_activation_token_v1_commit(token);
+    m_activations.push_back({token, nullptr, std::move(done)});
     flush();
 }
 
 void Connection::activationDone(xdg_activation_token_v1* token, const char* tokenString)
 {
     const auto found = std::find_if(m_activations.begin(), m_activations.end(),
-                                    [token](const auto& pending) { return pending.first == token; });
+                                    [token](const auto& pending) { return pending.token == token; });
+    std::function<void(const std::string&)> done;
     if (found != m_activations.end()) {
-        if (found->second)
-            xdg_activation_v1_activate(m_activation, tokenString, found->second->surface());
+        if (found->shell)
+            xdg_activation_v1_activate(m_activation, tokenString, found->shell->surface());
+        done = std::move(found->done);
         m_activations.erase(found);
     }
     xdg_activation_token_v1_destroy(token);
     flush();
+    if (done)
+        done(tokenString ? tokenString : "");
 }
 
 static void exportedHandle(void* data, zxdg_exported_v2* exported, const char* handle)
@@ -631,8 +774,8 @@ void Connection::forget(ShellSurface* shell)
         return true;
     });
     for (auto& pending : m_activations) {
-        if (pending.second == shell)
-            pending.second = nullptr;
+        if (pending.shell == shell)
+            pending.shell = nullptr;
     }
     if (m_pointerFocus == shell)
         m_pointerFocus = nullptr;

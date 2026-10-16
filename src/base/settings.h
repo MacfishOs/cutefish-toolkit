@@ -13,12 +13,12 @@
 
 namespace cutefish::base {
 
-// An INI file read and written as QSettings' IniFormat does, so Qt programs
-// and this read and write the same files both ways: keys outside a group in
-// [General], "group/key" keys, Qt's key and value escaping, comma-separated
-// lists, @Invalid() for an empty list, and @Size, @Point and @Rect values.
-// Values written by others that are not understood here are kept unchanged.
-// As QSettings does, a write sorts the groups and keys.
+// An INI file in the common desktop dialect, read and written both ways with
+// other programs: keys outside a group in [General], "group/key" keys, %XX
+// key escaping and C-style value escaping, comma-separated lists,
+// @Invalid() for an empty list, and @Size, @Point and @Rect values. Values
+// written by others that are not understood here are kept unchanged. A
+// write sorts the groups and keys.
 class Settings
 {
 public:

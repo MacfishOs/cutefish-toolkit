@@ -96,6 +96,12 @@ void BusyIndicator::setDuration(std::chrono::milliseconds duration)
         m_animation->setDuration(duration);
 }
 
+void BusyIndicator::setColor(std::optional<Color> color)
+{
+    m_color = color;
+    requestPaint();
+}
+
 void BusyIndicator::paint(Painter& painter)
 {
     if (!m_running)
@@ -106,15 +112,25 @@ void BusyIndicator::paint(Painter& painter)
         m_animation->setEasing(Animation::Easing::Linear);
         m_animation->setLoops(Animation::Infinite);
         m_animation->onUpdate = [this](double value) {
+            // Hidden, it stops ticking, as the RotationAnimator stops with
+            // its item or window; the next paint starts it again.
+            for (const View* view = this; view; view = view->parent()) {
+                if (!view->isVisible()) {
+                    m_animation->stop();
+                    return;
+                }
+            }
             m_angle = value * 360;
             requestPaint();
         };
+        m_animation->start();
+    } else if (m_animation && !m_animation->isRunning()) {
         m_animation->start();
     }
 
     const Rect box = painter.deviceRect(localRect());
     const int side = std::min(box.width, box.height);
-    sk_sp<SkImage> glyph = IconLoader::instance().glyph("refresh", side, Theme::current().text);
+    sk_sp<SkImage> glyph = IconLoader::instance().glyph("refresh", side, m_color.value_or(Theme::current().text));
     if (!glyph)
         return;
     // Turned, so sampled smoothly rather than snapped like still icons.

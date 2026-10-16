@@ -20,7 +20,7 @@
 
 #include "ui/icon_loader.h"
 #include "ui/image.h"
-#include "ui/quick_rectangle.h"
+#include "ui/smooth_rectangle.h"
 #include "ui/rounded_path.h"
 #include "ui/rounded_shape.h"
 #include "ui/theme.h"
@@ -81,7 +81,13 @@ void Painter::translate(PointF offset)
     m_offset.y += offset.y;
 }
 
-// Where a GPU rasterises Qt Quick's plain Rectangle: a pixel is covered when
+void Painter::rotate(double degrees, PointF centre)
+{
+    m_canvas->rotate(SkScalar(degrees), SkScalar((m_offset.x + centre.x) * m_scale),
+                     SkScalar((m_offset.y + centre.y) * m_scale));
+}
+
+// Where a GPU rasterises a plain rectangle: a pixel is covered when
 // its centre is, so an edge on a pixel centre goes to the lower side.
 int Painter::toDevice(double logical) const
 {
@@ -259,13 +265,13 @@ void Painter::drawSvg(const std::string& file, const RectF& rect, std::optional<
     drawImage(image.get(), device.x, device.y);
 }
 
-void Painter::drawQuickRectangle(const RectF& rect, double radius, Color fill, double borderWidth, Color border)
+void Painter::drawSmoothRectangle(const RectF& rect, double radius, Color fill, double borderWidth, Color border)
 {
     if (rect.width <= 0 || rect.height <= 0)
         return;
-    // Qt draws a radius of half a pixel or less as square corners.
+    // A radius of half a pixel or less draws square corners.
     if (std::min(std::min(rect.width, rect.height) * 0.4999, radius) > 0.5) {
-        drawQuickRoundedRectangle(m_canvas, {m_offset.x + rect.x, m_offset.y + rect.y, rect.width, rect.height},
+        drawSmoothRoundedRectangle(m_canvas, {m_offset.x + rect.x, m_offset.y + rect.y, rect.width, rect.height},
                                   radius, m_scale, fill, border.a > 0 ? borderWidth : 0, border, float(m_opacity));
         return;
     }

@@ -14,10 +14,9 @@
 
 using namespace cutefish::ui;
 
-// Numbers Qt 6.8 gives for Noto Sans in Qt Quick Text with QtRendering, as
-// FishUI's labels use it: QFontMetricsF, QTextLayout with design metrics
-// and QFontMetricsF::tightBoundingRect, measured on the test laptop at a
-// device pixel ratio of 1.5 and of 1.
+// Reference numbers for Noto Sans in labels: font metrics, line layout
+// with design metrics and tight ink bounds, measured on the test laptop at
+// a device pixel ratio of 1.5 and of 1.
 namespace {
 
 struct Measured
@@ -52,7 +51,7 @@ void expectRect(const RectF& rect, RectF expected)
 
 } // namespace
 
-TEST(TextMetricsTest, LinesAsQtLaysThemOutWhenScaled)
+TEST(TextMetricsTest, LinesKeepReferenceMetricsWhenScaled)
 {
     struct Size
     {
@@ -81,7 +80,7 @@ TEST(TextMetricsTest, LinesAsQtLaysThemOutWhenScaled)
 
 TEST(TextMetricsTest, PointSizesRoundToWholePixels)
 {
-    // 8 pt is 10.67 logical pixels, which Qt lays out at 11.
+    // 8 pt is 10.67 logical pixels, laid out at 11.
     Measured measured(8 * 4.0 / 3, 1.5, "System Monitor");
     EXPECT_DOUBLE_EQ(measured.label->ascent(), 11.765625);
     EXPECT_NEAR(measured.label->sizeHint().width, 81.5938, 0.02);
@@ -93,7 +92,7 @@ TEST(TextMetricsTest, WeightsKeepTheirAdvances)
     EXPECT_NEAR(Measured(11, 1.5, "System Monitor", 700).label->sizeHint().width, 86.9375, 0.02);
 }
 
-TEST(TextMetricsTest, TightBoundingRectsAsQtRoundsThem)
+TEST(TextMetricsTest, TightBoundingRectsRoundToWholePixels)
 {
     expectRect(Measured(11, 1.5, "System Monitor").label->tightBoundingRect(), {0, -9, 83, 12});
     expectRect(Measured(11, 1.5, "Name").label->tightBoundingRect(), {1, -8, 30, 9});
@@ -107,7 +106,7 @@ TEST(TextMetricsTest, TightBoundingRectsAsQtRoundsThem)
 
 TEST(TextMetricsTest, WholePixelMetricsUnscaled)
 {
-    // Unscaled, Qt hints with fontconfig's full hinting and rounds.
+    // Unscaled, metrics are hinted with fontconfig's full hinting and rounded.
     struct Size
     {
         double pixelSize;
@@ -125,7 +124,7 @@ TEST(TextMetricsTest, WholePixelMetricsUnscaled)
 
 TEST(TextMetricsTest, MediumWeightUsesTheMediumFace)
 {
-    // Qt picks NotoSans-Medium for weight 500.
+    // Weight 500 picks NotoSans-Medium.
     EXPECT_NEAR(Measured(12, 1.5, "Today", 500).label->sizeHint().width, 34.8281, 0.02);
 }
 
@@ -134,14 +133,14 @@ TEST(TextMetricsTest, SpansCountTheirTextOnce)
     Measured measured(24, 1.5, "");
     measured.label->setSpans({{"October", 700, {}}, {" 2026", 0, {}}});
     measured.window.grab();
-    // Qt's StyledText "<b>October</b> 2026".
+    // Styled text "<b>October</b> 2026".
     EXPECT_NEAR(measured.label->sizeHint().width, 158.03, 0.05);
 }
 
-TEST(TextMetricsTest, FallbackRunsAsQtPlacesThem)
+TEST(TextMetricsTest, FallbackRunsKeepReferenceMetrics)
 {
-    // Text in other scripts comes from outside the repository; Qt's widths,
-    // heights and ascents for its lines at 12 px, scale 1.5.
+    // Text in other scripts comes from outside the repository, with the
+    // reference widths, heights and ascents for its lines at 12 px, scale 1.5.
     std::ifstream file(std::string(getenv("HOME") ? getenv("HOME") : "") + "/p2/toolkit/text/cjk.txt");
     if (!file)
         GTEST_SKIP() << "no ~/p2/toolkit/text/cjk.txt";

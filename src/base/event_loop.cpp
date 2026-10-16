@@ -145,6 +145,7 @@ int EventLoop::startTimer(std::chrono::nanoseconds interval, bool repeat, Task t
     timer->task = std::move(task);
     // Absolute and one-shot: repeats are rearmed from the deadline.
     arm(fd, timer->deadline);
+    timer->armed = timer->deadline;
 
     const int id = watch(fd, EPOLLIN, nullptr);
     if (!id) {
@@ -158,10 +159,32 @@ int EventLoop::startTimer(std::chrono::nanoseconds interval, bool repeat, Task t
         // Nothing when the due-timer pass rearmed it first.
         if (read(fd, &expirations, sizeof(expirations)) <= 0)
             return;
+        // A restart pushed the deadline past what the descriptor was set to.
+        const auto it = m_timers.find(id);
+        if (it != m_timers.end() && it->second->deadline > std::chrono::steady_clock::now()) {
+            arm(fd, it->second->deadline);
+            it->second->armed = it->second->deadline;
+            return;
+        }
         fireTimer(id);
     };
     m_timers.emplace(id, std::move(timer));
     return id;
+}
+
+bool EventLoop::restartTimer(int id, std::chrono::nanoseconds interval)
+{
+    const auto it = m_timers.find(id);
+    if (it == m_timers.end())
+        return false;
+    TimerEntry& timer = *it->second;
+    timer.interval = std::max(interval, std::chrono::nanoseconds(1));
+    timer.deadline = std::chrono::steady_clock::now() + timer.interval;
+    if (timer.deadline < timer.armed) {
+        arm(timer.fd, timer.deadline);
+        timer.armed = timer.deadline;
+    }
+    return true;
 }
 
 void EventLoop::fireTimer(int id)
@@ -180,6 +203,7 @@ void EventLoop::fireTimer(int id)
         if (timer->deadline <= now)
             timer->deadline = now + timer->interval;
         arm(timer->fd, timer->deadline);
+        timer->armed = timer->deadline;
     }
     timer->task();
 }

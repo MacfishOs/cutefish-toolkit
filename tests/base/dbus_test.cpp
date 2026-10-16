@@ -317,7 +317,8 @@ TEST_F(DBusTest, NamesAreWatchedAndOwnedOnce)
     ASSERT_EQ(owners.size(), 2u);
     EXPECT_TRUE(owners[1].empty());
 
-    // Free again, so this connection takes it.
+    // Free again, so this connection takes it; asking again keeps it.
+    EXPECT_TRUE(m_connection->requestName(kService));
     EXPECT_TRUE(m_connection->requestName(kService));
 }
 
@@ -360,4 +361,58 @@ TEST_F(DBusTest, IntrospectionCarriesArgumentNames)
     ASSERT_TRUE(named.read(text, ok));
     EXPECT_EQ(text, "x");
     EXPECT_TRUE(ok);
+}
+
+// Two objects at one path under two names: each proxy hears its own.
+TEST_F(DBusTest, ProxySignalsComeFromTheirNamesOwner)
+{
+    static constexpr const char* kOther = "org.cutefish.ToolkitTest.Other";
+    std::unique_ptr<Connection> other = Connection::open(Connection::Bus::Session, &m_loop);
+    ASSERT_TRUE(other);
+    ASSERT_TRUE(other->requestName(kOther, Connection::DoNotQueue));
+    Proxy otherProxy(m_connection.get(), kOther, kPath, kInterface);
+
+    std::vector<std::string> mine;
+    std::vector<std::string> theirs;
+    Match ours = m_proxy.onSignal("Changed", [&](const Message& signal) {
+        mine.push_back(signal.argument<std::string>().value_or(""));
+    });
+    Match others = otherProxy.onSignal("Changed", [&](const Message& signal) {
+        theirs.push_back(signal.argument<std::string>().value_or(""));
+    });
+    // Signals sent before the owners are known wait for them.
+    EXPECT_TRUE(other->emitSignal(kPath, kInterface, "Changed", std::string("early")));
+    runFor(300ms);
+    EXPECT_TRUE(other->emitSignal(kPath, kInterface, "Changed", std::string("other")));
+    runFor(300ms);
+    EXPECT_TRUE(mine.empty());
+    EXPECT_EQ(theirs, (std::vector<std::string>{"early", "other"}));
+
+    EXPECT_TRUE(m_proxy.call("Emit", "own"));
+    runFor(300ms);
+    EXPECT_EQ(mine, std::vector<std::string>{"own"});
+    EXPECT_EQ(theirs.size(), 2u);
+
+    // Properties too.
+    int changes = 0;
+    Match properties = otherProxy.onPropertiesChanged([&](const VariantMap&, const std::vector<std::string>&) {
+        ++changes;
+    });
+    runFor(100ms);
+    EXPECT_FALSE(m_proxy.setProperty("Count", int32_t(9)).isError());
+    runFor(300ms);
+    EXPECT_EQ(changes, 0);
+}
+
+TEST_F(DBusTest, NamesAreTakenOverWhenAllowed)
+{
+    static constexpr const char* kName = "org.cutefish.ToolkitTest.Replaceable";
+    std::unique_ptr<Connection> first = Connection::open(Connection::Bus::Session, &m_loop);
+    ASSERT_TRUE(first->requestName(kName, Connection::AllowReplacement | Connection::DoNotQueue));
+    // Replacing the owner, which does not allow replacement in turn.
+    EXPECT_TRUE(m_connection->requestName(kName, Connection::ReplaceExisting | Connection::DoNotQueue));
+    // Not given up again.
+    EXPECT_FALSE(first->requestName(kName, Connection::ReplaceExisting | Connection::DoNotQueue));
+    // Asked again by the owner: still its.
+    EXPECT_TRUE(m_connection->requestName(kName, Connection::DoNotQueue));
 }

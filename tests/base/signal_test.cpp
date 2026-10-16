@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// As Qt's headers leave them when keywords are on.
+// As a host toolkit's headers may leave them: empty macros.
 #define emit
 #define slots
 #define signals public

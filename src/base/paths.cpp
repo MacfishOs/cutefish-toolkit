@@ -83,9 +83,9 @@ std::string userDirectory(UserDirectory directory, const std::string& userDirsFi
     };
     const auto& name = names[size_t(directory)];
 
-    // Read as Qt reads it: the last line of the form XDG_<KEY>_DIR=<value>
-    // counts, its quotes and one trailing slash go, and a leading $HOME is
-    // the home directory, whether a slash follows or not.
+    // The last line of the form XDG_<KEY>_DIR=<value> counts, its quotes and
+    // one trailing slash go, and a leading $HOME is the home directory, whether
+    // a slash follows or not.
     if (const std::optional<std::string> contents = file::read(userDirsFile)) {
         static const std::regex line("^XDG_(.*)_DIR=(.*)$");
         std::optional<std::string> result;

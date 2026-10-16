@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/types.h>
 
 namespace cutefish::base::file {
 
@@ -16,6 +17,10 @@ std::optional<std::string> read(const std::string& path);
 // target, so a reader sees the old or the new contents, never a part.
 // Missing directories are created; an existing file's mode is kept.
 bool writeAtomically(const std::string& path, std::string_view contents);
+
+// write(2) to a pipe or socket whose reader may have gone: EPIPE instead of
+// a SIGPIPE that would end the process.
+ssize_t writeWithoutSigpipe(int fd, const void* data, size_t size);
 
 // A new directory, removed with everything in it when the object goes.
 class TemporaryDirectory

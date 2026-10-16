@@ -11,13 +11,13 @@
 
 namespace cutefish::ui {
 
-// FishUI's horizontal slider: a thin track filled in the accent colour up to
+// A horizontal slider: a thin track filled in the accent colour up to
 // a round white handle with a soft shadow. A stepped slider marks its steps
 // under the track and is taller.
 class Slider : public View
 {
 public:
-    // As Qt's: when the handle lands on a step.
+    // When the handle lands on a step.
     enum class SnapMode {
         NoSnap,
         SnapAlways,
@@ -39,7 +39,7 @@ public:
     // Clamped to the range; does not call onMoved.
     void setValue(double value);
     // A tool tip over the handle while it is held, its text the value as
-    // given, as a ToolTip parented to the handle.
+    // given.
     void setValueToolTip(std::function<std::string(double value)> text);
 
     SizeF sizeHint() const override;

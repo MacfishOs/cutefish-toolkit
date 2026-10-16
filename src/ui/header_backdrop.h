@@ -12,10 +12,10 @@ namespace cutefish::ui {
 
 class ScrollView;
 
-// FishUI's HeaderBackdrop: the frosted bar over the top or bottom of a
-// scrolling view, the content scrolled beneath it blurred as MultiEffect
-// (blurMax 32) blurs it, under a translucent tint and a hairline. At rest it
-// is invisible; it fades in over 16 pixels of content scrolling under it.
+// The frosted bar over the top or bottom of a scrolling view, the content
+// scrolled beneath it blurred by the mip blur of multi_effect_blur.h
+// (blurMax 32), under a translucent tint and a hairline. At rest it is
+// invisible; it fades in over 16 pixels of content scrolling under it.
 // It lies over the view, which it must not be inside.
 class HeaderBackdrop : public View
 {

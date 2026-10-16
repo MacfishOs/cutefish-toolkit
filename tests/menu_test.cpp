@@ -63,7 +63,27 @@ TEST(MenuTest, KeyboardSkipsDisabledRowsAndSeparators)
     EXPECT_EQ(f.closed, 1);
 }
 
-TEST(MenuTest, RowsFollowFishUIMetrics)
+// Measured before it opens, the menu is the size it opens at, at whole and
+// fractional scales, with hinted and unhinted text alike.
+TEST(MenuTest, ImplicitSizeIsTheOpenedSize)
+{
+    for (const bool hinted : {true, false}) {
+        for (const double scale : {1.0, 1.5}) {
+            Fixture f;
+            f.window.setScale(scale);
+            f.window.setHintedTextLayout(hinted);
+            f.menu.addItem("Capture Selected Window", [] {}, "Ctrl+Shift+W");
+            const SizeF size = f.menu.implicitSize(&f.window);
+            f.menu.popup(&f.window, {20, 20});
+            ASSERT_TRUE(f.menu.isOpen());
+            SCOPED_TRACE(std::to_string(scale) + (hinted ? " hinted" : " unhinted"));
+            EXPECT_EQ(size, f.menu.window()->size());
+            f.menu.close();
+        }
+    }
+}
+
+TEST(MenuTest, RowsHaveThemeMetrics)
 {
     Fixture f;
     f.menu.popupFor(f.anchor);
@@ -75,7 +95,7 @@ TEST(MenuTest, RowsFollowFishUIMetrics)
     EXPECT_GE(popup->size().width, 146 + 2 * 3);
 }
 
-// ComboBoxMenu: half the screen tall at most, opened centred on the checked
+// A drop-down: half the screen tall at most, opened centred on the checked
 // row, nothing lit from the pointer; the arrows go on from the checked row
 // and stop at the ends; typing finds a row.
 TEST(MenuTest, DropDownScrollsToItsCheckedRow)

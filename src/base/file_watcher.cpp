@@ -26,12 +26,16 @@ struct FileWatch::Inotify
         // Empty for a directory watch.
         std::string name;
         std::function<void(const std::string& name)> callback;
+        // On a queue overflow; null to hear nothing of it.
+        std::function<void()> overflowed;
     };
 
     explicit Inotify(EventLoop& loop);
     ~Inotify();
 
-    int add(const std::string& directory, std::string name, std::function<void(const std::string&)> callback);
+    int add(const std::string& directory, std::string name, std::function<void(const std::string&)> callback,
+            std::function<void()> overflowed);
+    void overflow();
     void remove(int id);
     void read();
 
@@ -62,7 +66,7 @@ FileWatch::Inotify::~Inotify()
 }
 
 int FileWatch::Inotify::add(const std::string& directory, std::string name,
-                            std::function<void(const std::string&)> callback)
+                            std::function<void(const std::string&)> callback, std::function<void()> overflowed)
 {
     if (fd < 0)
         return 0;
@@ -71,7 +75,7 @@ int FileWatch::Inotify::add(const std::string& directory, std::string name,
         return 0;
     ++users[descriptor];
     const int id = nextId++;
-    watchers.emplace(id, Watcher{descriptor, std::move(name), std::move(callback)});
+    watchers.emplace(id, Watcher{descriptor, std::move(name), std::move(callback), std::move(overflowed)});
     return id;
 }
 
@@ -100,6 +104,10 @@ void FileWatch::Inotify::read()
         for (ssize_t offset = 0; offset < size;) {
             const auto* event = reinterpret_cast<const inotify_event*>(buffer + offset);
             offset += ssize_t(sizeof(inotify_event) + event->len);
+            if (event->mask & IN_Q_OVERFLOW) {
+                overflow();
+                continue;
+            }
             const std::string name = event->len ? std::string(event->name) : std::string();
             const bool self = event->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED);
 
@@ -119,6 +127,20 @@ void FileWatch::Inotify::read()
                 callback(self ? std::string() : name);
             }
         }
+    }
+}
+
+void FileWatch::Inotify::overflow()
+{
+    std::vector<int> ids;
+    for (const auto& [id, watcher] : watchers)
+        ids.push_back(id);
+    for (const int id : ids) {
+        const auto it = watchers.find(id);
+        if (it == watchers.end() || !it->second.overflowed)
+            continue;
+        auto callback = it->second.overflowed;
+        callback();
     }
 }
 
@@ -184,8 +206,9 @@ FileWatch FileWatch::file(const std::string& path, std::function<void()> changed
     std::string directory = file.parent_path().string();
     if (directory.empty())
         directory = ".";
+    auto shared = std::make_shared<std::function<void()>>(std::move(changed));
     result.m_id = result.m_inotify->add(directory, file.filename().string(),
-                                        [changed = std::move(changed)](const std::string&) { changed(); });
+                                        [shared](const std::string&) { (*shared)(); }, [shared] { (*shared)(); });
     if (!result.m_id)
         result.m_inotify.reset();
     return result;
@@ -194,11 +217,17 @@ FileWatch FileWatch::file(const std::string& path, std::function<void()> changed
 FileWatch FileWatch::directory(const std::string& path, std::function<void(const std::string& name)> changed,
                                EventLoop* loop)
 {
+    return directory(path, std::move(changed), nullptr, loop);
+}
+
+FileWatch FileWatch::directory(const std::string& path, std::function<void(const std::string& name)> changed,
+                               std::function<void()> overflowed, EventLoop* loop)
+{
     FileWatch result;
     result.m_inotify = inotify(loop);
     if (!result.m_inotify)
         return {};
-    result.m_id = result.m_inotify->add(path, std::string(), std::move(changed));
+    result.m_id = result.m_inotify->add(path, std::string(), std::move(changed), std::move(overflowed));
     if (!result.m_id)
         result.m_inotify.reset();
     return result;

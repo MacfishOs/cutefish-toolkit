@@ -23,8 +23,7 @@ public:
     void setText(std::string text);
     const std::string& text() const;
 
-    // Per side, as the control's leftPadding, topPadding and so on; FishUI's
-    // unless set.
+    // Per side; the theme's unless set.
     void setPadding(Margins padding);
 
     bool isChecked() const { return m_checked; }

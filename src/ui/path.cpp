@@ -151,6 +151,39 @@ void Path::close()
     m_verbs.push_back(Verb::Close);
 }
 
+// Cubic segments of at most a quarter turn each, as the common path class
+// splits arcs.
+void Path::arcTo(const RectF& rect, double startAngle, double sweepLength)
+{
+    if (rect.width <= 0 || rect.height <= 0)
+        return;
+    const double rx = rect.width / 2;
+    const double ry = rect.height / 2;
+    const double cx = rect.x + rx;
+    const double cy = rect.y + ry;
+    const auto radians = [](double degrees) { return degrees * M_PI / 180; };
+    const auto point = [&](double a) { return PointF{cx + rx * std::cos(a), cy - ry * std::sin(a)}; };
+    const double start = radians(startAngle);
+    const PointF first = point(start);
+    if (m_verbs.empty() || m_verbs.back() == Verb::Close)
+        moveTo(first);
+    else if (!(m_points.back() == first))
+        lineTo(first);
+    const int segments = std::max(1, int(std::ceil(std::abs(sweepLength) / 90 - 1e-9)));
+    const double step = radians(sweepLength) / segments;
+    const double k = 4.0 / 3.0 * std::tan(step / 4);
+    for (int i = 0; i < segments; ++i) {
+        const double a0 = start + step * i;
+        const double a1 = a0 + step;
+        const PointF p0 = point(a0);
+        const PointF p1 = point(a1);
+        // Tangents of (cos a, sin a), mapped with y down.
+        const PointF c1 = {p0.x - k * rx * std::sin(a0), p0.y - k * ry * std::cos(a0)};
+        const PointF c2 = {p1.x + k * rx * std::sin(a1), p1.y + k * ry * std::cos(a1)};
+        cubicTo(c1, c2, p1);
+    }
+}
+
 void Path::clear()
 {
     m_verbs.clear();

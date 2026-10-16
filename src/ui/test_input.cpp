@@ -169,4 +169,14 @@ Rect TestInput::inkRect(View& view, double scale)
     return {left - margin, top - margin, right - left, bottom - top};
 }
 
+View* TestInput::toolTip(Window& window)
+{
+    return window.m_toolTip.get();
+}
+
+int TestInput::moveRequests(Window& window)
+{
+    return window.m_platform->moveRequests();
+}
+
 } // namespace cutefish::ui

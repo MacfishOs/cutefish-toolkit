@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,7 +23,7 @@ class Paragraph;
 
 namespace cutefish::ui {
 
-// A line of a paragraph where Qt's QTextLine puts it, in logical pixels from
+// A line of a paragraph as the text layout places it, in logical pixels from
 // the paragraph's top: the greatest ascent and descent of the fonts its
 // glyphs use, fallback fonts included, and as tall as both rounded up.
 struct TextLineBox
@@ -32,39 +33,61 @@ struct TextLineBox
     double ascent = 0;
 };
 
+// How glyph advances are taken: rounded to whole pixels when metrics are
+// hinted, and absolute letter spacing added to each glyph's (the last's too).
+// A bool converts, for no spacing.
+struct AdvanceRule
+{
+    AdvanceRule(bool rounds, double spacing = 0)
+        : round(rounds)
+        , letterSpacing(spacing)
+    {
+    }
+    bool round = false;
+    double letterSpacing = 0;
+};
+
 // The paragraph is laid out at the logical pixel size, in logical units.
 std::vector<TextLineBox> textLineBoxes(skia::textlayout::Paragraph* paragraph, const SkTypeface* typeface,
-                                       double pixelSize, double scale);
+                                       double pixelSize, double scale, bool hintedLayout);
 double textHeight(const std::vector<TextLineBox>& lines);
 
-// The widest line's advance as Qt sums it: each glyph's design advance
+// The widest line's advance: the sum of each glyph's design advance
 // truncated to 26.6 fixed point, kerning included, and rounded to whole
-// pixels when Qt hints (TextContext::roundsMetrics).
-double naturalWidth(skia::textlayout::Paragraph* paragraph, bool roundAdvances);
+// pixels when metrics are hinted (TextContext::roundsMetrics).
+double naturalWidth(skia::textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances);
+// Each line's advance, as naturalWidth measures it.
+std::vector<double> lineWidths(skia::textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances);
 
-// QTextOption's wrap modes.
-enum class QtWrap {
+// Wrap modes: none, at word boundaries, at any character, or at word
+// boundaries and at any character where a word does not fit.
+enum class LineWrap {
     None,
     Word,
     Anywhere,
     WordOrAnywhere,
 };
 
-// Where QTextLine::layout_helper starts each line of the text at the width,
-// on Qt's advances and break opportunities: UTF-8 offsets, the first 0. The
+// Where each line of the text starts at the width, on the truncated
+// advances and the line break opportunities: UTF-8 offsets, the first 0. The
 // paragraph holds the text laid out at an unbounded width.
-std::vector<size_t> qtLineStarts(skia::textlayout::Paragraph* unbounded, const std::string& text, double width,
-                                 QtWrap wrap, bool roundAdvances);
+std::vector<size_t> lineStarts(skia::textlayout::Paragraph* unbounded, const std::string& text, double width,
+                                 LineWrap wrap, const AdvanceRule& roundAdvances);
 
-// Draws the paragraph's glyphs on the boxes' baselines and at Qt's
+// Draws the paragraph's glyphs on the boxes' baselines and at the
 // truncated advances, offset in logical
 // pixels on a canvas that maps logical pixels to device ones. The colour
 // comes from the UTF-8 offset of each run.
 // Lines start at the left of a paragraph laid out left aligned; `align` 0,
-// 0.5 or 1 places each within the width as Qt aligns it.
+// 0.5 or 1 places each within the width by its advance, overhang left out.
+// Greyscale glyphs without `subpixel`, whatever fontconfig asks for.
 void paintTextLines(SkCanvas* canvas, skia::textlayout::Paragraph* paragraph, const std::vector<TextLineBox>& lines,
-                    PointF offset, double width, double align, bool roundAdvances,
-                    const std::function<SkColor(size_t utf8Offset)>& color);
+                    PointF offset, double width, double align, const AdvanceRule& roundAdvances,
+                    const std::function<SkColor(size_t utf8Offset)>& color, bool subpixel = true);
+
+// Paragraph::paint, its glyphs drawn as paintTextLines draws them on
+// translucent targets (per-channel coverage blended over the target).
+void paintParagraph(SkCanvas* canvas, skia::textlayout::Paragraph* paragraph, double x, double y);
 
 // Where a paragraph's text went, for carets, selections and hit tests:
 // every line's UTF-8 range and the x of each cluster as drawn.
@@ -90,10 +113,10 @@ struct TextGeometry
 
 // The paragraph's text is `text`, in UTF-8.
 TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const std::string& text, double width,
-                          double align, bool roundAdvances);
+                          double align, const AdvanceRule& roundAdvances);
 
-// QFontMetricsF::tightBoundingRect of the paragraph's first line, from the
-// origin of its baseline: whole-pixel glyph boxes at Qt's advances.
-RectF tightBoundingRect(skia::textlayout::Paragraph* paragraph, double pixelSize, double scale);
+// The ink bounds of the paragraph's first line, from the origin of its
+// baseline: whole-pixel glyph boxes at the truncated advances.
+RectF tightBoundingRect(skia::textlayout::Paragraph* paragraph, double pixelSize, double scale, bool hintedLayout);
 
 } // namespace cutefish::ui

@@ -19,6 +19,9 @@ Timer::~Timer()
 
 void Timer::start()
 {
+    // A running timer moves its deadline, mostly without a system call.
+    if (m_id && m_loop.restartTimer(m_id, m_interval))
+        return;
     stop();
     // Always repeating underneath: the single-shot flag is read at each
     // expiry, so it may change while the timer runs.

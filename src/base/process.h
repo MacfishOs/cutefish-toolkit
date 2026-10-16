@@ -14,23 +14,32 @@ namespace cutefish::base {
 
 class EventLoop;
 
-// A program run in the background, as QProcess runs one: its output is
-// collected and its end reported on the loop. The program is looked up on
-// PATH; its environment is this process's unless setEnvironment() says
-// otherwise.
+// A program run in the background: its output is collected and its end reported
+// on the loop. The program is looked up on PATH; its environment is this
+// process's unless setEnvironment() says otherwise.
 class Process
 {
 public:
     explicit Process(EventLoop* loop = nullptr);
-    // Kills a program still running and waits for it, as QProcess does.
+    // Kills a program still running and waits for it.
     ~Process();
 
     Process(const Process&) = delete;
     Process& operator=(const Process&) = delete;
 
     void setWorkingDirectory(std::string directory);
-    // Written to the program's input, which is closed after it.
+    // Written to the program's input, which is closed after it unless
+    // setStandardInputOpen(true).
     void setStandardInput(std::string data);
+    // Before start(): the input stays open after the initial data, for
+    // writeStandardInput() and closeStandardInput().
+    void setStandardInputOpen(bool open);
+    // Queued and written on the loop without blocking; false when the input
+    // is closed or the program is not running. A program that stopped
+    // reading loses what is left, and raises no SIGPIPE here.
+    bool writeStandardInput(std::string_view data);
+    // Closes the input once what is queued has been written.
+    void closeStandardInput();
     // `NAME=value` entries for the program; empty keeps this process's.
     void setEnvironment(std::vector<std::string> environment);
     // The program's output and errors go to this process's own instead of
@@ -66,15 +75,15 @@ public:
     // The exit code, or the signal that ended the program with crashed set.
     std::function<void(int exitCode, bool crashed)> onFinished;
 
-    // Runs a program on its own, in a session of its own, as
-    // QProcess::startDetached; its end is collected in the background. The
-    // program's id, or -1.
+    // Runs a program on its own, in a session of its own; its end is collected
+    // in the background. The program's id, or -1.
     static pid_t startDetached(const std::string& program, const std::vector<std::string>& arguments = {},
                                const std::string& workingDirectory = {});
 
 private:
     void readAvailable(int fd, std::string& into, const std::function<void(std::string_view)>& callback);
     void writeInput();
+    void watchInput();
     void finish();
     void closeWatches();
 
@@ -83,6 +92,7 @@ private:
     std::string m_input;
     std::vector<std::string> m_environment;
     bool m_outputForwarded = false;
+    bool m_inputOpen = false;
     int m_inheritedFd = -1;
     size_t m_inputWritten = 0;
     pid_t m_pid = -1;

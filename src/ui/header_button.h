@@ -4,13 +4,14 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "ui/view.h"
 
 namespace cutefish::ui {
 
-// FishUI's title bar button: window button artwork on a round plate that
+// A title bar button: window button artwork on a round plate that
 // shows on hover, dimmed while the window is inactive.
 class HeaderButton : public View
 {
@@ -20,7 +21,7 @@ public:
 
     void setArtwork(std::string artwork);
     const std::string& artwork() const { return m_artwork; }
-    // One of FishUI's glyphs instead of window artwork, such as "chevron-left".
+    // One of the toolkit's glyphs instead of window artwork, such as "chevron-left".
     void setGlyph(std::string name, double size = 16);
     // The pressed plate while set, as while the button's menu is open.
     void setChecked(bool checked);
@@ -34,8 +35,11 @@ public:
         double hovered;
         double pressed;
     };
-    // FishUI's 0.11/0.21 in light and 0.12/0.06 in dark unless set.
+    // 0.11/0.21 in light and 0.12/0.06 in dark unless set.
     void setPlateAlphas(PlateAlphas light, PlateAlphas dark);
+    // The glyph or artwork in this colour instead of the header mode's tint;
+    // the plates keep the tint.
+    void setGlyphColor(std::optional<Color> color);
 
     SizeF sizeHint() const override { return {m_size, m_size}; }
     bool acceptsPointer() const override { return true; }
@@ -60,6 +64,7 @@ private:
     bool m_pressed = false;
     bool m_checked = false;
     bool m_highlighted = false;
+    std::optional<Color> m_glyphColor;
     PlateAlphas m_light = {0.11, 0.21};
     PlateAlphas m_dark = {0.12, 0.06};
 };

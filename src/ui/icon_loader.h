@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <list>
 #include <memory>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,17 +26,22 @@ public:
     static IconLoader& instance();
 
     // One of the toolkit's single-colour glyphs, in the colour, at a device
-    // size; the scale tells its logical size, which picks FishUI's heavier
+    // size; the scale tells its logical size, which picks the heavier
     // -small chevrons at 12 and below.
     sk_sp<SkImage> glyph(const std::string& name, int size, Color color, double scale = 1);
-    // An icon of the theme, its parents or hicolor, as QIcon::fromTheme
-    // gives it to an item of the logical size at the scale: the file Qt
-    // picks, at the device size, a smaller picture stretched as an item
-    // stretches it; null when none has it.
+    // An icon of the theme, its parents or hicolor, for an item of the
+    // logical size at the scale: the file the lookup picks, at the device
+    // size, a smaller picture stretched as an item stretches it; null when
+    // none has it.
     sk_sp<SkImage> themeIcon(const std::string& name, int size, double scale);
+    // themeIcon(name, size, scale) for each name ahead of time: the lookup
+    // here, the rasterising on the global pool, the images stored on this
+    // thread, then done.
+    void preloadThemeIcons(const std::vector<std::string>& names, int size, double scale,
+                           std::function<void()> done);
     // The theme searched at size and the integer scale, rasterised at pixels.
     sk_sp<SkImage> themeIcon(const std::string& name, int size, int iconScale, int pixels);
-    // What QIcon::fromTheme(name), or QIcon(path) for an absolute path, gives
+    // The theme's icon for a name, or the file at an absolute path,
     // as a pixmap `pixels` square at a device pixel ratio of 1: drawings at
     // that size, larger pictures scaled down, smaller ones as they are; null
     // when nothing is found.
@@ -64,8 +70,8 @@ private:
         bool generic = true;
     };
 
-    // A theme base's icon-theme.cache, as QIconCacheGtkReader reads it: the
-    // directories holding a name, in the cache's order.
+    // A theme base's GTK icon-theme.cache: the directories holding a name, in
+    // the cache's order.
     class GtkCache
     {
     public:
@@ -93,7 +99,8 @@ private:
 
     IconTheme& theme(const std::string& name);
     std::string lookup(const std::string& name, const std::string& requested, int size, int scale);
-    sk_sp<SkImage> rasterise(const std::string& path, int size, const Color* tint);
+    // Touches nothing of the loader: any thread.
+    static sk_sp<SkImage> rasterise(const std::string& path, int size, const Color* tint);
     std::unordered_map<std::string, std::string> m_glyphs;
     sk_sp<SkImage> cached(const std::string& key);
     void store(const std::string& key, sk_sp<SkImage> image);

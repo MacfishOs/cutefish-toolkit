@@ -5,6 +5,7 @@
 #include "ui/line_break_unicode.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 
 #include <unicode/uchar.h>
@@ -17,16 +18,46 @@ namespace cutefish::ui {
 
 namespace {
 
-// QUnicodeTables::LineBreakClass, in its order: the pair table's classes
-// first, then those resolved outside it.
+// Line break classes: the pair table's classes first, then those resolved
+// outside it.
 enum Class : uint8_t {
     OP, CL, CPc, QU, QU_Pi, QU_Pf, GL, NS, EX, SY, IS, PR, PO, NU, AL, HL, ID, IN, HY, BA, BB, B2, ZW, CM, WJ,
     H2, H3, JL, JV, JT, RI, CB, EB, EM, ZWJ, SA, SG, SP, CR, LF, BK,
 };
 
-// Qt's unicode generator maps ICU's (UAX #14's) classes so: NL to BK, CJ to
-// NS, AI, XX and the Aksara classes to AL, VI and VF to CM.
-Class classOf(UChar32 c)
+struct Properties
+{
+    Class cls;
+    int8_t category;
+    int8_t eastAsianWidth;
+    bool pictographic;
+};
+
+// LB25: no break inside (PR|PO)?(OP|HY)?NU(NU|SY|IS)*(CL|CP)?(PR|PO)?.
+namespace Number {
+
+enum Action { None, Start, Continue, Break };
+enum Kind { XX, PRPO, OPHY, NU, SYIS, CLCP };
+
+} // namespace Number
+
+// The pair table, after UAX #14 revision 37, with LB25 and LB21a
+// tailored.
+enum Action : uint8_t {
+    PB, // prohibited
+    DB, // direct
+    IB, // indirect, after spaces only
+    CI, // combining indirect
+    CP, // combining prohibited
+    HH, // prohibited after Hebrew and a hyphen
+    IN_, // indirect unless the next is wide (LB30)
+};
+
+} // namespace
+
+// ICU's (UAX #14's) classes resolved so: NL to BK, CJ to NS, AI, XX and the
+// Aksara classes to AL, VI and VF to CM.
+static Class classOf(UChar32 c)
 {
     switch (u_getIntPropertyValue(c, UCHAR_LINE_BREAK)) {
     case U_LB_OPEN_PUNCTUATION: return OP;
@@ -77,67 +108,52 @@ Class classOf(UChar32 c)
     }
 }
 
-struct Properties
-{
-    Class cls;
-    int8_t category;
-    int8_t eastAsianWidth;
-    bool pictographic;
-};
-
-Properties propertiesOf(UChar32 c)
+static Properties lookUpProperties(UChar32 c)
 {
     return {classOf(c), int8_t(u_charType(c)), int8_t(u_getIntPropertyValue(c, UCHAR_EAST_ASIAN_WIDTH)),
             bool(u_hasBinaryProperty(c, UCHAR_EXTENDED_PICTOGRAPHIC))};
 }
 
-// LB25: no break inside (PR|PO)?(OP|HY)?NU(NU|SY|IS)*(CL|CP)?(PR|PO)?.
-namespace Number {
+static Properties propertiesOf(UChar32 c)
+{
+    // ASCII from a table: four ICU lookups a character add up in long lines.
+    static const std::array<Properties, 128> ascii = [] {
+        std::array<Properties, 128> table;
+        for (UChar32 k = 0; k < 128; ++k)
+            table[size_t(k)] = lookUpProperties(k);
+        return table;
+    }();
+    return c >= 0 && c < 128 ? ascii[size_t(c)] : lookUpProperties(c);
+}
 
-enum Action { None, Start, Continue, Break };
-enum Kind { XX, PRPO, OPHY, NU, SYIS, CLCP };
-
-const uint8_t actionTable[CLCP + 1][CLCP + 1] = {
-//     XX       PRPO      OPHY       NU       SYIS      CLCP
-    { None    , Start   , Start   , Start   , None    , None     }, // XX
-    { None    , Start   , Continue, Continue, None    , None     }, // PRPO
-    { None    , Start   , Start   , Continue, None    , None     }, // OPHY
-    { Break   , Break   , Break   , Continue, Continue, Continue }, // NU
-    { Break   , Break   , Break   , Continue, Continue, Continue }, // SYIS
-    { Break   , Continue, Break   , Break   , Break   , Break    }, // CLCP
+// LB25's actions, by the number kinds before and after.
+static const uint8_t numberActionTable[Number::CLCP + 1][Number::CLCP + 1] = {
+//    XX                PRPO              OPHY              NU                SYIS              CLCP
+    { Number::None    , Number::Start   , Number::Start   , Number::Start   , Number::None    , Number::None     }, // XX
+    { Number::None    , Number::Start   , Number::Continue, Number::Continue, Number::None    , Number::None     }, // PRPO
+    { Number::None    , Number::Start   , Number::Start   , Number::Continue, Number::None    , Number::None     }, // OPHY
+    { Number::Break   , Number::Break   , Number::Break   , Number::Continue, Number::Continue, Number::Continue }, // NU
+    { Number::Break   , Number::Break   , Number::Break   , Number::Continue, Number::Continue, Number::Continue }, // SYIS
+    { Number::Break   , Number::Continue, Number::Break   , Number::Break   , Number::Break   , Number::Break    }, // CLCP
 };
 
-Kind kindOf(Class cls, int8_t category)
+static Number::Kind numberKindOf(Class cls, int8_t category)
 {
     switch (cls) {
     case AL:
         // AI math symbols in a number are IS.
-        return category == U_MATH_SYMBOL ? SYIS : XX;
-    case PR: case PO: return PRPO;
-    case OP: case HY: return OPHY;
-    case ::cutefish::ui::NU: return NU;
-    case SY: case IS: return SYIS;
-    case CL: case CPc: return CLCP;
-    default: return XX;
+        return category == U_MATH_SYMBOL ? Number::SYIS : Number::XX;
+    case PR: case PO: return Number::PRPO;
+    case OP: case HY: return Number::OPHY;
+    case NU: return Number::NU;
+    case SY: case IS: return Number::SYIS;
+    case CL: case CPc: return Number::CLCP;
+    default: return Number::XX;
     }
 }
 
-} // namespace Number
-
-// Qt 6.8's pair table, after UAX #14 revision 37, with its tailoring of
-// LB25 and LB21a; see qunicodetools.cpp.
-enum Action : uint8_t {
-    PB, // prohibited
-    DB, // direct
-    IB, // indirect, after spaces only
-    CI, // combining indirect
-    CP, // combining prohibited
-    HH, // prohibited after Hebrew and a hyphen
-    IN_, // indirect unless the next is wide (LB30)
-};
-
 /* 1↓ 2→   OP  CL  CP  QU  +Pi +Pf GL  NS  EX  SY  IS  PR  PO  NU  AL  HL  ID  IN  HY  BA  BB  B2  ZW  CM  WJ  H2  H3  JL  JV  JT  RI  CB  EB  EM*/
-const uint8_t breakTable[ZWJ][ZWJ] = {
+static const uint8_t breakTable[ZWJ][ZWJ] = {
     /* OP */ { PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB, CP, PB, PB, PB, PB, PB, PB, PB, PB, PB, PB },
     /* CL */ { DB, PB, PB, IB, IB, PB, IB, PB, PB, PB, PB, DB, DB, DB, DB, DB, DB, IB, IB, IB, DB, DB, PB, CI, PB, DB, DB, DB, DB, DB, DB, DB, DB, DB },
     /* CP */ { DB, PB, PB, IB, IB, PB, IB, PB, PB, PB, PB, DB, DB, IB, IB, IB, DB, IB, IB, IB, DB, DB, PB, CI, PB, DB, DB, DB, DB, DB, DB, DB, DB, DB },
@@ -174,7 +190,6 @@ const uint8_t breakTable[ZWJ][ZWJ] = {
     /* EM */ { DB, PB, PB, IB, IB, PB, IB, IB, PB, PB, PB, DB, IB, DB, DB, DB, DB, IB, IB, IB, DB, DB, PB, CI, PB, DB, DB, DB, DB, DB, DB, DB, DB, DB },
 };
 
-} // namespace
 
 static std::vector<uint8_t> lineBreakAttributes(std::u16string_view text)
 {
@@ -202,8 +217,7 @@ static std::vector<uint8_t> lineBreakAttributes(std::u16string_view text)
             return properties.category == U_NON_SPACING_MARK || properties.category == U_COMBINING_SPACING_MARK;
         };
 
-        // HangulLineBreakTailoring, which QTextEngine always asks for: Korean
-        // breaks at spaces (LB27).
+        // Hangul tailoring, always on: Korean breaks at spaces (LB27).
         if ((ncls >= H2 && ncls <= JT) || (c >= 0x3130 && c <= 0x318F && ncls == ID)) {
             ncls = AL;
         } else {
@@ -256,8 +270,8 @@ static std::vector<uint8_t> lineBreakAttributes(std::u16string_view text)
             // LB8a
         } else {
             // LB25
-            const Number::Kind current = Number::kindOf(ncls, properties.category);
-            switch (Number::actionTable[numberLast][current]) {
+            const Number::Kind current = numberKindOf(ncls, properties.category);
+            switch (numberActionTable[numberLast][current]) {
             case Number::Break:
                 for (size_t j = numberStart + 1; j < pos; ++j)
                     breaks[j] = 0;
@@ -323,7 +337,7 @@ static std::vector<uint8_t> lineBreakAttributes(std::u16string_view text)
         lcls = ncls;
     }
 
-    if (Number::actionTable[numberLast][Number::XX] == Number::Break) {
+    if (numberActionTable[numberLast][Number::XX] == Number::Break) {
         for (size_t j = numberStart + 1; j < length; ++j)
             breaks[j] = 0;
     }
@@ -332,17 +346,19 @@ static std::vector<uint8_t> lineBreakAttributes(std::u16string_view text)
     return breaks;
 }
 
-// QChar::isSpace, not QChar::NoBreak: the white space QTextLine wraps at.
+// White space but no-break space: the white space a line wraps at.
 static bool isBreakableSpace(char16_t c)
 {
+    if (c < 0x80)
+        return c == 0x20 || (c >= 0x09 && c <= 0x0d);
     const bool space = c == 0x20 || (c >= 0x09 && c <= 0x0d) || c == 0x85 || u_charType(c) == U_SPACE_SEPARATOR
             || u_charType(c) == U_LINE_SEPARATOR || u_charType(c) == U_PARAGRAPH_SEPARATOR;
     return space && u_getIntPropertyValue(c, UCHAR_DECOMPOSITION_TYPE) != U_DT_NOBREAK;
 }
 
-QtCharAttributes qtCharAttributes(std::u16string_view text)
+BreakAttributes breakAttributes(std::u16string_view text)
 {
-    QtCharAttributes attributes;
+    BreakAttributes attributes;
     attributes.lineBreak = lineBreakAttributes(text);
     attributes.breakableSpace.resize(text.size() + 1, 0);
     for (size_t i = 0; i < text.size(); ++i)
@@ -350,12 +366,11 @@ QtCharAttributes qtCharAttributes(std::u16string_view text)
     return attributes;
 }
 
-std::vector<uint8_t> qtLineBreaks(std::u16string_view text)
+std::vector<uint8_t> lineBreaks(std::u16string_view text)
 {
-    QtCharAttributes attributes = qtCharAttributes(text);
-    // QTextLine::layout_helper also ends a line after any white space but a
-    // no-break one, whatever UAX #14 says: "a WireGuard .conf" may break
-    // before ".conf".
+    BreakAttributes attributes = breakAttributes(text);
+    // A line also ends after any white space but a no-break one, whatever
+    // UAX #14 says: "a WireGuard .conf" may break before ".conf".
     for (size_t i = 1; i < text.size(); ++i) {
         if (attributes.breakableSpace[i - 1] && !attributes.breakableSpace[i])
             attributes.lineBreak[i] = 1;
@@ -365,10 +380,10 @@ std::vector<uint8_t> qtLineBreaks(std::u16string_view text)
 
 namespace {
 
-class QtLineBreakUnicode : public SkUnicode
+class LineBreakUnicode : public SkUnicode
 {
 public:
-    explicit QtLineBreakUnicode(sk_sp<SkUnicode> icu)
+    explicit LineBreakUnicode(sk_sp<SkUnicode> icu)
         : m_icu(std::move(icu))
     {
     }
@@ -447,7 +462,7 @@ public:
             }
         }
         offsets.push_back(utf8Units);
-        applyBreaks(qtLineBreaks(utf16), offsets, results);
+        applyBreaks(lineBreaks(utf16), offsets, results);
         return true;
     }
 
@@ -459,7 +474,7 @@ public:
         std::vector<int> offsets(size_t(utf16Units) + 1);
         for (int i = 0; i <= utf16Units; ++i)
             offsets[size_t(i)] = i;
-        applyBreaks(qtLineBreaks(std::u16string_view(utf16, size_t(utf16Units))), offsets, results);
+        applyBreaks(lineBreaks(std::u16string_view(utf16, size_t(utf16Units))), offsets, results);
         return true;
     }
 
@@ -469,7 +484,7 @@ public:
     }
 
 private:
-    // Soft breaks inside the text where Qt's are; the ends and the hard
+    // Soft breaks inside the text from the pair table; the ends and the hard
     // breaks stay ICU's.
     static void applyBreaks(const std::vector<uint8_t>& breaks, const std::vector<int>& offsets,
                             skia_private::TArray<SkUnicode::CodeUnitFlags, true>* results)
@@ -492,9 +507,9 @@ private:
 
 } // namespace
 
-sk_sp<SkUnicode> makeQtLineBreakUnicode(sk_sp<SkUnicode> icu)
+sk_sp<SkUnicode> makeLineBreakUnicode(sk_sp<SkUnicode> icu)
 {
-    return sk_make_sp<QtLineBreakUnicode>(std::move(icu));
+    return sk_make_sp<LineBreakUnicode>(std::move(icu));
 }
 
 } // namespace cutefish::ui

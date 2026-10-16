@@ -31,12 +31,12 @@ namespace textlayout = skia::textlayout;
 namespace cutefish::ui {
 
 static constexpr double kMinimumWidth = 200;
-// FishUI's: a medium icon and half the small spacing.
+// A medium icon and half the small spacing.
 static constexpr double kHeight = 35;
-// FishUI's focus ring, outside the field.
+// The focus ring, outside the field.
 static constexpr double kFocusRing = 2;
-// QQuickTextInput blinks on a coarse timer of half the cursor flash time,
-// which fires up to 5% early: 475 ms for Qt's 1000.
+// The caret blinks on a coarse timer of half the cursor flash time, which
+// fires up to 5% early: 475 ms for 1000.
 static constexpr int kCursorFlashTime = 1000;
 // Wide enough that a single line never wraps.
 static constexpr double kUnboundedWidth = 1e6;
@@ -107,8 +107,11 @@ struct TextField::Private
     double pixelSize() const { return TextContext::pixelSize(fontSize > 0 ? fontSize : Theme::current().fontSize()); }
     std::string preedit;
     int preeditCursor = -1;
+    // Set by the field's owner, for the input method.
+    TextPurpose purpose = TextPurpose::Normal;
+    uint32_t hints = NoTextHint;
 
-    // Laid out in logical pixels, as Qt Quick's TextInput lays out.
+    // Laid out in logical pixels.
     std::unique_ptr<textlayout::Paragraph> paragraph;
     std::string display;
     bool paragraphEnabled = true;
@@ -450,6 +453,18 @@ void TextField::setEchoMode(EchoMode mode)
     requestPaint();
 }
 
+void TextField::setInputPurpose(TextPurpose purpose)
+{
+    d->purpose = purpose;
+    updateTextInput();
+}
+
+void TextField::setInputHints(uint32_t hints)
+{
+    d->hints = hints;
+    updateTextInput();
+}
+
 TextField::EchoMode TextField::echoMode() const
 {
     return d->echo;
@@ -538,7 +553,7 @@ void TextField::paste()
 
 void TextField::undo()
 {
-    // Earlier passwords stay out of reach, as QLineControl keeps them.
+    // Earlier passwords stay out of reach of undo.
     if (d->readOnly || d->echo == EchoMode::Password || !d->edit.canUndo())
         return;
     d->edit.undo();
@@ -576,7 +591,7 @@ void TextField::paint(Painter& painter)
     const RectF bounds = localRect();
     const bool focused = hasFocus();
 
-    // FishUI's TextField background, its focus ring concentric through the inset.
+    // The background, its focus ring concentric through the inset.
     if (d->frameVisible) {
         painter.drawRoundedRect(bounds, {theme.smallRadius, 0, themeCorners()}, theme.alternateBackground, 1,
                                 focused ? theme.highlight : theme.alternateBackground);
@@ -603,10 +618,12 @@ void TextField::paint(Painter& painter)
         d->scrollX = caret;
     d->scrollX = std::max(0.0, std::min(d->scrollX, textWidth + caretWidth - width));
 
-    // Qt Quick's TextInput: one line box, centred in the field, unsnapped.
+    // One line box, centred in the field, unsnapped.
     const TextContext& context = Application::instance()->text();
     const double pixelSize = d->pixelSize();
-    const TextLineBox line = textLineBoxes(text, context.typeface(400, d->family).get(), pixelSize, scale).front();
+    const bool hinted = textLayoutMode().hinted;
+    const TextLineBox line =
+        textLineBoxes(text, context.typeface(400, d->family).get(), pixelSize, scale, hinted).front();
     const double originX = content.x - d->scrollX;
     const double lineTop = (bounds.height - line.height) / 2;
     const PointF offset = painter.offset();
@@ -626,7 +643,8 @@ void TextField::paint(Painter& painter)
                                              SkScalar(area.height));
         canvas->saveLayerAlphaf(&rect, float(painter.opacity()));
     }
-    if (focused && d->preedit.empty() && d->edit.hasSelection()) {
+    // A selection shows with or without the focus.
+    if (d->preedit.empty() && d->edit.hasSelection()) {
         SkPaint selection;
         selection.setColor(d->selectionColor.value_or(theme.highlight).argb());
         const size_t start = utf16Index(d->display, d->toDisplay(d->edit.selectionStart()));
@@ -641,17 +659,16 @@ void TextField::paint(Painter& painter)
     }
 
     // The paragraphs draw in logical pixels from the field's origin; their
-    // first baseline goes on Qt's.
+    // first baseline goes on the line box's.
     canvas->save();
     canvas->translate(SkScalar(offset.x * scale), SkScalar(offset.y * scale));
     canvas->scale(SkScalar(scale), SkScalar(scale));
     if (d->display.empty() && !d->placeholder.empty()) {
         textlayout::Paragraph* placeholder = d->placeholderLayout();
         placeholder->layout(SkScalar(width));
-        placeholder->paint(canvas, SkScalar(content.x),
-                           SkScalar(lineTop + line.ascent - placeholder->getAlphabeticBaseline()));
+        paintParagraph(canvas, placeholder, content.x, lineTop + line.ascent - placeholder->getAlphabeticBaseline());
     }
-    text->paint(canvas, SkScalar(originX), SkScalar(lineTop + line.ascent - text->getAlphabeticBaseline()));
+    paintParagraph(canvas, text, originX, lineTop + line.ascent - text->getAlphabeticBaseline());
     canvas->restore();
 
     const Window* window = this->window();
@@ -671,15 +688,14 @@ void TextField::paint(Painter& painter)
 
 void TextField::enabledChanged()
 {
-    // FishUI's TextField: half opaque, its text in the disabled colour.
+    // Disabled: half opaque, its text in the disabled colour.
     setOpacity(isEnabled() || !d->fadesWhenDisabled ? 1 : 0.5);
 }
 
 void TextField::pointerPress(const PointerEvent& event)
 {
     if (event.button == MouseButton::Right) {
-        // An embedded window shows no popups.
-        if (d->contextMenuEnabled && Application::instance()->platform() != Application::Platform::Embedded)
+        if (d->contextMenuEnabled)
             showContextMenu(event.position);
         return;
     }
@@ -731,9 +747,29 @@ void TextField::pointerMove(const PointerEvent& event)
     moved();
 }
 
-void TextField::pointerRelease(const PointerEvent&)
+void TextField::pointerRelease(const PointerEvent& event)
 {
+    const bool selected = d->selecting;
     d->selecting = false;
+    if (!d->clipboardEnabled)
+        return;
+    // A mouse selection goes to the primary selection, and a
+    // middle click pastes it at the cursor.
+    if (event.button == MouseButton::Left && selected) {
+        if (d->echo != EchoMode::Password && d->edit.hasSelection())
+            Clipboard::setText(d->edit.selectedText(), ClipboardMode::Selection);
+    } else if (event.button == MouseButton::Middle && !d->readOnly) {
+        Clipboard::requestText([self = std::weak_ptr<TextField*>(d->self)](std::string text) {
+            const auto field = self.lock();
+            if (!field || text.empty())
+                return;
+            std::replace(text.begin(), text.end(), '\n', ' ');
+            std::erase(text, '\r');
+            (*field)->d->edit.setCursor((*field)->d->edit.cursor());
+            (*field)->d->edit.insert(text);
+            (*field)->edited();
+        }, ClipboardMode::Selection);
+    }
 }
 
 void TextField::focusIn(FocusReason)
@@ -877,17 +913,20 @@ TextInputState TextField::textInputState() const
     state.cursor = d->edit.cursor() - start;
     state.anchor = d->edit.anchor() - start;
 
-    const double scale = window() ? window()->scale() : 1.0;
+    const TextLayoutMode mode = textLayoutMode();
+    const double scale = mode.scale;
     const double padding = d->left();
     // The state follows an edit before it is painted; lay the new text out first.
     textlayout::Paragraph* paragraph = d->layout(isEnabled());
     const double x = padding + d->caretX(d->caretDisplayOffset()) - d->scrollX;
     const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(400, d->family).get(),
-                                        d->pixelSize(), scale)
+                                        d->pixelSize(), scale, mode.hinted)
                               .front()
                               .height;
     const PointF topLeft = mapToWindow({x, (geometry().height - height) / 2});
     state.cursorRectangle = {topLeft.x, topLeft.y, 1, height};
+    state.purpose = d->purpose;
+    state.hints = d->hints;
     return state;
 }
 
@@ -909,7 +948,7 @@ void TextField::textInput(const TextInputEvent& event)
 
 void TextField::showContextMenu(PointF position)
 {
-    // FishUI's text menu, without the rows a read-only field has no use for.
+    // The text menu, without the rows a read-only field has no use for.
     const bool editable = !d->readOnly;
     const bool clipboard = d->echo == EchoMode::Normal;
     const bool selection = d->edit.hasSelection();
@@ -953,7 +992,7 @@ static size_t utf16Length(const std::string& text)
 bool TextField::edited()
 {
     EditableText& edit = d->edit;
-    // TextInput.maximumLength: what was inserted is cut back to fit.
+    // The maximum length: what was inserted is cut back to fit.
     while (d->maximumLength && utf16Length(edit.text()) > d->maximumLength && edit.cursor() > 0) {
         const size_t cursor = edit.cursor();
         edit.erase(edit.previousGrapheme(cursor), cursor);

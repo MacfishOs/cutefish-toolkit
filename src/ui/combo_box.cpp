@@ -15,12 +15,12 @@
 
 namespace cutefish::ui {
 
-// FishUI's: three medium icons and a large spacing wide, as tall as a text field.
+// Three medium icons and a large spacing wide, as tall as a text field.
 static constexpr double kMinimumWidth = 3 * 32 + 12;
 static constexpr double kHeight = 35;
 static constexpr double kChevron = 16;
 static constexpr double kIcon = 22;
-// FishUI.Units.smallSpacing / 2 between the box and its list.
+// Half the small spacing between the box and its list.
 static constexpr double kMenuGap = 3;
 
 ComboBox::ComboBox(std::vector<std::string> items)
@@ -85,6 +85,7 @@ SizeF ComboBox::sizeHint() const
     double widest = 0;
     for (const std::string& item : m_items) {
         Label measure(item);
+        measure.setTextLayoutMode(textLayoutMode());
         widest = std::max(widest, measure.sizeHint().width);
     }
     const double padding = theme.largeSpacing;
@@ -98,13 +99,13 @@ void ComboBox::layout()
     const double padding = theme.largeSpacing;
     const RectF bounds = localRect();
     m_chevron->setGeometry({bounds.width - padding - kChevron, 0, kChevron, bounds.height});
-    // The current item's icon, as the box's IconItem beside the text.
+    // The current item's icon, beside the text.
     const double iconSpace = m_icon->isVisible() ? kIcon + theme.mediumSpacing : 0;
     m_icon->setGeometry({padding, (bounds.height - kIcon) / 2, kIcon, kIcon});
     m_label->setGeometry({padding + iconSpace, 0,
                           std::max(0.0, bounds.width - 2 * padding - kChevron - theme.mediumSpacing - iconSpace),
                           bounds.height});
-    // FishUI's ComboBox greys its text and arrow when disabled; the label
+    // A disabled combo box greys its text and arrow; the label
     // fades on its own, the arrow as far.
     const bool enabled = isEnabled();
     m_label->setColor(enabled ? theme.text : theme.disabledText);
@@ -193,7 +194,7 @@ bool ComboBox::keyPress(const KeyEvent& event)
     if (event.modifiers != NoModifier)
         return false;
     switch (event.key) {
-    // FishUI's ComboBox opens its menu on these rather than stepping the current item.
+    // These open the menu rather than stepping the current item.
     case key::Up:
     case key::Down:
     case key::F4:

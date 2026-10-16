@@ -55,7 +55,7 @@ static const Database& database()
 {
     static const Database database = [] {
         Database result;
-        // The user's types first, as QMimeDatabase's providers are ordered.
+        // The user's types first, so they override the system's.
         std::vector<std::string> directories = {paths::dataHome() + "/mime"};
         for (const std::string& directory : paths::dataDirectories())
             directories.push_back(directory + "/mime");
@@ -102,14 +102,15 @@ std::vector<std::string> aliases(std::string_view name)
 
 std::vector<std::string> parents(std::string_view name)
 {
-    // An unknown name still gets Qt's fallback, as an invalid QMimeType does.
+    // An unknown name still gets the fallback parent below.
     const std::string known = canonicalName(name);
     const std::string type = known.empty() ? std::string(name) : known;
     const Database& db = database();
     const auto it = db.parents.find(type);
     if (it != db.parents.end() && !it->second.empty())
         return it->second;
-    // Qt's fallbackParent().
+    // Text types without a parent are text/plain's, other file types
+    // application/octet-stream's.
     const std::string group = type.substr(0, type.find('/'));
     if (group == "text" && type != "text/plain")
         return {"text/plain"};

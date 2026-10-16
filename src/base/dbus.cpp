@@ -8,11 +8,14 @@
 #include <cstring>
 #include <fcntl.h>
 #include <map>
+#include <memory>
+#include <optional>
 #include <poll.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
+#include <utility>
 
 #include "base/event_loop.h"
 
@@ -702,7 +705,23 @@ NameWatch Connection::watchName(const std::string& name,
 
 bool Connection::requestName(const std::string& name) const
 {
-    return sd_bus_request_name(m_bus, name.c_str(), 0) >= 0;
+    // -EALREADY: this connection owns it already, which is what was asked.
+    const int r = sd_bus_request_name(m_bus, name.c_str(), 0);
+    return r >= 0 || r == -EALREADY;
+}
+
+bool Connection::requestName(const std::string& name, uint32_t flags) const
+{
+    uint64_t sdFlags = 0;
+    if (flags & AllowReplacement)
+        sdFlags |= SD_BUS_NAME_ALLOW_REPLACEMENT;
+    if (flags & ReplaceExisting)
+        sdFlags |= SD_BUS_NAME_REPLACE_EXISTING;
+    if (!(flags & DoNotQueue))
+        sdFlags |= SD_BUS_NAME_QUEUE;
+    // Positive for the primary owner, 0 when queued, -EALREADY when it was.
+    const int r = sd_bus_request_name(m_bus, name.c_str(), sdFlags);
+    return r > 0 || r == -EALREADY;
 }
 
 void Connection::releaseName(const std::string& name) const
@@ -770,6 +789,54 @@ PendingCall Proxy::setPropertyAsync(const std::string& name, const Variant& valu
     return properties().callAsync("Set", std::move(done), m_interface, name, value);
 }
 
+// Passes on only what the current owner of a well-known name sends: the bus
+// delivers a signal once per connection, and sd-bus then runs every local
+// match on its path and interface, whatever their sender.
+static std::function<void(const Message&)> fromOwner(const Connection& connection, const std::string& service,
+                                                     std::function<void(const Message&)> callback)
+{
+    if (service.empty() || service.front() == ':' || service == "org.freedesktop.DBus")
+        return callback;
+    struct State
+    {
+        std::function<void(const Message&)> callback;
+        std::optional<std::string> owner;
+        // Until the owner is known.
+        std::vector<Message> held;
+        NameWatch watch;
+    };
+    auto state = std::make_shared<State>();
+    state->callback = std::move(callback);
+    state->watch = connection.watchName(service, [weak = std::weak_ptr<State>(state)](const std::string& owner) {
+        const std::shared_ptr<State> state = weak.lock();
+        if (!state)
+            return;
+        const bool first = !state->owner;
+        state->owner = owner;
+        if (!first)
+            return;
+        const std::vector<Message> held = std::exchange(state->held, {});
+        for (const Message& message : held) {
+            if (!owner.empty() && message.sender() == owner && state->callback) {
+                // The callback may end the subscription.
+                auto callback = state->callback;
+                callback(message);
+            }
+        }
+    });
+    return [state](const Message& message) {
+        const std::shared_ptr<State> keep = state;
+        if (!keep->owner) {
+            keep->held.push_back(message);
+            return;
+        }
+        if (!keep->owner->empty() && message.sender() == *keep->owner) {
+            auto callback = keep->callback;
+            callback(message);
+        }
+    };
+}
+
 Match Proxy::onSignal(const std::string& member, std::function<void(const Message&)> callback) const
 {
     if (!m_connection)
@@ -779,7 +846,7 @@ Match Proxy::onSignal(const std::string& member, std::function<void(const Messag
     rule.path = m_path;
     rule.interface = m_interface;
     rule.member = member;
-    return m_connection->subscribe(rule, std::move(callback));
+    return m_connection->subscribe(rule, fromOwner(*m_connection, m_service, std::move(callback)));
 }
 
 Match Proxy::onPropertiesChanged(
@@ -793,13 +860,14 @@ Match Proxy::onPropertiesChanged(
     rule.interface = "org.freedesktop.DBus.Properties";
     rule.member = "PropertiesChanged";
     rule.arg0 = m_interface;
-    return m_connection->subscribe(rule, [callback = std::move(callback)](const Message& message) {
+    return m_connection->subscribe(rule, fromOwner(*m_connection, m_service,
+                                                   [callback = std::move(callback)](const Message& message) {
         std::string interface;
         VariantMap changed;
         std::vector<std::string> invalidated;
         if (message.read(interface, changed, invalidated))
             callback(changed, invalidated);
-    });
+    }));
 }
 
 struct ObjectAccess
