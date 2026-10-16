@@ -30,7 +30,18 @@ pkg_check_modules(Systemd REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(Icu REQUIRED IMPORTED_TARGET icu-uc icu-i18n)
 # Decoders for the image formats Skia leaves out.
 pkg_check_modules(ImageCodecs REQUIRED IMPORTED_TARGET
-    libpng libwebp libwebpdemux libtiff-4 libheif libjxl libjxl_threads)
+    libpng libwebp libwebpdemux libtiff-4 libheif)
+# JPEG XL is opened on first use (src/ui/jxl_library.cpp), by the names the
+# libraries give themselves.
+pkg_check_modules(Jxl REQUIRED libjxl libjxl_threads)
+foreach(library jxl jxl_threads)
+    find_library(CUTEFISH_${library}_PATH NAMES ${library} HINTS ${Jxl_LIBRARY_DIRS} REQUIRED)
+    execute_process(COMMAND ${CMAKE_OBJDUMP} -p ${CUTEFISH_${library}_PATH} OUTPUT_VARIABLE dynamic)
+    if(NOT dynamic MATCHES "SONAME +([^\n]+)")
+        message(FATAL_ERROR "No SONAME in ${CUTEFISH_${library}_PATH}")
+    endif()
+    set(CUTEFISH_${library}_SONAME ${CMAKE_MATCH_1})
+endforeach()
 pkg_check_modules(SkiaDependencies REQUIRED IMPORTED_TARGET
     freetype2 harfbuzz icu-uc libpng libjpeg zlib expat)
 pkg_check_modules(WaylandProtocols REQUIRED wayland-protocols>=1.39)

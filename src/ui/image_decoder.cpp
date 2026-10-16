@@ -378,8 +378,8 @@ DecodedImage decodeImage(const ImageRequest& request)
     } else if (heif_check_filetype(reinterpret_cast<const uint8_t*>(data->data()), int(std::min<size_t>(data->size(), 64)))
                == heif_filetype_yes_supported) {
         source = decodeHeif(*data);
-    } else if (JxlSignatureCheck(reinterpret_cast<const uint8_t*>(data->data()), std::min<size_t>(data->size(), 32))
-               >= JXL_SIG_CODESTREAM) {
+    } else if (startsWith(*data, 0, "\xff\x0a")
+               || startsWith(*data, 0, std::string_view("\0\0\0\x0cJXL \x0d\x0a\x87\x0a", 12))) {
         source = decodeJxl(*data);
     } else if (image_formats::isGif(*data)) {
         source = fromRaw(image_formats::decodeGif(*data));

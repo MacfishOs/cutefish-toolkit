@@ -159,6 +159,7 @@ add_library(cutefish-toolkit SHARED
     ui/image.cpp
     ui/gif_decoder.cpp
     ui/image_decoder.cpp
+    ui/jxl_library.cpp
     ui/image_formats.cpp
     ui/image_view.cpp
     ui/label.cpp
@@ -275,6 +276,12 @@ target_link_libraries(cutefish-toolkit
         PkgConfig::Systemd
         PkgConfig::ImageCodecs
         PkgConfig::Icu
+        ${CMAKE_DL_LIBS}
+)
+target_include_directories(cutefish-toolkit PRIVATE ${Jxl_INCLUDE_DIRS})
+target_compile_definitions(cutefish-toolkit PRIVATE
+    CUTEFISH_JXL_LIBRARY="${CUTEFISH_jxl_SONAME}"
+    CUTEFISH_JXL_THREADS_LIBRARY="${CUTEFISH_jxl_threads_SONAME}"
 )
 
 install(TARGETS cutefish-toolkit EXPORT CutefishToolkitTargets
