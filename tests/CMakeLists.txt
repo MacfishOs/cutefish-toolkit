@@ -79,6 +79,8 @@ target_compile_definitions(cutefish-toolkit-tests
     CUTEFISH_TOOLKIT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 gtest_discover_tests(cutefish-toolkit-tests)
+# Read after the discovered tests, which it needs to exist.
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/serial_tests.cmake)
 
 # One Application per process: the embedded platform gets its own binary.
 add_executable(cutefish-toolkit-embedded-tests
