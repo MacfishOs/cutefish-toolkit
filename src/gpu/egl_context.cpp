@@ -4,6 +4,7 @@
 #include "gpu/egl_context.h"
 
 #include <EGL/eglext.h>
+#include <GLES3/gl3.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,8 @@
 #include "include/gpu/ganesh/gl/GrGLDirectContext.h"
 #include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "include/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h"
+
+#include "gpu/program_cache.h"
 
 namespace cutefish::ui::gpu {
 
@@ -116,7 +119,15 @@ bool EglContext::initialize(wl_display* display)
 
     // Skia needs a current context to probe the driver; no window exists yet.
     eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_context);
-    m_skiaContext = GrDirectContexts::MakeGL(GrGLInterfaces::MakeEGL());
+    const auto glString = [](GLenum name) {
+        const GLubyte* value = glGetString(name);
+        return std::string(value ? reinterpret_cast<const char*>(value) : "");
+    };
+    m_programCache = std::make_unique<ProgramCache>(glString(GL_VENDOR) + "\n" + glString(GL_RENDERER) + "\n"
+                                                    + glString(GL_VERSION));
+    GrContextOptions options;
+    options.fPersistentCache = m_programCache.get();
+    m_skiaContext = GrDirectContexts::MakeGL(GrGLInterfaces::MakeEGL(), options);
     if (!m_skiaContext) {
         fprintf(stderr, "cutefish-toolkit: Skia cannot use the GLES context\n");
         return false;

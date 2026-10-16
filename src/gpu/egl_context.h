@@ -19,6 +19,8 @@ struct wl_egl_window;
 
 namespace cutefish::ui::gpu {
 
+class ProgramCache;
+
 // One GLES context and its Skia context, shared by every window. Windows
 // make their own EGL surface current before drawing.
 class EglContext
@@ -82,6 +84,7 @@ private:
     int m_stencilBits = 0;
     bool m_hasBufferAge = false;
     PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC m_swapBuffersWithDamage = nullptr;
+    std::unique_ptr<ProgramCache> m_programCache;
     sk_sp<GrDirectContext> m_skiaContext;
     mutable std::thread m_initializer;
     bool m_initialized = false;
