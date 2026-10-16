@@ -13,6 +13,8 @@
 
 namespace cutefish::ui {
 
+static uint64_t s_measurementGeneration = 1;
+
 View::View() = default;
 
 View::~View()
@@ -88,8 +90,10 @@ void View::setGeometry(const RectF& geometry)
     invalidate();
     const bool resized = geometry.size() != m_geometry.size();
     m_geometry = geometry;
-    if (resized)
-        requestLayout();
+    if (resized) {
+        if (Window* window = this->window())
+            window->scheduleLayout();
+    }
 }
 
 void View::setVisible(bool visible)
@@ -257,9 +261,20 @@ SizeF View::preferredSize() const
 
 void View::requestLayout()
 {
+    invalidateMeasurements();
     invalidate();
     if (Window* window = this->window())
         window->requestLayout();
+}
+
+uint64_t View::measurementGeneration()
+{
+    return s_measurementGeneration;
+}
+
+void View::invalidateMeasurements()
+{
+    ++s_measurementGeneration;
 }
 
 void View::setTracksHover(bool tracks)

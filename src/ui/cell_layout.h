@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "ui/view.h"
@@ -80,12 +82,19 @@ private:
     // Columns and rows for the size inside the padding; negative lengths
     // measure preferred.
     Geometry solve(const std::vector<Cell>& cells, double width, double height) const;
+    // Forgets the extents of an earlier measurement generation.
+    void checkMeasurements() const;
 
     Flow m_flow;
     int m_columns;
     double m_rowSpacing = 5;
     double m_columnSpacing = 5;
     Margins m_padding;
+    // Nested layouts are measured many times in one pass, for every
+    // ancestor's solve; these keep the answers for one generation.
+    mutable uint64_t m_measuredGeneration = 0;
+    mutable std::optional<Extent> m_horizontalExtent;
+    mutable std::vector<std::pair<double, Extent>> m_verticalExtents;
 };
 
 class RowLayout : public CellLayout

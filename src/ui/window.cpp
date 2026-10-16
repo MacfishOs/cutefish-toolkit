@@ -566,6 +566,12 @@ SizeF Window::screenSize() const
 
 void Window::requestLayout()
 {
+    View::invalidateMeasurements();
+    scheduleLayout();
+}
+
+void Window::scheduleLayout()
+{
     m_layoutNeeded = true;
     scheduleFrame();
 }
@@ -1502,6 +1508,7 @@ bool Window::layoutIfNeeded()
 {
     if (!m_layoutNeeded || !m_contentView)
         return false;
+    View::invalidateMeasurements();
     fitContentHeight();
     m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
     m_contentView->layoutTree();

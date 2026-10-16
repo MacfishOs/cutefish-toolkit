@@ -374,30 +374,56 @@ CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double wi
     return geometry;
 }
 
+void CellLayout::checkMeasurements() const
+{
+    const uint64_t generation = measurementGeneration();
+    if (m_measuredGeneration == generation)
+        return;
+    m_measuredGeneration = generation;
+    m_horizontalExtent.reset();
+    m_verticalExtents.clear();
+}
+
 CellLayout::Extent CellLayout::horizontalExtent() const
 {
+    checkMeasurements();
+    if (m_horizontalExtent)
+        return *m_horizontalExtent;
     const std::vector<Cell> items = cells();
-    if (items.empty())
-        return {m_padding.horizontal(), m_padding.horizontal(), m_padding.horizontal()};
-    return solve(items, -1, -1).horizontal;
+    if (items.empty()) {
+        m_horizontalExtent = Extent{m_padding.horizontal(), m_padding.horizontal(), m_padding.horizontal()};
+        m_verticalExtents.emplace_back(-1, Extent{m_padding.vertical(), m_padding.vertical(), m_padding.vertical()});
+        return *m_horizontalExtent;
+    }
+    // The preferred width gives both extents at once.
+    const Geometry geometry = solve(items, -1, -1);
+    m_horizontalExtent = geometry.horizontal;
+    if (std::none_of(m_verticalExtents.begin(), m_verticalExtents.end(),
+                     [](const auto& measured) { return measured.first < 0; }))
+        m_verticalExtents.emplace_back(-1, geometry.vertical);
+    return *m_horizontalExtent;
 }
 
 CellLayout::Extent CellLayout::verticalExtent(double width) const
 {
+    checkMeasurements();
+    width = width < 0 ? -1 : width;
+    for (const auto& [measuredWidth, extent] : m_verticalExtents) {
+        if (measuredWidth == width)
+            return extent;
+    }
     const std::vector<Cell> items = cells();
-    if (items.empty())
-        return {m_padding.vertical(), m_padding.vertical(), m_padding.vertical()};
-    return solve(items, width < 0 ? -1 : std::max(0.0, width - m_padding.horizontal()), -1).vertical;
+    Extent extent{m_padding.vertical(), m_padding.vertical(), m_padding.vertical()};
+    if (!items.empty())
+        extent = solve(items, width < 0 ? -1 : std::max(0.0, width - m_padding.horizontal()), -1).vertical;
+    m_verticalExtents.emplace_back(width, extent);
+    return extent;
 }
 
 // The implicit size: its children's preferred total.
 SizeF CellLayout::sizeHint() const
 {
-    const std::vector<Cell> items = cells();
-    if (items.empty())
-        return {m_padding.horizontal(), m_padding.vertical()};
-    const Geometry geometry = solve(items, -1, -1);
-    return {geometry.horizontal.preferred, geometry.vertical.preferred};
+    return {horizontalExtent().preferred, verticalExtent(-1).preferred};
 }
 
 double CellLayout::heightForWidth(double width) const

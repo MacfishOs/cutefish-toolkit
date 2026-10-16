@@ -289,20 +289,44 @@ double Label::slack() const
     return m_intrinsicWidth - m_naturalWidth;
 }
 
+void Label::checkMeasurements() const
+{
+    const uint64_t generation = measurementGeneration();
+    const uint64_t theme = Theme::generation();
+    if (m_measuredGeneration == generation && m_measuredTheme == theme)
+        return;
+    m_measuredGeneration = generation;
+    m_measuredTheme = theme;
+    m_measuredSize.reset();
+    m_measuredHeights.clear();
+}
+
 SizeF Label::sizeHint() const
 {
+    checkMeasurements();
+    if (m_measuredSize)
+        return *m_measuredSize;
     textlayout::Paragraph* text = layoutParagraph(kUnboundedWidth);
     const std::vector<TextLineBox> lines = lineBoxes(text, currentScale());
     slack();
     // The natural width, unrounded.
-    return {m_naturalWidth, textHeight(lines) + baselinePadding()};
+    m_measuredSize = SizeF{m_naturalWidth, textHeight(lines) + baselinePadding()};
+    return *m_measuredSize;
 }
 
 double Label::heightForWidth(double width) const
 {
-    textlayout::Paragraph* text = layoutParagraph(m_wrap ? width : kUnboundedWidth);
+    checkMeasurements();
+    const double layoutWidth = m_wrap ? width : kUnboundedWidth;
+    for (const auto& [measuredWidth, height] : m_measuredHeights) {
+        if (measuredWidth == layoutWidth)
+            return height;
+    }
+    textlayout::Paragraph* text = layoutParagraph(layoutWidth);
     const std::vector<TextLineBox> lines = lineBoxes(text, currentScale());
-    return textHeight(lines) + baselinePadding();
+    const double height = textHeight(lines) + baselinePadding();
+    m_measuredHeights.emplace_back(layoutWidth, height);
+    return height;
 }
 
 double Label::baselineOffset() const

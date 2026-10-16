@@ -185,6 +185,11 @@ public:
 
     void requestLayout();
     void requestPaint();
+    // Changes at the start of every layout pass and whenever a view, or the
+    // window's scale, theme or text layout, asks for layout, but not when a
+    // view is only moved or resized. Measurements taken in one generation
+    // may be kept for it.
+    static uint64_t measurementGeneration();
     // The view and its children drawn alone, as for a drag image: device
     // pixels at the scale (the window's when 0), transparent around them.
     // Layers are drawn flat, without their transforms.
@@ -261,6 +266,7 @@ private:
     friend class TestInput;
     friend class Window;
 
+    static void invalidateMeasurements();
     void layoutTree();
     // Culls what lies outside the region, in the target's device pixels.
     void paintTree(Painter& painter, const SkRegion* region);

@@ -371,6 +371,9 @@ private:
     bool pressMovesWindow() const;
 
     void scheduleFrame();
+    // Lays out again without invalidating measurements, for views that only
+    // moved or resized.
+    void scheduleLayout();
     bool renderFrame(uint64_t frameTimeNs);
     std::vector<Rect> paintFrame(SkCanvas* canvas, int bufferAge);
     // Device pixels the view and its children cover, untransformed below the

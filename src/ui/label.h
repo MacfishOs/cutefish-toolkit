@@ -179,6 +179,8 @@ private:
     double slack() const;
     double baselinePadding() const;
     double snapped(double value) const;
+    // Forgets sizes measured in an earlier measurement generation or theme.
+    void checkMeasurements() const;
     std::vector<TextLineBox> lineBoxes(skia::textlayout::Paragraph* text, double scale) const;
     // Where the underlined and linked spans lie as laid out at `width`: the
     // span's index, its line's top, baseline and height, and its x range,
@@ -231,6 +233,11 @@ private:
     mutable double m_naturalWidth = -1;
     mutable double m_intrinsicWidth = 0;
     mutable bool m_naturalRounded = false;
+    // Layouts ask for the same sizes many times in one pass.
+    mutable uint64_t m_measuredGeneration = 0;
+    mutable uint64_t m_measuredTheme = 0;
+    mutable std::optional<SizeF> m_measuredSize;
+    mutable std::vector<std::pair<double, double>> m_measuredHeights;
 };
 
 } // namespace cutefish::ui
