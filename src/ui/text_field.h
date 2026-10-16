@@ -47,6 +47,11 @@ public:
     void setValidator(std::function<bool(const std::string& text)> validator);
     // Logical pixels; 0 follows the theme.
     void setFontSize(double size);
+    // 400 unless set, as a CSS weight.
+    void setFontWeight(int weight);
+    // The text centred in the field while it fits, as horizontalAlignment
+    // Text.AlignHCenter; the placeholder too.
+    void setHorizontallyCentered(bool centred);
     // Around the text, left and right; the theme's large spacing unless set.
     void setTextMargins(double left, double right);
     // The rounded background and its border; off for a field drawn into
@@ -129,6 +134,8 @@ private:
     struct Private;
 
     void showContextMenu(PointF position);
+    // The width the text lies in, inside the margins.
+    double contentWidth() const;
     // After the user's edit; false when it was refused and undone.
     bool edited();
     void moved();

@@ -380,9 +380,19 @@ void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
         paintInside(canvas);
 }
 
+void Window::applyTextTarget() const
+{
+    Application* application = Application::instance();
+    application->text().setTranslucentSubpixel(m_translucentSubpixel);
+    // Embedded windows already draw into canvases without a pixel geometry
+    // when they are not opaque.
+    application->text().setTransparentWindow(m_backgroundColor && m_backgroundColor->a == 0
+                                             && application->platform() != Application::Platform::Embedded);
+}
+
 std::vector<Rect> Window::paintFrame(SkCanvas* canvas, int bufferAge)
 {
-    Application::instance()->text().setTranslucentSubpixel(m_translucentSubpixel);
+    applyTextTarget();
     FrameDamage& damage = *m_frameDamage;
     const SkIRect window = SkIRect::MakeWH(canvas->imageInfo().width(), canvas->imageInfo().height());
     if (damage.full)

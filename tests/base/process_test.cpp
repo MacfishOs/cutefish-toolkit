@@ -165,6 +165,32 @@ TEST(ProcessTest, ForwardsOutput)
     ::close(pipe[0]);
 }
 
+TEST(ProcessTest, ForwardsOnlyErrors)
+{
+    EventLoop loop;
+    int pipe[2];
+    ASSERT_EQ(::pipe(pipe), 0);
+    const int savedErr = ::dup(STDERR_FILENO);
+    ::dup2(pipe[1], STDERR_FILENO);
+    ::close(pipe[1]);
+    Process process(&loop);
+    process.setStandardErrorForwarded(true);
+    std::string seen;
+    process.onStandardOutput = [&](std::string_view text) { seen += text; };
+    const bool started = process.start("sh", {"-c", "printf out; printf err >&2"});
+    const bool finished = started && runUntilFinished(loop, process);
+    ::dup2(savedErr, STDERR_FILENO);
+    ::close(savedErr);
+    ASSERT_TRUE(finished);
+    char buffer[16] = {};
+    ASSERT_EQ(::read(pipe[0], buffer, sizeof(buffer)), 3);
+    EXPECT_STREQ(buffer, "err");
+    EXPECT_EQ(seen, "out");
+    EXPECT_EQ(process.standardOutput(), "out");
+    EXPECT_TRUE(process.standardError().empty());
+    ::close(pipe[0]);
+}
+
 TEST(ProcessTest, WaitForFinishedTimesOutThenCompletes)
 {
     EventLoop loop;

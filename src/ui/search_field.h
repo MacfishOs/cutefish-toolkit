@@ -25,6 +25,8 @@ public:
     // text, and how far the clear button's hit area reaches past its glyph.
     // 12, 8 and 7 unless set.
     void setIconMetrics(double inset, double gap, double hitMargin);
+    // The search and clear glyphs in this colour; the theme's text unless set.
+    void setGlyphColor(std::optional<Color> color);
 
 protected:
     void paint(Painter& painter) override;

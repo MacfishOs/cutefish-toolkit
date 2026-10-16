@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <map>
 #include <memory>
@@ -879,6 +880,27 @@ struct ObjectAccess
                            sd_bus_message* value, void* data, sd_bus_error* error);
 };
 
+// sd-bus walks the table and its names again when the slot goes, which
+// may be after the Object when a handler destroys or republishes it: the
+// table lives with the slot, which frees it, and forgets the Object first.
+struct Object::Table
+{
+    Object* object = nullptr;
+    // Handlers of the table running now, which hold its slot.
+    int running = 0;
+    // An Object published again while a handler ran: exported once this
+    // table is gone.
+    std::weak_ptr<Object*> successor;
+    std::deque<std::string> strings;
+    std::vector<sd_bus_vtable> vtable;
+
+    const char* keep(const std::string& text)
+    {
+        strings.push_back(text);
+        return strings.back().c_str();
+    }
+};
+
 Object::Object(Connection* connection, std::string path, std::string interface)
     : m_connection(connection)
     , m_path(std::move(path))
@@ -886,7 +908,12 @@ Object::Object(Connection* connection, std::string path, std::string interface)
 {
 }
 
-Object::~Object() = default;
+Object::~Object()
+{
+    if (m_table)
+        m_table->object = nullptr;
+    m_slot.reset();
+}
 
 void Object::addMethod(const std::string& name, std::string inSignature, std::string outSignature,
                        std::function<void(MethodCall&)> handler)
@@ -965,40 +992,64 @@ bool Object::publish()
     if (!m_connection)
         return false;
 
+    if (m_table) {
+        m_table->object = nullptr;
+        // Its members stay registered until the handler returns.
+        if (m_table->running > 0) {
+            m_table->successor = m_self;
+            m_table = nullptr;
+            m_slot.reset();
+            return true;
+        }
+    }
+    m_table = nullptr;
     m_slot.reset();
-    m_vtable.clear();
-    m_vtable.push_back(SD_BUS_VTABLE_START(0));
+    auto table = std::make_unique<Table>();
+    table->object = this;
+    std::vector<sd_bus_vtable>& vtable = table->vtable;
+    vtable.push_back(SD_BUS_VTABLE_START(0));
     for (const auto& [name, method] : m_methods) {
-        sd_bus_vtable entry = SD_BUS_METHOD(name.c_str(), method.inSignature.c_str(), method.outSignature.c_str(),
-                                            &ObjectAccess::handleMethod, SD_BUS_VTABLE_UNPRIVILEGED);
-        // Names stay in the method, whose map node outlives the vtable.
+        sd_bus_vtable entry = SD_BUS_METHOD(table->keep(name), table->keep(method.inSignature),
+                                            table->keep(method.outSignature), &ObjectAccess::handleMethod,
+                                            SD_BUS_VTABLE_UNPRIVILEGED);
         if (!method.names.empty())
-            entry.x.method.names = method.names.c_str();
-        m_vtable.push_back(entry);
+            entry.x.method.names = table->keep(method.names);
+        vtable.push_back(entry);
     }
     for (const auto& [name, property] : m_properties) {
         if (property.set)
-            m_vtable.push_back(SD_BUS_WRITABLE_PROPERTY(name.c_str(), property.signature.c_str(), &ObjectAccess::getProperty,
-                                                        &ObjectAccess::setProperty, 0,
-                                                        SD_BUS_VTABLE_UNPRIVILEGED
-                                                            | SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE));
+            vtable.push_back(SD_BUS_WRITABLE_PROPERTY(table->keep(name), table->keep(property.signature),
+                                                      &ObjectAccess::getProperty, &ObjectAccess::setProperty, 0,
+                                                      SD_BUS_VTABLE_UNPRIVILEGED
+                                                          | SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE));
         else
-            m_vtable.push_back(SD_BUS_PROPERTY(name.c_str(), property.signature.c_str(), &ObjectAccess::getProperty, 0,
-                                               SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE));
+            vtable.push_back(SD_BUS_PROPERTY(table->keep(name), table->keep(property.signature),
+                                             &ObjectAccess::getProperty, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE));
     }
     for (const auto& [name, signal] : m_signals) {
-        sd_bus_vtable entry = SD_BUS_SIGNAL(name.c_str(), signal.signature.c_str(), 0);
+        sd_bus_vtable entry = SD_BUS_SIGNAL(table->keep(name), table->keep(signal.signature), 0);
         if (!signal.names.empty())
-            entry.x.signal.names = signal.names.c_str();
-        m_vtable.push_back(entry);
+            entry.x.signal.names = table->keep(signal.names);
+        vtable.push_back(entry);
     }
-    m_vtable.push_back(SD_BUS_VTABLE_END);
+    vtable.push_back(SD_BUS_VTABLE_END);
 
     sd_bus_slot* slot = nullptr;
-    if (sd_bus_add_object_vtable(m_connection->bus(), &slot, m_path.c_str(), m_interface.c_str(), m_vtable.data(),
-                                 this)
+    if (sd_bus_add_object_vtable(m_connection->bus(), &slot, m_path.c_str(), m_interface.c_str(), vtable.data(),
+                                 table.get())
         < 0)
         return false;
+    sd_bus_slot_set_destroy_callback(slot, [](void* data) {
+        std::unique_ptr<Table> table(static_cast<Table*>(data));
+        EventLoop* loop = EventLoop::current();
+        if (loop && !table->successor.expired()) {
+            loop->post([successor = table->successor] {
+                if (const std::shared_ptr<Object*> object = successor.lock())
+                    (*object)->publish();
+            });
+        }
+    });
+    m_table = table.release();
     m_slot = Slot(slot);
     return true;
 }
@@ -1016,22 +1067,30 @@ void Object::emitPropertiesChanged(const std::vector<std::string>& names) const
 
 int ObjectAccess::handleMethod(sd_bus_message* message, void* data, sd_bus_error* error)
 {
-    auto* self = static_cast<Object*>(data);
+    auto* table = static_cast<Object::Table*>(data);
+    Object* self = table->object;
+    if (!self)
+        return sd_bus_error_set(error, SD_BUS_ERROR_UNKNOWN_OBJECT, "Unknown object");
     const auto it = self->m_methods.find(orEmpty(sd_bus_message_get_member(message)));
     if (it == self->m_methods.end())
         return sd_bus_error_set(error, SD_BUS_ERROR_UNKNOWN_METHOD, "Unknown method");
 
     MethodCall call{Message(message)};
-    // The handler may publish again, which rebuilds the table.
+    // The handler may destroy the Object or publish it again; sd-bus keeps
+    // the slot, and with it the table, until this returns.
     auto handler = it->second.handler;
+    ++table->running;
     handler(call);
+    --table->running;
     return 1;
 }
 
 int ObjectAccess::getProperty(sd_bus*, const char*, const char*, const char* property, sd_bus_message* reply,
                         void* data, sd_bus_error* error)
 {
-    auto* self = static_cast<Object*>(data);
+    Object* self = static_cast<Object::Table*>(data)->object;
+    if (!self)
+        return sd_bus_error_set(error, SD_BUS_ERROR_UNKNOWN_OBJECT, "Unknown object");
     const auto it = self->m_properties.find(property);
     if (it == self->m_properties.end())
         return sd_bus_error_set(error, SD_BUS_ERROR_UNKNOWN_PROPERTY, "Unknown property");
@@ -1041,12 +1100,22 @@ int ObjectAccess::getProperty(sd_bus*, const char*, const char*, const char* pro
 int ObjectAccess::setProperty(sd_bus*, const char*, const char*, const char* property, sd_bus_message* value,
                         void* data, sd_bus_error* error)
 {
-    auto* self = static_cast<Object*>(data);
+    auto* table = static_cast<Object::Table*>(data);
+    Object* self = table->object;
+    if (!self)
+        return sd_bus_error_set(error, SD_BUS_ERROR_UNKNOWN_OBJECT, "Unknown object");
     const auto it = self->m_properties.find(property);
     if (it == self->m_properties.end() || !it->second.set)
         return sd_bus_error_set(error, SD_BUS_ERROR_PROPERTY_READ_ONLY, "Read-only property");
     Variant variant;
-    if (VariantAccess::read(value, variant) <= 0 || !it->second.set(variant))
+    if (VariantAccess::read(value, variant) <= 0)
+        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "Invalid value");
+    // The setter may destroy or publish the Object, as a method handler.
+    const auto set = it->second.set;
+    ++table->running;
+    const bool accepted = set(variant);
+    --table->running;
+    if (!accepted)
         return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "Invalid value");
     return 1;
 }

@@ -106,6 +106,11 @@ public:
     // or stays greyscale there; set by the window being painted.
     bool translucentSubpixel() const { return m_translucentSubpixel; }
     void setTranslucentSubpixel(bool subpixel) { m_translucentSubpixel = subpixel; }
+    // Whether the window being painted has a transparent background, so its
+    // own canvas counts as translucent: Skia's subpixel masks assume an
+    // opaque target and would leave every glyph edge opaque there.
+    bool transparentWindow() const { return m_transparentWindow; }
+    void setTransparentWindow(bool transparent) { m_transparentWindow = transparent; }
 
 private:
     void readFontconfigDefaults();
@@ -135,6 +140,7 @@ private:
     SkFontHinting m_hinting = SkFontHinting::kSlight;
     bool m_subpixelPositioning = true;
     bool m_translucentSubpixel = true;
+    bool m_transparentWindow = false;
     SkPixelGeometry m_pixelGeometry = kUnknown_SkPixelGeometry;
 };
 

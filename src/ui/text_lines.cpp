@@ -460,14 +460,29 @@ half4 main(half4 src, half4 dst)
     return *made;
 }
 
+// Whether the canvas may be translucent under text: it has no pixel
+// geometry, or it is the canvas of a window with a transparent background.
+static bool translucentTarget(SkCanvas* canvas)
+{
+    return canvas->getBaseProps().pixelGeometry() == kUnknown_SkPixelGeometry
+            || Application::instance()->text().transparentWindow();
+}
+
 // Whether glyphs drawn on the canvas go through subpixelBlender(): the
-// fonts ask for subpixel edging, but the target, being translucent, has no
-// pixel geometry, so Skia would draw them grey.
+// fonts ask for subpixel edging, but the target is translucent, where Skia
+// would draw them grey or, given a pixel geometry, with opaque edges.
 static bool drawsSubpixelBlended(SkCanvas* canvas, SkFont::Edging edging)
 {
     return edging == SkFont::Edging::kSubpixelAntiAlias && Application::instance()->text().translucentSubpixel()
-            && canvas->getBaseProps().pixelGeometry() == kUnknown_SkPixelGeometry
-            && Application::instance()->text().pixelGeometry() != kUnknown_SkPixelGeometry;
+            && translucentTarget(canvas) && Application::instance()->text().pixelGeometry() != kUnknown_SkPixelGeometry;
+}
+
+// Subpixel glyphs Skia would draw itself on a translucent target: greyscale,
+// as Skia's subpixel masks assume an opaque one and leave edges opaque.
+static void greyscaleOnTranslucent(SkCanvas* canvas, SkFont& font)
+{
+    if (font.getEdging() == SkFont::Edging::kSubpixelAntiAlias && translucentTarget(canvas))
+        font.setEdging(SkFont::Edging::kAntiAlias);
 }
 
 // Whether the canvas draws at a fractional device scale, where glyphs go
@@ -497,7 +512,7 @@ static void hintFor(SkFont& font, bool unhinted)
 
 // The blob with its fonts hinted as hintFor() says; Skia's paragraph
 // positions each glyph.
-static sk_sp<SkTextBlob> hinted(const sk_sp<SkTextBlob>& blob, bool unhinted)
+static sk_sp<SkTextBlob> hinted(const sk_sp<SkTextBlob>& blob, bool unhinted, SkCanvas* greyscaleOn = nullptr)
 {
     SkTextBlobBuilder builder;
     SkTextBlob::Iter it(*blob);
@@ -507,6 +522,8 @@ static sk_sp<SkTextBlob> hinted(const sk_sp<SkTextBlob>& blob, bool unhinted)
             return blob;
         SkFont font = run.font;
         hintFor(font, unhinted);
+        if (greyscaleOn)
+            greyscaleOnTranslucent(greyscaleOn, font);
         const auto& buffer = builder.allocRunPos(font, run.count);
         std::copy(run.glyphs, run.glyphs + run.count, buffer.glyphs);
         std::copy(run.positions, run.positions + run.count, buffer.points());
@@ -569,13 +586,13 @@ public:
 
     void drawTextBlob(const sk_sp<SkTextBlob>& original, SkScalar x, SkScalar y, const SkPaintOrID& paint) override
     {
-        const sk_sp<SkTextBlob> blob = hinted(original, drawsUnhinted(m_canvas));
         const SkPaint* plain = std::get_if<SkPaint>(&paint);
         if (plain && drawsSubpixelBlended(m_canvas, Application::instance()->text().edging())) {
-            drawSubpixelBlended(m_canvas, blob, SkPoint::Make(x, y), plain->getColor());
+            drawSubpixelBlended(m_canvas, hinted(original, drawsUnhinted(m_canvas)), SkPoint::Make(x, y),
+                                plain->getColor());
             return;
         }
-        CanvasParagraphPainter::drawTextBlob(blob, x, y, paint);
+        CanvasParagraphPainter::drawTextBlob(hinted(original, drawsUnhinted(m_canvas), m_canvas), x, y, paint);
     }
 
 private:
@@ -618,6 +635,8 @@ void paintTextLines(SkCanvas* canvas, textlayout::Paragraph* paragraph, const st
             if (!subpixel && font.getEdging() == SkFont::Edging::kSubpixelAntiAlias)
                 font.setEdging(SkFont::Edging::kAntiAlias);
             hintFor(font, unhinted);
+            if (!drawsSubpixelBlended(canvas, font.getEdging()))
+                greyscaleOnTranslucent(canvas, font);
             // Each glyph's pen position from the run's start.
             std::vector<SkScalar> positions(run.glyphs.size());
             for (size_t i = 0; i < run.glyphs.size(); ++i) {

@@ -168,6 +168,8 @@ public:
     // Glass instead of the plain blur over the blur rect, or the plain blur
     // again without one. Wayland only; applies with the next frame.
     void setBackgroundGlass(const std::optional<GlassMaterial>& material);
+    // Whether the compositor draws the blur and glass asked for above.
+    bool backgroundGlassAvailable() const;
     // A size the window picks itself keeps its centre where it was, instead
     // of its top left corner, as cutefish_window_hints_v1's center anchor.
     void setResizeAroundCenter(bool aroundCenter);
@@ -325,6 +327,10 @@ private:
     void handlePointerScroll(const ScrollEvent& event);
     void handleKeyboardFocus(bool focused);
     void handleKey(const KeyEvent& event, bool pressed);
+    // Runs the shortcut for the key, if there is one.
+    bool runShortcut(const KeyEvent& event);
+    // A key a text field keeps from the window's shortcuts.
+    static bool isEditingSequence(const KeyEvent& event);
     void handleHold();
     void handleTextInput(const TextInputEvent& event);
     void handleGesture(const GestureEvent& event);
@@ -379,6 +385,8 @@ private:
     void collectDamage(View* view, PointF origin);
     // Theme and scale changes: the window and every texture.
     void damageAll();
+    // How text draws into this window's canvas, before it is painted.
+    void applyTextTarget() const;
     void updateLayers(View* view, PointF origin, SkCanvas* target);
     void addFrameClient(FrameClient* client);
     void removeFrameClient(FrameClient* client);

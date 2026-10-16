@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "base/event_loop.h"
+#include "ui/application.h"
 #include "ui/check_box.h"
 #include "ui/combo_box.h"
 #include "ui/header_button.h"
@@ -18,6 +20,7 @@
 #include "ui/slider.h"
 #include "ui/switch.h"
 #include "ui/test_input.h"
+#include "ui/text_field.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 
@@ -255,6 +258,142 @@ TEST(ControlsTest, ComboBoxFitsItsLongestItem)
             EXPECT_DOUBLE_EQ(widest, label->geometry().width);
         }
     }
+}
+
+// An editable box: typing completes from the items (the shortest, the first
+// among equals), the typed part kept and the rest selected; Backspace does
+// not complete; Return takes an item the text names, ignoring case.
+TEST(ControlsTest, EditableComboBoxCompletesAndAccepts)
+{
+    Window window;
+    ComboBox* box = host(window, std::make_unique<ComboBox>(std::vector<std::string>{
+                                     "9:00 AM", "9:15 AM", "10:00 AM", "12:00 PM", "10:00 AM extra"}));
+    box->setEditable(true);
+    window.grab();
+    ASSERT_TRUE(box->isEditable());
+    EXPECT_FALSE(box->acceptsFocus());
+    EXPECT_EQ(box->editText(), "9:00 AM");
+    box->setCurrentIndex(-1);
+    EXPECT_EQ(box->currentIndex(), -1);
+    EXPECT_EQ(box->editText(), "");
+    box->setCurrentIndex(0);
+    int accepted = 0;
+    int textChanges = 0;
+    box->onAccepted = [&accepted] { ++accepted; };
+    box->onEditTextChanged = [&textChanges] { ++textChanges; };
+
+    TestInput::click(window, {20, 15});
+    ASSERT_TRUE(box->field()->hasFocus());
+    EXPECT_FALSE(box->isMenuOpen());
+    TestInput::typeKey(window, key::letter('a'), ControlModifier);
+    TestInput::typeText(window, "1");
+    EXPECT_EQ(box->editText(), "10:00 AM");
+    EXPECT_EQ(box->field()->selectedText(), "0:00 AM");
+    EXPECT_EQ(box->field()->cursorPosition(), 1u);
+    TestInput::typeText(window, "2");
+    EXPECT_EQ(box->editText(), "12:00 PM");
+    TestInput::typeKey(window, key::BackSpace);
+    EXPECT_EQ(box->editText(), "12");
+    TestInput::typeKey(window, key::Return);
+    EXPECT_EQ(accepted, 1);
+    EXPECT_EQ(box->currentIndex(), 0);
+    EXPECT_FALSE(box->isMenuOpen());
+
+    box->setEditText("10:00 am");
+    TestInput::typeKey(window, key::Return);
+    EXPECT_EQ(accepted, 2);
+    EXPECT_EQ(box->currentIndex(), 2);
+    EXPECT_EQ(box->editText(), "10:00 AM");
+    EXPECT_GT(textChanges, 0);
+}
+
+// The arrow alone opens the list, as do Up, Down and F4 in the field;
+// Space types; picking an item sets the text.
+TEST(ControlsTest, EditableComboBoxOpensFromTheArrow)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    ComboBox* box = column->addChild<ComboBox>(std::vector<std::string>{"One", "Two", "Three"});
+    Switch* other = column->addChild<Switch>();
+    box->setEditable(true);
+    window.resize({300, 120});
+    window.setContentView(std::move(column));
+    window.show();
+    window.grab();
+    TestInput::setKeyboardFocus(window, true);
+    const RectF bounds = box->geometry();
+    int activated = -1;
+    box->onActivated = [&activated](int index) { activated = index; };
+    int focusLost = 0;
+    box->onFocusLost = [&focusLost] { ++focusLost; };
+
+    TestInput::click(window, {bounds.width - 20, 15});
+    EXPECT_TRUE(box->isMenuOpen());
+    EXPECT_TRUE(box->field()->hasFocus());
+    TestInput::typeKey(window, key::Down);
+    TestInput::typeKey(window, key::Return);
+    EXPECT_FALSE(box->isMenuOpen());
+    // The closed list's window goes on the next loop turn, as on Wayland
+    // before the next key arrives.
+    Application::instance()->loop().dispatch();
+    EXPECT_EQ(activated, 1);
+    EXPECT_EQ(box->editText(), "Two");
+
+    TestInput::typeKey(window, key::End);
+    TestInput::typeKey(window, key::Space, NoModifier, " ");
+    EXPECT_EQ(box->editText(), "Two ");
+    EXPECT_FALSE(box->isMenuOpen());
+    TestInput::typeKey(window, key::F4);
+    EXPECT_TRUE(box->isMenuOpen());
+    TestInput::typeKey(window, key::Escape);
+    EXPECT_FALSE(box->isMenuOpen());
+    Application::instance()->loop().dispatch();
+    TestInput::typeKey(window, key::Up);
+    EXPECT_TRUE(box->isMenuOpen());
+    TestInput::typeKey(window, key::Escape);
+    Application::instance()->loop().dispatch();
+
+    // A click left of the arrow is the field's.
+    TestInput::click(window, {bounds.width - 50, 15});
+    EXPECT_FALSE(box->isMenuOpen());
+    EXPECT_TRUE(box->field()->hasFocus());
+    other->setFocus();
+    EXPECT_EQ(focusLost, 1);
+}
+
+// The field lies inside the box's paddings, under the arrow, its text 12
+// from the left edge; the box keeps its colour while its field is pressed
+// and rings it while focused.
+TEST(ControlsTest, EditableComboBoxPlacesItsField)
+{
+    Window window;
+    ComboBox* box = host(window, std::make_unique<ComboBox>(std::vector<std::string>{"12:00 AM"}));
+    box->setGeometry({0, 0, 110, 35});
+    box->setLayoutHints({.preferredWidth = 110});
+    box->setEditable(true);
+    window.grab();
+    EXPECT_EQ(box->field()->geometry(), (RectF{12, 0, 86, 35}));
+}
+
+// FishUI's indicator, 16 high at a whole logical y (10 in a 35 high box),
+// and no hover colour: only a press darkens the box.
+TEST(ControlsTest, ComboBoxChevronAndHover)
+{
+    Window window;
+    window.setBackgroundColor(Color::rgb(0xFFFFFF));
+    ComboBox* box = host(window, std::make_unique<ComboBox>(std::vector<std::string>{"Never", "Every Day"}));
+    window.grab();
+    const RectF bounds = box->geometry();
+    ASSERT_EQ(bounds.height, 35);
+    const View* chevron = box->children()[1].get();
+    EXPECT_EQ(chevron->geometry(), (RectF{bounds.width - 12 - 16, 10, 16, 16}));
+
+    const auto fill = [&window, bounds] { return window.grab().pixel(int(bounds.x + 6), int(bounds.y + 17)); };
+    const Color rest = fill();
+    TestInput::movePointer(window, {bounds.x + 20, bounds.y + 17});
+    EXPECT_EQ(fill(), rest);
+    TestInput::press(window, {bounds.x + 20, bounds.y + 17});
+    EXPECT_NE(fill(), rest);
 }
 
 // A disabled combo box: its text is the disabled text colour at 0.6.

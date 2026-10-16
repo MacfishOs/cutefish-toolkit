@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cutefish::base::url {
 
@@ -21,5 +22,9 @@ std::optional<std::string> toLocalFile(std::string_view url);
 bool isLocalFile(std::string_view url);
 // "file://" and the absolute path, with what needs it escaped.
 std::string fromLocalFile(std::string_view path);
+
+// The URLs of a text/uri-list, as dropped or pasted: one a line, trimmed,
+// empty lines and "#" comments left out.
+std::vector<std::string> parseUriList(std::string_view text);
 
 } // namespace cutefish::base::url

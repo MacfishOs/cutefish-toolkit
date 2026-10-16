@@ -45,6 +45,9 @@ public:
     // The program's output and errors go to this process's own instead of
     // being collected; onStandardOutput and onStandardError stay silent.
     void setOutputForwarded(bool forwarded);
+    // Only the program's errors go to this process's own, as
+    // QProcess::ForwardedErrorChannel; its output is still collected.
+    void setStandardErrorForwarded(bool forwarded);
     // The program gets `fd` as descriptor kInheritedFd, and every other
     // descriptor above standard error closed. -1 passes none. `fd` must stay
     // open until start() returns.
@@ -92,6 +95,7 @@ private:
     std::string m_input;
     std::vector<std::string> m_environment;
     bool m_outputForwarded = false;
+    bool m_errorForwarded = false;
     bool m_inputOpen = false;
     int m_inheritedFd = -1;
     size_t m_inputWritten = 0;

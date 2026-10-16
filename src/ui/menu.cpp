@@ -16,6 +16,7 @@
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
+#include "ui/popup_glass.h"
 #include "ui/scroll_view.h"
 #include "ui/theme.h"
 #include "ui/view.h"
@@ -635,8 +636,12 @@ private:
                 row.glyph->setColor(text);
             if (row.shortcut)
                 row.shortcut->setColor(!enabled ? disabled : active ? theme.highlightedText : theme.text.withAlpha(0.5));
+            // Dark glass over a bright backdrop washes out the grey chevron,
+            // so in dark mode it takes the label's colour.
             if (row.arrow)
-                row.arrow->setColor(active ? theme.highlightedText : theme.disabledText);
+                row.arrow->setColor(active          ? theme.highlightedText
+                                    : theme.darkMode ? text.value_or(theme.text)
+                                                     : theme.disabledText);
         }
     }
 
@@ -749,11 +754,13 @@ protected:
         // embedded host draws the glass, tint included, into blurRect().
         if (Application::instance()->platform() == Application::Platform::Embedded && EmbeddedWindow::host())
             return;
-        // Over the compositor's blur; the window radius is the compositor's too.
+        if (m_glass.update(*window()))
+            return;
+        // Without the compositor's blur: opaque, in the window radius.
         if (isShaped())
-            painter.fillPath(shape().path(), theme.secondBackground.withAlpha(0.8));
+            painter.fillPath(shape().path(), theme.secondBackground);
         else
-            painter.fillRoundedRect(localRect(), theme.windowRadius, theme.secondBackground.withAlpha(0.8));
+            painter.fillRoundedRect(localRect(), theme.windowRadius, theme.secondBackground);
     }
 
     void pointerMove(const PointerEvent& event) override { m_rows->pointerMoved(mapToWindow(event.position)); }
@@ -771,6 +778,7 @@ private:
     Rows* m_rows = nullptr;
     ScrollIndicator* m_indicator = nullptr;
     double m_arrowPosition = 0;
+    PopupGlass m_glass;
 };
 
 Menu::Menu() = default;
@@ -1006,7 +1014,7 @@ void Menu::open(Window* parent, const PopupPlacement& placement, bool fromKeyboa
         surface->rows()->centreOnOpen(surface->rows()->checkedRow());
 
     m_window->resize(size);
-    m_window->setBackgroundColor(Color::rgb(0x000000).withAlpha(0));
+    PopupGlass::prepare(*m_window);
     const double arrowPosition = surface->shape().arrowPosition;
     applyBlur(size, arrowPosition);
     m_shownItems = itemsSignature();

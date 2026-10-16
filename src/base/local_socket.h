@@ -66,4 +66,43 @@ private:
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
+// A listening Unix stream socket on a loop, handing out each connection it
+// accepts. The socket file's mode and owner are the caller's to set.
+class LocalServer
+{
+public:
+    // On the calling thread's loop when none is given.
+    explicit LocalServer(EventLoop* loop = nullptr);
+    // Closes, as close().
+    ~LocalServer();
+
+    LocalServer(const LocalServer&) = delete;
+    LocalServer& operator=(const LocalServer&) = delete;
+
+    // Removes a socket file left at the path first; false with errorText()
+    // when it cannot listen there.
+    bool listen(const std::string& path);
+    // Stops listening and removes the socket file.
+    void close();
+    bool isListening() const { return m_fd >= 0; }
+    int fd() const { return m_fd; }
+    const std::string& path() const { return m_path; }
+    const std::string& errorText() const { return m_error; }
+
+    // A client connected: its descriptor, non-blocking and close-on-exec, is
+    // the handler's (LocalSocket::adopt() takes it); closed when unset. May
+    // destroy the server.
+    std::function<void(int fd)> onNewConnection;
+
+private:
+    void acceptPending();
+
+    EventLoop& m_loop;
+    int m_fd = -1;
+    int m_watch = 0;
+    std::string m_path;
+    std::string m_error;
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+};
+
 } // namespace cutefish::base

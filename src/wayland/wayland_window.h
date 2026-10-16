@@ -65,6 +65,7 @@ public:
     void setBlur(const RectF& rect, double radius) override;
     void setBlurShape(const Path& path) override;
     void setGlass(const std::optional<GlassMaterial>& material) override;
+    bool glassAvailable() const override;
     void setResizeAroundCenter(bool aroundCenter) override;
     void setSkipTaskbar(bool skip) override;
     void setAlwaysOnTop(bool onTop) override;

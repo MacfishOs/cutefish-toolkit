@@ -56,6 +56,12 @@ void SearchField::setFill(std::optional<Color> fill)
     requestPaint();
 }
 
+void SearchField::setGlyphColor(std::optional<Color> color)
+{
+    m_search->setColor(color);
+    m_clear->setColor(color);
+}
+
 void SearchField::setIconMetrics(double inset, double gap, double hitMargin)
 {
     m_inset = inset;

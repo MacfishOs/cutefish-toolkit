@@ -88,6 +88,15 @@ TEST(UrlTest, LocalFiles)
     EXPECT_EQ(url::percentDecoded("%zz%41"), "%zzA");
 }
 
+TEST(UrlTest, UriLists)
+{
+    EXPECT_EQ(url::parseUriList("file:///a.ics\r\n# a comment\r\n\r\n  file:///b%20c.ics  \r\nhttps://x/y"),
+              (std::vector<std::string>{"file:///a.ics", "file:///b%20c.ics", "https://x/y"}));
+    EXPECT_EQ(url::parseUriList("file:///a\n"), std::vector<std::string>{"file:///a"});
+    EXPECT_TRUE(url::parseUriList("").empty());
+    EXPECT_TRUE(url::parseUriList("\r\n \n").empty());
+}
+
 TEST(TemporaryTest, DirectoryAndFile)
 {
     std::string directory;
@@ -180,4 +189,52 @@ TEST(LocalSocketTest, ConnectsToAPath)
     EXPECT_FALSE(socket.isConnected());
     ::close(peer);
     ::close(server);
+}
+
+TEST(LocalServerTest, ListensOverAStaleSocketAndHandsOutClients)
+{
+    EventLoop loop;
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string(), "cutefish-socket-");
+    const std::string path = directory.path() + "/server";
+    // A socket file left behind by a listener that is gone.
+    {
+        const int stale = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        std::strcpy(address.sun_path, path.c_str());
+        ASSERT_EQ(::bind(stale, reinterpret_cast<sockaddr*>(&address), sizeof(address)), 0);
+        ::close(stale);
+    }
+
+    LocalServer server(&loop);
+    EXPECT_FALSE(server.listen(directory.path() + "/missing/server"));
+    EXPECT_FALSE(server.errorText().empty());
+    ASSERT_TRUE(server.listen(path));
+    EXPECT_TRUE(server.isListening());
+    EXPECT_GE(server.fd(), 0);
+
+    std::unique_ptr<LocalSocket> accepted;
+    std::string received;
+    server.onNewConnection = [&](int fd) {
+        accepted = std::make_unique<LocalSocket>(&loop);
+        ASSERT_TRUE(accepted->adopt(fd));
+        accepted->onReadyRead = [&] {
+            received += accepted->readAll();
+            if (received == "hello")
+                loop.quit();
+        };
+    };
+    LocalSocket client(&loop);
+    ASSERT_TRUE(client.connectToPath(path));
+    EXPECT_TRUE(client.write("hello"));
+    Timer timeout(&loop);
+    timeout.setSingleShot(true);
+    timeout.onTimeout = [&] { loop.quit(); };
+    timeout.start(5s);
+    loop.run();
+    EXPECT_EQ(received, "hello");
+
+    server.close();
+    EXPECT_FALSE(server.isListening());
+    EXPECT_FALSE(std::filesystem::exists(path));
 }

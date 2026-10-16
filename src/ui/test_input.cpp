@@ -179,4 +179,35 @@ int TestInput::moveRequests(Window& window)
     return window.m_platform->moveRequests();
 }
 
+void TestInput::setGlassAvailable(bool available)
+{
+    PlatformWindow::setHeadlessGlassAvailable(available);
+}
+
+std::optional<GlassMaterial> TestInput::backgroundGlass(Window& window)
+{
+    return window.m_platform->requestedGlass();
+}
+
+uint32_t TestInput::dragEnter(Window& window, PointF position, DropOffer* offer, uint32_t modifiers)
+{
+    window.handleDragEnter(position.x, position.y, offer, modifiers);
+    return window.m_dropAction;
+}
+
+uint32_t TestInput::dragMove(Window& window, PointF position, uint32_t modifiers)
+{
+    return window.handleDragMotion(position.x, position.y, modifiers);
+}
+
+void TestInput::dragLeave(Window& window)
+{
+    window.handleDragLeave();
+}
+
+uint32_t TestInput::drop(Window& window)
+{
+    return window.handleDrop();
+}
+
 } // namespace cutefish::ui

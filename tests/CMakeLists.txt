@@ -33,13 +33,16 @@ gtest_discover_tests(cutefish-toolkit-base-tests)
 
 add_executable(cutefish-toolkit-tests
     main.cpp
+    about_dialog_test.cpp
     animation_test.cpp
     bitmap_test.cpp
     bubble_shape_test.cpp
     clipboard_test.cpp
     color_test.cpp
     controls_test.cpp
+    drop_down_popup_test.cpp
     fast_blur_test.cpp
+    file_drop_area_test.cpp
     frame_cost_test.cpp
     glyph_run_test.cpp
     image_formats_test.cpp
@@ -52,6 +55,7 @@ add_executable(cutefish-toolkit-tests
     painter_test.cpp
     pixel_test.cpp
     cell_layout_test.cpp
+    round_image_button_test.cpp
     scroll_test.cpp
     shell_protocol_test.cpp
     text_area_test.cpp

@@ -411,7 +411,10 @@ struct ArgumentNames
 };
 
 // An interface of an object this process exports. Add the members, then
-// publish(); members added later need another publish().
+// publish(); members added later need another publish(). It may be
+// destroyed or published again from one of its own handlers: messages after
+// that no longer reach the old members, and a table published from a
+// handler is exported once the handler has returned, on the next loop turn.
 class Object
 {
 public:
@@ -481,14 +484,19 @@ private:
 
     friend struct ObjectAccess;
 
+    // The table published last; its slot owns it.
+    struct Table;
+
     Connection* m_connection;
     std::string m_path;
     std::string m_interface;
     std::map<std::string, Method> m_methods;
     std::map<std::string, Property> m_properties;
     std::map<std::string, Signal> m_signals;
-    std::vector<sd_bus_vtable> m_vtable;
+    Table* m_table = nullptr;
     Slot m_slot;
+    // For a publish() waiting for the table it replaces to go.
+    std::shared_ptr<Object*> m_self = std::make_shared<Object*>(this);
 };
 
 template<typename F>

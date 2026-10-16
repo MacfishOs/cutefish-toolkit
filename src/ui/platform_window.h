@@ -31,6 +31,8 @@ public:
     // ago, or anything when 0, and returns the device rects that changed.
     using PaintFunction = std::function<std::vector<Rect>(SkCanvas* canvas, int bufferAge)>;
 
+    // Headless windows report glass as a compositor that draws it would.
+    static void setHeadlessGlassAvailable(bool available);
     // For the application's platform; a popup when it has a parent.
     static std::unique_ptr<PlatformWindow> create(Window* window, PlatformWindow* parent,
                                                   const PopupPlacement& placement, bool grab);
@@ -81,6 +83,8 @@ public:
     virtual void setBlurShape(const Path&) {}
     // Wayland only: glass instead of the plain blur, or none.
     virtual void setGlass(const std::optional<GlassMaterial>&) {}
+    // Whether the compositor draws blur and glass behind this window.
+    virtual bool glassAvailable() const { return false; }
     virtual void setResizeAroundCenter(bool) {}
     virtual void setSkipTaskbar(bool) {}
     virtual void setAlwaysOnTop(bool) {}
@@ -99,6 +103,8 @@ public:
     virtual const Image* presentedImage() const { return nullptr; }
     // Headless only: the moves the window asked for.
     virtual int moveRequests() const { return 0; }
+    // Headless only: the glass last asked for.
+    virtual std::optional<GlassMaterial> requestedGlass() const { return std::nullopt; }
 
 protected:
     // Another window's platform side, such as a window a drag carries.

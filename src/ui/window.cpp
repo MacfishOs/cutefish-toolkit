@@ -360,6 +360,11 @@ void Window::setBackgroundGlass(const std::optional<GlassMaterial>& material)
     scheduleFrame();
 }
 
+bool Window::backgroundGlassAvailable() const
+{
+    return m_platform->glassAvailable();
+}
+
 void Window::setTransientForForeign(const std::string& handle, bool modal)
 {
     m_platform->setForeignParent(handle, modal);
@@ -593,7 +598,7 @@ Image Window::grab(uint64_t frameTimeNs)
         info, image.bits(), size_t(image.width()) * 4, &properties);
     if (!surface)
         return {};
-    Application::instance()->text().setTranslucentSubpixel(m_translucentSubpixel);
+    applyTextTarget();
     paintContent(surface->getCanvas(), nullptr);
     return image;
 }
@@ -1048,6 +1053,13 @@ void Window::handleKey(const KeyEvent& event, bool pressed)
 
     interruptFrameClients(int(FrameClient::Interruption::Input));
     hideToolTip();
+    // As Qt's ShortcutOverride: a text field claims unmodified and Shift
+    // keys and its editing sequences, and leaves the window's shortcuts with
+    // Control, Alt or Super to run first.
+    if (m_focusView && m_focusView->isEnabled() && m_focusView->acceptsTextInput()
+        && (event.modifiers & (ControlModifier | AltModifier | SuperModifier)) && !isEditingSequence(event)
+        && runShortcut(event))
+        return;
     for (View* view = m_focusView; view; view = view->parent()) {
         if (view->isEnabled() && view->keyPress(event))
             return;
@@ -1058,13 +1070,47 @@ void Window::handleKey(const KeyEvent& event, bool pressed)
         return;
     }
 
+    runShortcut(event);
+}
+
+bool Window::runShortcut(const KeyEvent& event)
+{
     // An action may change the list.
     const std::vector<Shortcut> shortcuts = m_shortcuts;
     for (const Shortcut& shortcut : shortcuts) {
         if (shortcut.key == event.key && shortcut.modifiers == event.modifiers) {
             shortcut.action();
-            return;
+            return true;
         }
+    }
+    return false;
+}
+
+bool Window::isEditingSequence(const KeyEvent& event)
+{
+    // Control, with or without Shift: copy, cut, paste, undo, redo, select
+    // all, word and document moves and word deletes.
+    if ((event.modifiers & ~ShiftModifier) != ControlModifier)
+        return false;
+    switch (event.key) {
+    case key::letter('a'):
+    case key::letter('c'):
+    case key::letter('x'):
+    case key::letter('v'):
+    case key::letter('z'):
+    case key::letter('y'):
+    case key::Left:
+    case key::Right:
+    case key::Up:
+    case key::Down:
+    case key::Home:
+    case key::End:
+    case key::Insert:
+    case key::BackSpace:
+    case key::Delete:
+        return true;
+    default:
+        return false;
     }
 }
 

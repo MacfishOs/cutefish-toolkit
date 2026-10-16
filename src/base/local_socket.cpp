@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <utility>
 #include <unistd.h>
@@ -173,6 +174,83 @@ void LocalSocket::handleEvents(uint32_t events)
         abort();
         if (auto callback = onDisconnected)
             callback();
+    }
+}
+
+LocalServer::LocalServer(EventLoop* loop)
+    : m_loop(loop ? *loop : *EventLoop::current())
+{
+}
+
+LocalServer::~LocalServer()
+{
+    *m_alive = false;
+    close();
+}
+
+bool LocalServer::listen(const std::string& path)
+{
+    close();
+    m_error.clear();
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    if (path.empty() || path.size() >= sizeof(address.sun_path)) {
+        m_error = "Invalid socket path";
+        return false;
+    }
+    std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+    // A socket file nobody listens on any more, as after a crash.
+    struct stat status{};
+    if (::lstat(path.c_str(), &status) == 0 && S_ISSOCK(status.st_mode))
+        ::unlink(path.c_str());
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        m_error = std::strerror(errno);
+        return false;
+    }
+    if (::bind(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0
+        || ::listen(fd, SOMAXCONN) != 0) {
+        m_error = std::strerror(errno);
+        ::close(fd);
+        return false;
+    }
+    m_fd = fd;
+    m_path = path;
+    m_watch = m_loop.watch(m_fd, EPOLLIN, [this](uint32_t) { acceptPending(); });
+    return true;
+}
+
+void LocalServer::close()
+{
+    if (m_fd < 0)
+        return;
+    m_loop.unwatch(m_watch);
+    m_watch = 0;
+    ::close(m_fd);
+    m_fd = -1;
+    ::unlink(m_path.c_str());
+    m_path.clear();
+}
+
+void LocalServer::acceptPending()
+{
+    const std::weak_ptr<bool> alive = m_alive;
+    while (m_fd >= 0) {
+        const int client = ::accept4(m_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (client < 0) {
+            if (errno == EINTR || errno == ECONNABORTED)
+                continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                m_error = std::strerror(errno);
+            return;
+        }
+        if (!onNewConnection) {
+            ::close(client);
+            continue;
+        }
+        onNewConnection(client);
+        if (alive.expired())
+            return;
     }
 }
 

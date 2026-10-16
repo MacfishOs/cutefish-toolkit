@@ -16,6 +16,9 @@
 
 namespace cutefish::ui {
 
+// Tests pretend a compositor that draws glass.
+static bool headlessGlassAvailable = false;
+
 namespace {
 
 class HeadlessWindow final : public PlatformWindow
@@ -44,6 +47,9 @@ public:
     int moveRequests() const override { return m_moveRequests; }
     void setCursorShape(CursorShape) override {}
     void setBlur(const RectF&, double) override {}
+    void setGlass(const std::optional<GlassMaterial>& material) override { m_glass = material; }
+    bool glassAvailable() const override { return headlessGlassAvailable; }
+    std::optional<GlassMaterial> requestedGlass() const override { return m_glass; }
     void setTextInput(const TextInputState*) override {}
 
     void show(int width, int height) override
@@ -92,9 +98,15 @@ private:
     size_t m_next = 0;
     const Image* m_presented = nullptr;
     int m_moveRequests = 0;
+    std::optional<GlassMaterial> m_glass;
 };
 
 } // namespace
+
+void PlatformWindow::setHeadlessGlassAvailable(bool available)
+{
+    headlessGlassAvailable = available;
+}
 
 std::unique_ptr<PlatformWindow> PlatformWindow::create(Window* window, PlatformWindow* parent,
                                                        const PopupPlacement& placement, bool grab)

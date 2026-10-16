@@ -4,7 +4,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <functional>
 #include <future>
+#include <string>
 #include <thread>
 #include <unistd.h>
 
@@ -16,7 +18,9 @@ using namespace cutefish::base;
 using namespace cutefish::base::dbus;
 using namespace std::chrono_literals;
 
-static constexpr const char* kService = "org.cutefish.ToolkitTest";
+// Names of this process's own: ctest runs each test in a process of its own,
+// several at once on one bus.
+static const std::string kService = "org.cutefish.ToolkitTest.p" + std::to_string(getpid());
 static constexpr const char* kPath = "/Test";
 static constexpr const char* kInterface = "org.cutefish.ToolkitTest";
 
@@ -160,6 +164,15 @@ protected:
     }
 
     // Runs the loop until quit or the time is up.
+    // Runs the loop until the condition holds, checked every 10 ms, or
+    // the time is up.
+    void runUntil(const std::function<bool()>& done, std::chrono::milliseconds limit = 5s)
+    {
+        const auto end = std::chrono::steady_clock::now() + limit;
+        while (!done() && std::chrono::steady_clock::now() < end)
+            runFor(10ms);
+    }
+
     void runFor(std::chrono::milliseconds limit)
     {
         const int timer = m_loop.startTimer(limit, false, [this] { m_loop.quit(); });
@@ -366,7 +379,7 @@ TEST_F(DBusTest, IntrospectionCarriesArgumentNames)
 // Two objects at one path under two names: each proxy hears its own.
 TEST_F(DBusTest, ProxySignalsComeFromTheirNamesOwner)
 {
-    static constexpr const char* kOther = "org.cutefish.ToolkitTest.Other";
+    const std::string kOther = kService + ".Other";
     std::unique_ptr<Connection> other = Connection::open(Connection::Bus::Session, &m_loop);
     ASSERT_TRUE(other);
     ASSERT_TRUE(other->requestName(kOther, Connection::DoNotQueue));
@@ -384,12 +397,12 @@ TEST_F(DBusTest, ProxySignalsComeFromTheirNamesOwner)
     EXPECT_TRUE(other->emitSignal(kPath, kInterface, "Changed", std::string("early")));
     runFor(300ms);
     EXPECT_TRUE(other->emitSignal(kPath, kInterface, "Changed", std::string("other")));
-    runFor(300ms);
+    runUntil([&] { return theirs.size() >= 2; });
     EXPECT_TRUE(mine.empty());
     EXPECT_EQ(theirs, (std::vector<std::string>{"early", "other"}));
 
     EXPECT_TRUE(m_proxy.call("Emit", "own"));
-    runFor(300ms);
+    runUntil([&] { return !mine.empty(); });
     EXPECT_EQ(mine, std::vector<std::string>{"own"});
     EXPECT_EQ(theirs.size(), 2u);
 
@@ -406,7 +419,7 @@ TEST_F(DBusTest, ProxySignalsComeFromTheirNamesOwner)
 
 TEST_F(DBusTest, NamesAreTakenOverWhenAllowed)
 {
-    static constexpr const char* kName = "org.cutefish.ToolkitTest.Replaceable";
+    const std::string kName = kService + ".Replaceable";
     std::unique_ptr<Connection> first = Connection::open(Connection::Bus::Session, &m_loop);
     ASSERT_TRUE(first->requestName(kName, Connection::AllowReplacement | Connection::DoNotQueue));
     // Replacing the owner, which does not allow replacement in turn.
@@ -415,4 +428,51 @@ TEST_F(DBusTest, NamesAreTakenOverWhenAllowed)
     EXPECT_FALSE(first->requestName(kName, Connection::ReplaceExisting | Connection::DoNotQueue));
     // Asked again by the owner: still its.
     EXPECT_TRUE(m_connection->requestName(kName, Connection::DoNotQueue));
+}
+
+// An object destroyed or published again from one of its own handlers: the
+// call that did it is answered, the calls right behind it no longer find the
+// old members, and the new table is there by the next call.
+TEST_F(DBusTest, ObjectsEndFromTheirOwnHandlers)
+{
+    std::unique_ptr<Connection> service = Connection::open(Connection::Bus::Session, &m_loop);
+    ASSERT_TRUE(service);
+    auto doomed = std::make_unique<Object>(service.get(), "/Doomed", kInterface);
+    doomed->addMethod("Close", [&doomed] { doomed.reset(); });
+    doomed->addProperty("Name", [] { return std::string("Doomed"); });
+    ASSERT_TRUE(doomed->publish());
+
+    Object renamed(service.get(), "/Renamed", kInterface);
+    renamed.addMethod("Rename", [&renamed] {
+        renamed.addMethod("Renamed", [] { return true; });
+        renamed.publish();
+    });
+    ASSERT_TRUE(renamed.publish());
+
+    Proxy doomedProxy(m_connection.get(), service->uniqueName(), "/Doomed", kInterface);
+    Proxy renamedProxy(m_connection.get(), service->uniqueName(), "/Renamed", kInterface);
+    std::vector<std::string> results;
+    const auto record = [&](const Reply& reply) {
+        results.push_back(reply.isError() ? reply.error().name : "ok");
+        if (results.size() == 5)
+            m_loop.quit();
+    };
+    std::vector<PendingCall> calls;
+    calls.push_back(doomedProxy.callAsync("Close", record));
+    calls.push_back(doomedProxy.callAsync("Close", record));
+    calls.push_back(doomedProxy.getPropertyAsync("Name", [&](const Reply& reply) { record(reply); }));
+    // Published again from the handler: there once the handler returned and
+    // the loop turned.
+    calls.push_back(renamedProxy.callAsync("Rename", [&](const Reply& reply) {
+        record(reply);
+        calls.push_back(renamedProxy.callAsync("Renamed", record));
+    }));
+    runFor(2s);
+    ASSERT_EQ(results.size(), 5u);
+    EXPECT_EQ(doomed, nullptr);
+    EXPECT_EQ(results[0], "ok");
+    EXPECT_NE(results[1], "ok");
+    EXPECT_NE(results[2], "ok");
+    EXPECT_EQ(results[3], "ok");
+    EXPECT_EQ(results[4], "ok");
 }

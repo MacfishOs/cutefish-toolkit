@@ -186,6 +186,11 @@ void WaylandWindow::setGlass(const std::optional<GlassMaterial>& material)
         m_shell->setGlass(material);
 }
 
+bool WaylandWindow::glassAvailable() const
+{
+    return m_connection->surfaceBlur() != nullptr;
+}
+
 void WaylandWindow::setResizeAroundCenter(bool aroundCenter)
 {
     if (m_shell)

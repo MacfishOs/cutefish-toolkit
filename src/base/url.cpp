@@ -86,4 +86,21 @@ std::string fromLocalFile(std::string_view path)
     return "file://" + percentEncoded(path, "/!$&'()*+,;=:@");
 }
 
+std::vector<std::string> parseUriList(std::string_view text)
+{
+    std::vector<std::string> urls;
+    while (!text.empty()) {
+        const size_t end = text.find('\n');
+        std::string_view line = text.substr(0, end);
+        text = end == std::string_view::npos ? std::string_view() : text.substr(end + 1);
+        const size_t first = line.find_first_not_of(" \t\r\v\f");
+        if (first == std::string_view::npos)
+            continue;
+        line = line.substr(first, line.find_last_not_of(" \t\r\v\f") - first + 1);
+        if (line.front() != '#')
+            urls.emplace_back(line);
+    }
+    return urls;
+}
+
 } // namespace cutefish::base::url

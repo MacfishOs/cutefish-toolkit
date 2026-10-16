@@ -3,11 +3,16 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "ui/dialog_window.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/layout.h"
 #include "ui/test_input.h"
+#include "ui/text_field.h"
 #include "ui/theme.h"
 #include "ui/toast.h"
 #include "ui/window.h"
@@ -35,6 +40,69 @@ TEST(WindowTest, HeaderDoubleClickTogglesMaximized)
     // The maximize button, second from the end, restores.
     TestInput::click(window, {400 - 4 - 32 - 1 - 16, 20});
     EXPECT_FALSE(window.states().maximized);
+}
+
+// FishUI puts the buttons' row in a RowLayout cell after the content and
+// before an end margin item: the row starts on a whole logical pixel, a half
+// rounding up, while the buttons keep the fractional top margin.
+TEST(WindowTest, HeaderButtonsStartOnAWholePixel)
+{
+    for (const auto& [margin, rowX] : {std::pair{4.0, 1100.0 - 4 - 98}, std::pair{9.375, 993.0},
+                                       std::pair{8.6, 993.0}, std::pair{8.5, 994.0}, std::pair{8.4, 994.0}}) {
+        Window window;
+        auto column = std::make_unique<Column>();
+        WindowHeader* header = column->addChild<WindowHeader>(48);
+        header->setLayoutHints({.fillWidth = true});
+        View* content = header->setContent<View>();
+        header->setButtonMargin(margin);
+        window.resize({1100, 300});
+        window.setContentView(std::move(column));
+        window.show();
+        window.grab();
+        std::vector<RectF> buttons;
+        for (const auto& child : header->children()) {
+            if (child.get() != content)
+                buttons.push_back(child->geometry());
+        }
+        ASSERT_EQ(buttons.size(), 3u);
+        SCOPED_TRACE(margin);
+        EXPECT_EQ(buttons[0], (RectF{rowX, margin, 32, 32}));
+        EXPECT_EQ(buttons[1].x, rowX + 33);
+        EXPECT_EQ(buttons[2].x, rowX + 66);
+        EXPECT_EQ(content->geometry().width, rowX - 1);
+    }
+}
+
+// As Qt's ShortcutOverride: a focused text field keeps plain and Shift keys
+// and its editing sequences, and a window shortcut with Control, Alt or
+// Super runs before it.
+TEST(WindowTest, ModifiedShortcutsGoBeforeTextFields)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    TextField* field = column->addChild<TextField>("text");
+    window.resize({300, 100});
+    window.setContentView(std::move(column));
+    window.show();
+    window.grab();
+    TestInput::setKeyboardFocus(window, true);
+    field->setFocus();
+    int accepted = 0;
+    field->onAccepted = [&accepted] { ++accepted; };
+    std::vector<std::string> ran;
+    window.addShortcut(ControlModifier, key::Return, [&ran] { ran.push_back("Ctrl+Return"); });
+    window.addShortcut(ControlModifier, key::letter('a'), [&ran] { ran.push_back("Ctrl+A"); });
+    window.addShortcut(NoModifier, key::Return, [&ran] { ran.push_back("Return"); });
+
+    TestInput::typeKey(window, key::Return, ControlModifier);
+    EXPECT_EQ(ran, std::vector<std::string>{"Ctrl+Return"});
+    EXPECT_EQ(accepted, 0);
+    TestInput::typeKey(window, key::letter('a'), ControlModifier);
+    EXPECT_EQ(ran.size(), 1u);
+    EXPECT_EQ(field->selectedText(), "text");
+    TestInput::typeKey(window, key::Return);
+    EXPECT_EQ(ran.size(), 1u);
+    EXPECT_EQ(accepted, 1);
 }
 
 namespace {

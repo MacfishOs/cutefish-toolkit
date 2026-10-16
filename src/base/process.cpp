@@ -148,6 +148,11 @@ void Process::setOutputForwarded(bool forwarded)
     m_outputForwarded = forwarded;
 }
 
+void Process::setStandardErrorForwarded(bool forwarded)
+{
+    m_errorForwarded = forwarded;
+}
+
 void Process::setInheritedFd(int fd)
 {
     m_inheritedFd = fd;
@@ -171,8 +176,9 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
             closeFd(pipe[1]);
         }
     };
-    if (pipe2(input, O_CLOEXEC) != 0
-        || (!m_outputForwarded && (pipe2(output, O_CLOEXEC) != 0 || pipe2(error, O_CLOEXEC) != 0))) {
+    const bool collectsErrors = !m_outputForwarded && !m_errorForwarded;
+    if (pipe2(input, O_CLOEXEC) != 0 || (!m_outputForwarded && pipe2(output, O_CLOEXEC) != 0)
+        || (collectsErrors && pipe2(error, O_CLOEXEC) != 0)) {
         closePipes();
         return false;
     }
@@ -190,10 +196,10 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
 
     SpawnSetup setup;
     posix_spawn_file_actions_adddup2(&setup.actions, input[0], STDIN_FILENO);
-    if (!m_outputForwarded) {
+    if (!m_outputForwarded)
         posix_spawn_file_actions_adddup2(&setup.actions, output[1], STDOUT_FILENO);
+    if (collectsErrors)
         posix_spawn_file_actions_adddup2(&setup.actions, error[1], STDERR_FILENO);
-    }
     if (inherited >= 0) {
         posix_spawn_file_actions_adddup2(&setup.actions, inherited, kInheritedFd);
         posix_spawn_file_actions_addclosefrom_np(&setup.actions, kInheritedFd + 1);

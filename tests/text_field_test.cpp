@@ -11,6 +11,7 @@
 #include "ui/search_field.h"
 #include "ui/test_input.h"
 #include "ui/text_field.h"
+#include "ui/theme.h"
 #include "ui/window.h"
 
 using namespace cutefish::ui;
@@ -291,4 +292,71 @@ TEST(TextFieldTest, PasswordsStayOffThePrimarySelection)
     std::string selected;
     Clipboard::requestText([&](std::string text) { selected = std::move(text); }, ClipboardMode::Selection);
     EXPECT_EQ(selected, "before");
+}
+
+// Centred while it fits, as Text.AlignHCenter: the ink sits in the middle of
+// the margins, the caret follows a click into the centred text, and a
+// heavier weight inks more.
+TEST(TextFieldTest, CentresAndWeighsItsText)
+{
+    Fixture f("42");
+    f.field->setFrameVisible(false);
+    f.field->setHorizontallyCentered(true);
+    f.window.grab();
+    const RectF bounds = f.field->geometry();
+    const Rect ink = TestInput::inkRect(*f.field, 1);
+    const double middle = Theme::current().largeSpacing + (bounds.width - 2 * Theme::current().largeSpacing) / 2;
+    // The caret at the end may add a pixel on the right.
+    EXPECT_LE(std::abs(ink.x + ink.width / 2.0 - middle), 2);
+
+    // A click just right of the middle lands after the first digit, not at
+    // the end as it would in left-aligned text.
+    f.field->setCursorPosition(0);
+    TestInput::click(f.window, {bounds.x + middle + 1, bounds.y + bounds.height / 2});
+    EXPECT_EQ(f.field->cursorPosition(), 1u);
+
+    const auto inked = [&f] {
+        const Image image = f.window.grab();
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x)
+                count += image.pixel(x, y).g < 128;
+        }
+        return count;
+    };
+    f.field->setText("Medium title");
+    const int regular = inked();
+    f.field->setFontWeight(700);
+    EXPECT_GT(inked(), regular);
+}
+
+// The glyphs in a colour of their own, as the calendar's grey ones: the
+// darkest glyph pixel over the pill is no darker than that colour.
+TEST(TextFieldTest, SearchFieldGlyphColour)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    SearchField* field = column->addChild<SearchField>();
+    field->setLayoutHints({.preferredWidth = 220, .preferredHeight = 30});
+    window.resize({300, 60});
+    window.setContentView(std::move(column));
+    window.show();
+    window.grab();
+    const RectF bounds = field->geometry();
+    const auto darkestGlyph = [&window, bounds] {
+        const Image image = window.grab();
+        int value = 255;
+        // The search glyph, 12 from the start, 14 wide.
+        for (int y = int(bounds.y); y < int(bounds.bottom()); ++y) {
+            for (int x = int(bounds.x + 12); x < int(bounds.x + 26); ++x)
+                value = std::min(value, int(image.pixel(x, y).g));
+        }
+        return value;
+    };
+    const Theme& theme = Theme::current();
+    EXPECT_NEAR(darkestGlyph(), theme.text.g, 40);
+    field->setGlyphColor(theme.disabledText);
+    EXPECT_GE(darkestGlyph(), theme.disabledText.g - 2);
+    field->setGlyphColor(std::nullopt);
+    EXPECT_NEAR(darkestGlyph(), theme.text.g, 40);
 }

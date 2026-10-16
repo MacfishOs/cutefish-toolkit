@@ -4,14 +4,17 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "ui/event.h"
 #include "ui/geometry.h"
 #include "ui/image.h"
+#include "ui/window.h"
 
 namespace cutefish::ui {
 
+class DropOffer;
 class View;
 class Window;
 struct WindowStates;
@@ -57,6 +60,17 @@ public:
     static View* toolTip(Window& window);
     // How often the window asked the window system to move it.
     static int moveRequests(Window& window);
+    // Headless windows report glass as available, or not (the default).
+    static void setGlassAvailable(bool available);
+    // The glass the window asked for, or none.
+    static std::optional<GlassMaterial> backgroundGlass(Window& window);
+
+    // A drag from another client entering, moving over, leaving or dropped
+    // on the window; each returns the action the window takes.
+    static uint32_t dragEnter(Window& window, PointF position, DropOffer* offer, uint32_t modifiers = NoModifier);
+    static uint32_t dragMove(Window& window, PointF position, uint32_t modifiers = NoModifier);
+    static void dragLeave(Window& window);
+    static uint32_t drop(Window& window);
 };
 
 } // namespace cutefish::ui

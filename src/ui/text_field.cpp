@@ -86,6 +86,8 @@ struct TextField::Private
     size_t savedCursor = 0;
     std::function<bool(const std::string&)> validator;
     double fontSize = 0;
+    int weight = 400;
+    bool centred = false;
     std::string family;
     std::optional<Color> textColor;
     std::optional<Color> placeholderColor;
@@ -190,7 +192,7 @@ struct TextField::Private
         const TextContext& context = Application::instance()->text();
         const Theme& theme = Theme::current();
         const Color color = textColor.value_or(enabled ? theme.text : theme.disabledText);
-        const textlayout::TextStyle normal = context.style(fontSize, 400, color, family);
+        const textlayout::TextStyle normal = context.style(fontSize, weight, color, family);
         textlayout::ParagraphStyle style;
         style.setTextStyle(normal);
         style.setMaxLines(1);
@@ -242,9 +244,11 @@ struct TextField::Private
             return placeholderParagraph.get();
         const TextContext& context = Application::instance()->text();
         const textlayout::TextStyle style = context.style(
-            fontSize, 400, placeholderColor.value_or(Theme::current().text.withAlpha(0.4)), family);
+            fontSize, weight, placeholderColor.value_or(Theme::current().text.withAlpha(0.4)), family);
         textlayout::ParagraphStyle paragraphStyle;
         paragraphStyle.setTextStyle(style);
+        if (centred)
+            paragraphStyle.setTextAlign(textlayout::TextAlign::kCenter);
         paragraphStyle.setApplyRoundingHack(false);
         paragraphStyle.setMaxLines(1);
         paragraphStyle.setEllipsis(SkString("…"));
@@ -256,6 +260,16 @@ struct TextField::Private
         placeholderParagraph = builder->Build();
         placeholderTheme = Theme::generation();
         return placeholderParagraph.get();
+    }
+
+    // Where centred text starts in a content box of the width: centred while
+    // it fits, as TextInput's horizontal alignment, else at the start.
+    double alignX(double width) const
+    {
+        if (!centred || !paragraph)
+            return 0;
+        const double used = paragraph->getMaxIntrinsicWidth();
+        return used <= width ? (width - used) / 2 : 0;
     }
 
     // Logical pixels from the start of the text to the caret at a display offset.
@@ -355,6 +369,27 @@ void TextField::setTextMargins(double left, double right)
     d->rightMargin = right;
     requestLayout();
     requestPaint();
+}
+
+void TextField::setFontWeight(int weight)
+{
+    d->weight = weight;
+    d->dirty = true;
+    d->placeholderParagraph.reset();
+    requestLayout();
+    requestPaint();
+}
+
+void TextField::setHorizontallyCentered(bool centred)
+{
+    d->centred = centred;
+    d->placeholderParagraph.reset();
+    requestPaint();
+}
+
+double TextField::contentWidth() const
+{
+    return std::max(0.0, geometry().width - d->left() - d->right());
 }
 
 void TextField::setFrameVisible(bool visible)
@@ -623,8 +658,8 @@ void TextField::paint(Painter& painter)
     const double pixelSize = d->pixelSize();
     const bool hinted = textLayoutMode().hinted;
     const TextLineBox line =
-        textLineBoxes(text, context.typeface(400, d->family).get(), pixelSize, scale, hinted).front();
-    const double originX = content.x - d->scrollX;
+        textLineBoxes(text, context.typeface(d->weight, d->family).get(), pixelSize, scale, hinted).front();
+    const double originX = content.x + d->alignX(width) - d->scrollX;
     const double lineTop = (bounds.height - line.height) / 2;
     const PointF offset = painter.offset();
     const auto device = [scale, offset](double x, double y) {
@@ -702,7 +737,7 @@ void TextField::pointerPress(const PointerEvent& event)
     if (event.button != MouseButton::Left)
         return;
     // Text inside the padding, as in paint.
-    const double x = event.position.x - d->left() + d->scrollX;
+    const double x = event.position.x - d->left() - d->alignX(contentWidth()) + d->scrollX;
     if (!d->preedit.empty()) {
         d->preedit.clear();
         d->dirty = true;
@@ -733,7 +768,7 @@ void TextField::pointerMove(const PointerEvent& event)
 {
     if (!d->selecting || d->granularity == 3)
         return;
-    const double x = event.position.x - d->left() + d->scrollX;
+    const double x = event.position.x - d->left() - d->alignX(contentWidth()) + d->scrollX;
     const size_t offset = d->fromDisplay(d->displayOffsetAt(x));
     if (d->granularity == 2) {
         const auto word = d->edit.wordAt(offset);
@@ -918,8 +953,8 @@ TextInputState TextField::textInputState() const
     const double padding = d->left();
     // The state follows an edit before it is painted; lay the new text out first.
     textlayout::Paragraph* paragraph = d->layout(isEnabled());
-    const double x = padding + d->caretX(d->caretDisplayOffset()) - d->scrollX;
-    const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(400, d->family).get(),
+    const double x = padding + d->alignX(contentWidth()) + d->caretX(d->caretDisplayOffset()) - d->scrollX;
+    const double height = textLineBoxes(paragraph, Application::instance()->text().typeface(d->weight, d->family).get(),
                                         d->pixelSize(), scale, mode.hinted)
                               .front()
                               .height;

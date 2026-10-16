@@ -54,6 +54,7 @@ cutefish_wayland_protocol(cutefish-shell-v1
 add_subdirectory(base)
 
 set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
+    ui/about_dialog.h
     ui/animated_image.h
     ui/animation.h
     ui/application.h
@@ -68,6 +69,8 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/combo_box.h
     ui/dialog_window.h
     ui/drag.h
+    ui/drop_down_popup.h
+    ui/file_drop_area.h
     ui/embedded_gpu.h
     ui/embedded_host.h
     ui/embedded_window.h
@@ -92,6 +95,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/path.h
     ui/progress_bar.h
     ui/cell_layout.h
+    ui/round_image_button.h
     ui/scroll_bar.h
     ui/scroll_view.h
     ui/scroller.h
@@ -125,6 +129,7 @@ add_library(cutefish-toolkit SHARED
     wayland/text_input.cpp
     wayland/shell_surface.cpp
     wayland/wayland_window.cpp
+    ui/about_dialog.cpp
     ui/animated_image.cpp
     ui/animation.cpp
     ui/appearance.cpp
@@ -135,6 +140,7 @@ add_library(cutefish-toolkit SHARED
     ui/clipboard.cpp
     ui/combo_box.cpp
     ui/dialog_window.cpp
+    ui/drop_down_popup.cpp
     ui/editable_text.cpp
     ui/embedded_gpu.cpp
     ui/embedded_window.cpp
@@ -143,6 +149,7 @@ add_library(cutefish-toolkit SHARED
     ui/geometry.cpp
     ui/glyph_run.cpp
     ui/file_chooser.cpp
+    ui/file_drop_area.cpp
     ui/header_backdrop.cpp
     ui/header_button.cpp
     ui/icon.cpp
@@ -166,10 +173,12 @@ add_library(cutefish-toolkit SHARED
     ui/blurred_copy.cpp
     ui/fast_blur.cpp
     ui/platform_window.cpp
+    ui/popup_glass.cpp
     ui/progress_bar.cpp
     ui/masked_layer.cpp
     ui/cell_layout.cpp
     ui/smooth_rectangle.cpp
+    ui/round_image_button.cpp
     ui/rounded_path.cpp
     ui/rounded_shape.cpp
     ui/scroll_bar.cpp
