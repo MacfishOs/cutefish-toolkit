@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <clocale>
+#include <cstring>
+#include <memory>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -29,18 +31,9 @@ struct KeyboardListeners
         close(fd);
         if (map == MAP_FAILED)
             return;
-        xkb_keymap* keymap = xkb_keymap_new_from_string(self->m_context,
-                                                        static_cast<const char*>(map),
-                                                        XKB_KEYMAP_FORMAT_TEXT_V1,
-                                                        XKB_KEYMAP_COMPILE_NO_FLAGS);
+        std::string text(static_cast<const char*>(map), strnlen(static_cast<const char*>(map), size));
         munmap(map, size);
-        if (!keymap)
-            return;
-
-        xkb_state_unref(self->m_state);
-        xkb_keymap_unref(self->m_keymap);
-        self->m_keymap = keymap;
-        self->m_state = xkb_state_new(keymap);
+        self->compileKeymap(std::move(text));
     }
 
     static void enter(void* data, wl_keyboard*, uint32_t, wl_surface* surface, wl_array*)
@@ -69,49 +62,13 @@ struct KeyboardListeners
         auto* self = static_cast<Keyboard*>(data);
         if (state == WL_KEYBOARD_KEY_STATE_PRESSED && self->onKeyPressSerial)
             self->onKeyPressSerial(serial);
-        if (!self->m_state)
-            return;
-        // Evdev codes are xkb's less 8.
-        const uint32_t keycode = key + 8;
-        const bool pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
-
-        KeyEvent event;
-        if (!pressed) {
-            if (keycode == self->m_repeatKeycode)
-                self->stopRepeat();
-            self->translate(keycode, false, &event);
-            self->deliver(event, false);
-            return;
-        }
-
-        if (!self->translate(keycode, true, &event))
-            return;
-        self->deliver(event, true);
-        if (xkb_keymap_key_repeats(self->m_keymap, keycode))
-            self->startRepeat(keycode);
+        self->handleKey(key, state);
     }
 
     static void modifiers(void* data, wl_keyboard*, uint32_t, uint32_t depressed, uint32_t latched,
                           uint32_t locked, uint32_t group)
     {
-        auto* self = static_cast<Keyboard*>(data);
-        if (!self->m_state)
-            return;
-        xkb_state_update_mask(self->m_state, depressed, latched, locked, 0, 0, group);
-
-        const auto active = [self](const char* name) {
-            return xkb_state_mod_name_is_active(self->m_state, name, XKB_STATE_MODS_EFFECTIVE) > 0;
-        };
-        uint32_t modifiers = NoModifier;
-        if (active(XKB_MOD_NAME_SHIFT))
-            modifiers |= ShiftModifier;
-        if (active(XKB_MOD_NAME_CTRL))
-            modifiers |= ControlModifier;
-        if (active(XKB_MOD_NAME_ALT))
-            modifiers |= AltModifier;
-        if (active(XKB_MOD_NAME_LOGO))
-            modifiers |= SuperModifier;
-        self->m_modifiers = modifiers;
+        static_cast<Keyboard*>(data)->handleModifiers(depressed, latched, locked, group);
     }
 
     static void repeatInfo(void* data, wl_keyboard*, int32_t rate, int32_t delay)
@@ -129,13 +86,24 @@ struct KeyboardListeners
 Keyboard::Keyboard(base::EventLoop& loop, wl_keyboard* keyboard)
     : m_loop(loop)
     , m_keyboard(keyboard)
-    , m_context(xkb_context_new(XKB_CONTEXT_NO_FLAGS))
 {
+    // Keys typed before the table is in are not composed.
     const char* locale = std::setlocale(LC_CTYPE, nullptr);
-    m_composeTable = xkb_compose_table_new_from_locale(m_context, locale ? locale : "C",
-                                                       XKB_COMPOSE_COMPILE_NO_FLAGS);
-    if (m_composeTable)
-        m_composeState = xkb_compose_state_new(m_composeTable, XKB_COMPOSE_STATE_NO_FLAGS);
+    m_composeJob = base::runInThread(
+        [locale = std::string(locale ? locale : "C")] {
+            xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+            xkb_compose_table* table = context ? xkb_compose_table_new_from_locale(context, locale.c_str(),
+                                                                                  XKB_COMPOSE_COMPILE_NO_FLAGS)
+                                               : nullptr;
+            xkb_context_unref(context);
+            return std::shared_ptr<xkb_compose_table>(table, xkb_compose_table_unref);
+        },
+        [this](std::shared_ptr<xkb_compose_table> table) {
+            if (!table)
+                return;
+            m_composeTable = xkb_compose_table_ref(table.get());
+            m_composeState = xkb_compose_state_new(m_composeTable, XKB_COMPOSE_STATE_NO_FLAGS);
+        });
     wl_keyboard_add_listener(keyboard, &KeyboardListeners::listener, this);
 }
 
@@ -147,7 +115,91 @@ Keyboard::~Keyboard()
     xkb_compose_table_unref(m_composeTable);
     xkb_state_unref(m_state);
     xkb_keymap_unref(m_keymap);
-    xkb_context_unref(m_context);
+}
+
+void Keyboard::compileKeymap(std::string text)
+{
+    m_keymapJob = base::runInThread(
+        [text = std::move(text)] {
+            xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+            xkb_keymap* keymap = context ? xkb_keymap_new_from_string(context, text.c_str(), XKB_KEYMAP_FORMAT_TEXT_V1,
+                                                                      XKB_KEYMAP_COMPILE_NO_FLAGS)
+                                         : nullptr;
+            xkb_context_unref(context);
+            return std::shared_ptr<xkb_keymap>(keymap, xkb_keymap_unref);
+        },
+        [this](std::shared_ptr<xkb_keymap> keymap) { setKeymap(keymap.get()); });
+}
+
+void Keyboard::setKeymap(xkb_keymap* keymap)
+{
+    const std::optional<Modifiers> modifiers = m_pendingModifiers;
+    const std::vector<std::pair<uint32_t, uint32_t>> keys = std::move(m_pendingKeys);
+    m_pendingModifiers.reset();
+    m_pendingKeys.clear();
+    if (!keymap)
+        return;
+    xkb_state_unref(m_state);
+    xkb_keymap_unref(m_keymap);
+    m_keymap = xkb_keymap_ref(keymap);
+    m_state = xkb_state_new(keymap);
+    if (modifiers)
+        handleModifiers(modifiers->depressed, modifiers->latched, modifiers->locked, modifiers->group);
+    for (const auto& [key, state] : keys)
+        handleKey(key, state);
+}
+
+void Keyboard::handleModifiers(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group)
+{
+    if (m_keymapJob.isPending()) {
+        m_pendingModifiers = Modifiers{depressed, latched, locked, group};
+        return;
+    }
+    if (!m_state)
+        return;
+    xkb_state_update_mask(m_state, depressed, latched, locked, 0, 0, group);
+
+    const auto active = [this](const char* name) {
+        return xkb_state_mod_name_is_active(m_state, name, XKB_STATE_MODS_EFFECTIVE) > 0;
+    };
+    uint32_t modifiers = NoModifier;
+    if (active(XKB_MOD_NAME_SHIFT))
+        modifiers |= ShiftModifier;
+    if (active(XKB_MOD_NAME_CTRL))
+        modifiers |= ControlModifier;
+    if (active(XKB_MOD_NAME_ALT))
+        modifiers |= AltModifier;
+    if (active(XKB_MOD_NAME_LOGO))
+        modifiers |= SuperModifier;
+    m_modifiers = modifiers;
+}
+
+void Keyboard::handleKey(uint32_t key, uint32_t state)
+{
+    if (m_keymapJob.isPending()) {
+        m_pendingKeys.emplace_back(key, state);
+        return;
+    }
+    if (!m_state)
+        return;
+    // Evdev codes are xkb's less 8.
+    const uint32_t keycode = key + 8;
+    const bool pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
+
+    KeyEvent event;
+    if (!pressed) {
+        if (keycode == m_repeatKeycode)
+            stopRepeat();
+        translate(keycode, false, &event);
+        deliver(event, false);
+        return;
+    }
+
+    if (!translate(keycode, true, &event))
+        return;
+    deliver(event, true);
+    if (xkb_keymap_key_repeats(m_keymap, keycode))
+        startRepeat(keycode);
 }
 
 void Keyboard::forget(ShellSurface* shell)

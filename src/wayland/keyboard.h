@@ -5,13 +5,16 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <string>
+#include <vector>
 
+#include "base/thread_pool.h"
 #include "ui/event.h"
 
 struct wl_keyboard;
 struct xkb_compose_state;
 struct xkb_compose_table;
-struct xkb_context;
 struct xkb_keymap;
 struct xkb_state;
 
@@ -43,6 +46,12 @@ public:
 private:
     friend struct KeyboardListeners;
 
+    // Keymaps and compose tables take milliseconds to compile, so a thread
+    // compiles them; key and modifier events wait for the keymap.
+    void compileKeymap(std::string text);
+    void setKeymap(xkb_keymap* keymap);
+    void handleModifiers(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group);
+    void handleKey(uint32_t key, uint32_t state);
     // Returns false while a compose sequence swallows the key.
     bool translate(uint32_t keycode, bool compose, KeyEvent* event);
     void deliver(const KeyEvent& event, bool pressed);
@@ -52,7 +61,6 @@ private:
 
     base::EventLoop& m_loop;
     wl_keyboard* m_keyboard;
-    xkb_context* m_context = nullptr;
     xkb_keymap* m_keymap = nullptr;
     xkb_state* m_state = nullptr;
     xkb_compose_table* m_composeTable = nullptr;
@@ -64,6 +72,17 @@ private:
     int32_t m_repeatDelay = 600;
     uint32_t m_repeatKeycode = 0;
     int m_repeatTimer = 0;
+    base::Job m_keymapJob;
+    base::Job m_composeJob;
+    struct Modifiers
+    {
+        uint32_t depressed;
+        uint32_t latched;
+        uint32_t locked;
+        uint32_t group;
+    };
+    std::optional<Modifiers> m_pendingModifiers;
+    std::vector<std::pair<uint32_t, uint32_t>> m_pendingKeys;
 };
 
 } // namespace cutefish::ui::wayland
