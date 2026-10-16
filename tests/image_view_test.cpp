@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include <jpeglib.h>
@@ -33,7 +35,10 @@ constexpr Color kRed = Color::rgb(0xFF0000);
 constexpr Color kBlue = Color::rgb(0x0000FF);
 constexpr Color kWhite = Color::rgb(0xFFFFFF);
 
-const fs::path kDirectory = "/tmp/cutefish-toolkit-image-test";
+// One per process: ctest runs the tests of this suite side by side.
+const fs::path kDirectory = "/tmp/cutefish-toolkit-image-test-" + std::to_string(getpid());
+// The thumbnail cache keys are this fixed path's, and only one test uses it.
+const fs::path kThumbnailDirectory = "/tmp/cutefish-toolkit-thumbnail-test";
 
 bool near(Color a, Color b, int tolerance = 6)
 {
@@ -57,7 +62,7 @@ std::vector<uint8_t> halves(int width, int height)
     return pixels;
 }
 
-std::string writePng(const std::string& name, int width, int height)
+std::string writePng(const std::string& name, int width, int height, const fs::path& directory = kDirectory)
 {
     Image image(width, height);
     const std::vector<uint8_t> pixels = halves(width, height);
@@ -66,7 +71,7 @@ std::string writePng(const std::string& name, int width, int height)
             const uint8_t* p = &pixels[(size_t(y) * size_t(width) + size_t(x)) * 4];
             image.setPixel(x, y, Color::rgb(uint32_t(p[0]) << 16 | uint32_t(p[1]) << 8 | p[2]));
         }
-    const std::string path = (kDirectory / name).string();
+    const std::string path = (directory / name).string();
     EXPECT_TRUE(image.savePng(path));
     return path;
 }
@@ -362,9 +367,11 @@ TEST_F(ImageViewTest, TurnsByExifOnlyWhenAsked)
 
 TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
 {
-    const std::string path = writePng("a b[1].png", 300, 150);
-    // The URI key is file:///tmp/cutefish-toolkit-image-test/a%20b[1].png.
-    const fs::path cached = fs::path(cutefish::base::paths::cacheHome()) / "thumbnails/large/9a737e188c4c86903f69ad5fa7ef1ee9.png";
+    fs::remove_all(kThumbnailDirectory);
+    fs::create_directories(kThumbnailDirectory);
+    const std::string path = writePng("a b[1].png", 300, 150, kThumbnailDirectory);
+    // The URI key is file:///tmp/cutefish-toolkit-thumbnail-test/a%20b[1].png.
+    const fs::path cached = fs::path(cutefish::base::paths::cacheHome()) / "thumbnails/large/c32fda64f3ffbd3ab831d5adc027bd5e.png";
     fs::remove(cached);
 
     Shown shown = show(path, {200, 100}, ImageView::FillMode::PreserveAspectCrop, 1,
@@ -379,12 +386,12 @@ TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
     EXPECT_EQ(shown.view->sizeHint(), (SizeF{256, 128}));
     fs::remove(cached);
 
-    const std::string broken = (kDirectory / "broken.png").string();
+    const std::string broken = (kThumbnailDirectory / "broken.png").string();
     FILE* file = std::fopen(broken.c_str(), "wb");
     std::fputs("not an image", file);
     std::fclose(file);
     const fs::path marker = fs::path(cutefish::base::paths::cacheHome())
-            / "thumbnails/fail/cutefish/4bdb5edeb727fc2e3f9e5dc31e895a8f.png";
+            / "thumbnails/fail/cutefish/7727b713e72d1077247ab07020b1c845.png";
     fs::remove(marker);
     Shown failed = show(broken, {100, 100}, ImageView::FillMode::Stretch, 1,
                         [](ImageView* view) { view->setThumbnail(true); });
@@ -392,6 +399,7 @@ TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
     EXPECT_EQ(failed.view->status(), ImageView::Status::Error);
     EXPECT_TRUE(fs::exists(marker));
     fs::remove(marker);
+    fs::remove_all(kThumbnailDirectory);
 }
 
 TEST_F(ImageViewTest, DrawsAsAMaskedLayer)

@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <functional>
 #include <string>
 
@@ -31,17 +31,25 @@ protected:
     }
 };
 
+// This thread's CPU time, so the tests running beside this one do not count.
+double threadMilliseconds()
+{
+    timespec time;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time);
+    return double(time.tv_sec) * 1000 + double(time.tv_nsec) / 1e6;
+}
+
 // Milliseconds a whole-window repaint takes, on average over the frames.
 double frameCost(Window& window, int frames, const std::function<void(int)>& step)
 {
     window.grab();
-    const auto start = std::chrono::steady_clock::now();
+    const double start = threadMilliseconds();
     for (int i = 0; i < frames; ++i) {
         step(i);
         window.contentView()->requestPaint();
         window.grab();
     }
-    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / frames;
+    return (threadMilliseconds() - start) / frames;
 }
 
 } // namespace

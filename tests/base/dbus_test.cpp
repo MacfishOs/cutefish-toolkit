@@ -68,6 +68,8 @@ public:
     }
 
     bool isReady() const { return m_ready; }
+    // Why it is not ready.
+    const std::string& failure() const { return m_failure; }
     void releaseName()
     {
         std::promise<void> done;
@@ -85,7 +87,13 @@ private:
         m_loop = &loop;
         m_handle = loop.handle();
         std::unique_ptr<Connection> connection = Connection::open(Connection::Bus::Session, &loop);
-        if (!connection || !connection->requestName(kService)) {
+        if (!connection) {
+            m_failure = "cannot connect to the session bus";
+            ready.set_value(false);
+            return;
+        }
+        if (!connection->requestName(kService)) {
+            m_failure = "cannot own " + kService;
             ready.set_value(false);
             return;
         }
@@ -137,7 +145,9 @@ private:
         object.addMethod("Mismatched", "ss", "", [](MethodCall& call) { call.reply(); },
                          ArgumentNames{{"only"}, {}});
         object.addSignal("NamedChanged", "sa(ii)", {"name", "items"});
-        ready.set_value(object.publish());
+        if (!object.publish())
+            m_failure = "cannot publish " + std::string(kPath);
+        ready.set_value(m_failure.empty());
         loop.run();
         m_connection = nullptr;
     }
@@ -148,6 +158,7 @@ private:
     Connection* m_connection = nullptr;
     int32_t m_count = 3;
     bool m_ready = false;
+    std::string m_failure;
 };
 
 class DBusTest : public testing::Test
@@ -159,7 +170,7 @@ protected:
         if (!m_connection || m_connection->uniqueName().empty())
             GTEST_SKIP() << "No session bus; run the tests in dbus-run-session";
         m_service = std::make_unique<TestService>();
-        ASSERT_TRUE(m_service->isReady());
+        ASSERT_TRUE(m_service->isReady()) << m_service->failure();
         m_proxy = Proxy(m_connection.get(), kService, kPath, kInterface);
     }
 

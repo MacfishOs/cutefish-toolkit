@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <string>
+#include <unistd.h>
 
 #include "base/event_loop.h"
 #include "base/file.h"
@@ -26,8 +28,10 @@ protected:
     void SetUp() override
     {
         m_previousId = Application::instance()->applicationId();
-        Application::instance()->setApplicationId("cutefish-toolkit-restore-test");
-        m_path = base::paths::cutefishConfig("toolkit-restore-test");
+        // One file per process: ctest runs the tests of this suite side by side.
+        const std::string name = "toolkit-restore-test-" + std::to_string(getpid());
+        Application::instance()->setApplicationId("cutefish-" + name);
+        m_path = base::paths::cutefishConfig(name);
         std::filesystem::remove(m_path);
     }
     void TearDown() override
