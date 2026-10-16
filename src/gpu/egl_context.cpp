@@ -5,6 +5,7 @@
 
 #include <EGL/eglext.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 #include <wayland-egl.h>
@@ -50,56 +51,83 @@ static EGLConfig chooseConfig(EGLDisplay display)
 std::unique_ptr<EglContext> EglContext::create(wl_display* display)
 {
     std::unique_ptr<EglContext> context(new EglContext);
-
-    context->m_display = eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, display, nullptr);
-    if (context->m_display == EGL_NO_DISPLAY
-        || !eglInitialize(context->m_display, nullptr, nullptr)) {
-        fprintf(stderr, "cutefish-toolkit: cannot initialise EGL\n");
+    if (!context->initialize(display))
         return nullptr;
+    return context;
+}
+
+std::unique_ptr<EglContext> EglContext::createInBackground(wl_display* display)
+{
+    std::unique_ptr<EglContext> context(new EglContext);
+    EglContext* self = context.get();
+    self->m_initializer = std::thread([self, display] {
+        self->m_initialized = self->initialize(display);
+        // The context is made current again on the thread that draws.
+        if (self->m_initialized)
+            eglMakeCurrent(self->m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglReleaseThread();
+    });
+    return context;
+}
+
+void EglContext::finishInitialization() const
+{
+    m_initializer.join();
+    if (!m_initialized)
+        std::exit(1);
+    eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_context);
+}
+
+bool EglContext::initialize(wl_display* display)
+{
+    m_display = eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, display, nullptr);
+    if (m_display == EGL_NO_DISPLAY || !eglInitialize(m_display, nullptr, nullptr)) {
+        fprintf(stderr, "cutefish-toolkit: cannot initialise EGL\n");
+        return false;
     }
     eglBindAPI(EGL_OPENGL_ES_API);
 
-    context->m_config = chooseConfig(context->m_display);
-    if (!context->m_config) {
+    m_config = chooseConfig(m_display);
+    if (!m_config) {
         fprintf(stderr, "cutefish-toolkit: no suitable EGL config\n");
-        return nullptr;
+        return false;
     }
-    eglGetConfigAttrib(context->m_display, context->m_config, EGL_STENCIL_SIZE,
-                       &context->m_stencilBits);
+    eglGetConfigAttrib(m_display, m_config, EGL_STENCIL_SIZE, &m_stencilBits);
 
-    const char* extensions = eglQueryString(context->m_display, EGL_EXTENSIONS);
+    const char* extensions = eglQueryString(m_display, EGL_EXTENSIONS);
     const auto hasExtension = [extensions](const char* name) {
         return extensions && std::strstr(extensions, name);
     };
-    context->m_hasBufferAge = hasExtension("EGL_EXT_buffer_age");
+    m_hasBufferAge = hasExtension("EGL_EXT_buffer_age");
     if (hasExtension("EGL_KHR_swap_buffers_with_damage")) {
-        context->m_swapBuffersWithDamage = reinterpret_cast<PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC>(
+        m_swapBuffersWithDamage = reinterpret_cast<PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC>(
             eglGetProcAddress("eglSwapBuffersWithDamageKHR"));
     } else if (hasExtension("EGL_EXT_swap_buffers_with_damage")) {
-        context->m_swapBuffersWithDamage = reinterpret_cast<PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC>(
+        m_swapBuffersWithDamage = reinterpret_cast<PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC>(
             eglGetProcAddress("eglSwapBuffersWithDamageEXT"));
     }
 
     const EGLint contextAttributes[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_NONE};
-    context->m_context = eglCreateContext(context->m_display, context->m_config, EGL_NO_CONTEXT,
-                                          contextAttributes);
-    if (context->m_context == EGL_NO_CONTEXT) {
+    m_context = eglCreateContext(m_display, m_config, EGL_NO_CONTEXT, contextAttributes);
+    if (m_context == EGL_NO_CONTEXT) {
         fprintf(stderr, "cutefish-toolkit: cannot create a GLES 3 context\n");
-        return nullptr;
+        return false;
     }
 
     // Skia needs a current context to probe the driver; no window exists yet.
-    eglMakeCurrent(context->m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, context->m_context);
-    context->m_skiaContext = GrDirectContexts::MakeGL(GrGLInterfaces::MakeEGL());
-    if (!context->m_skiaContext) {
+    eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_context);
+    m_skiaContext = GrDirectContexts::MakeGL(GrGLInterfaces::MakeEGL());
+    if (!m_skiaContext) {
         fprintf(stderr, "cutefish-toolkit: Skia cannot use the GLES context\n");
-        return nullptr;
+        return false;
     }
-    return context;
+    return true;
 }
 
 EglContext::~EglContext()
 {
+    if (m_initializer.joinable())
+        m_initializer.join();
     if (m_skiaContext) {
         eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_context);
         m_skiaContext->abandonContext();
@@ -115,6 +143,7 @@ EglContext::~EglContext()
 
 EGLSurface EglContext::createSurface(wl_egl_window* window)
 {
+    waitUntilReady();
     EGLSurface surface = eglCreatePlatformWindowSurface(m_display, m_config, window, nullptr);
     if (surface == EGL_NO_SURFACE) {
         fprintf(stderr, "cutefish-toolkit: cannot create an EGL window surface\n");
@@ -136,6 +165,7 @@ void EglContext::destroySurface(EGLSurface surface)
 
 bool EglContext::makeCurrent(EGLSurface surface)
 {
+    waitUntilReady();
     if (eglGetCurrentSurface(EGL_DRAW) == surface && eglGetCurrentContext() == m_context)
         return true;
     return eglMakeCurrent(m_display, surface, surface, m_context);

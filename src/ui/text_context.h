@@ -44,7 +44,8 @@ struct VerticalMetrics
 class TextContext
 {
 public:
-    TextContext();
+    // For text in the LC_CTYPE locale named.
+    explicit TextContext(const std::string& ctypeLocale);
     ~TextContext();
 
     TextContext(const TextContext&) = delete;

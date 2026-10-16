@@ -15,6 +15,7 @@
 #include FT_SYNTHESIS_H
 #include <limits>
 #include <map>
+#include <mutex>
 #include <unordered_map>
 #include <unicode/uchar.h>
 
@@ -551,17 +552,24 @@ const GlyphRendererPrivate::Shaped& GlyphRendererPrivate::shape(std::u32string_v
     return clusters.emplace(std::move(key), shapeCluster(cluster)).first->second;
 }
 
-static std::vector<FontFamily> listFamilies();
+static std::vector<FontFamily> listFamilies(const std::string& only = {});
 
-// The family's pitch as listFamilies() decides it.
+// The family's pitch as listFamilies() decides it. Only fonts naming the
+// family can register it, so only they are listed.
 static bool familyIsFixedPitch(const std::string& family)
 {
-    static const std::vector<FontFamily> families = listFamilies();
-    for (const FontFamily& candidate : families) {
+    static std::mutex mutex;
+    static std::map<std::string, bool> known;
+    std::lock_guard lock(mutex);
+    if (const auto it = known.find(family); it != known.end())
+        return it->second;
+    bool fixed = false;
+    for (const FontFamily& candidate : listFamilies(family)) {
         if (candidate.name == family)
-            return candidate.fixedPitch;
+            fixed = candidate.fixedPitch;
     }
-    return false;
+    known.emplace(family, fixed);
+    return fixed;
 }
 
 FontMetrics::FontMetrics(const FontSpec& font, double scale, bool hintedLayout)
@@ -897,8 +905,11 @@ static const char* patternString(FcPattern* pattern, const char* object, int ind
 // aliases. A family's pitch is that of the font registered last, then the
 // generic Serif, Sans Serif and Monospace. Families with several foundries are
 // listed once.
-static std::vector<FontFamily> listFamilies()
+static std::vector<FontFamily> listFamilies(const std::string& only)
 {
+    // On the configuration the toolkit's fonts were loaded with.
+    if (Application* application = Application::instance())
+        application->text();
     // Families are found without regard to case: one entry, the first name.
     std::map<std::string, FontFamily> families;
     const auto registerFamily = [&families](const std::string& name, bool fixed) {
@@ -910,6 +921,8 @@ static std::vector<FontFamily> listFamilies()
     };
     FcPattern* pattern = FcPatternCreate();
     FcPatternAddBool(pattern, FC_VARIABLE, FcFalse);
+    if (!only.empty())
+        FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(only.c_str()));
     FcObjectSet* objects = FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_SPACING, FC_FAMILYLANG, nullptr);
     FcFontSet* fonts = FcFontList(nullptr, pattern, objects);
     FcObjectSetDestroy(objects);

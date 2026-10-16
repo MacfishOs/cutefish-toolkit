@@ -31,29 +31,42 @@ Application::Application(int argc, char** argv, Platform platform)
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
 
+    const char* ctype = std::setlocale(LC_CTYPE, nullptr);
+    const std::string ctypeLocale = ctype ? ctype : "";
+    // Fontconfig reads its configuration and caches while the compositor
+    // connection, the appearance settings and the application's views are
+    // set up.
+    if (platform == Platform::Wayland)
+        m_textLoader = std::thread([this, ctypeLocale] { m_text = std::make_unique<TextContext>(ctypeLocale); });
+    else
+        m_text = std::make_unique<TextContext>(ctypeLocale);
+
     m_loop = platform == Platform::Embedded ? base::EventLoop::current() : nullptr;
     if (!m_loop) {
         m_ownedLoop = std::make_unique<base::EventLoop>();
         m_loop = m_ownedLoop.get();
     }
-    m_text = std::make_unique<TextContext>();
-    if (platform != Platform::Wayland)
-        return;
-
-    m_connection = wayland::Connection::open(*m_loop);
-    if (!m_connection)
-        std::exit(1);
-    m_gpu = gpu::EglContext::create(m_connection->display());
-    if (!m_gpu)
-        std::exit(1);
-
-    m_sessionBus = base::dbus::Connection::session(m_loop);
-    if (m_sessionBus)
-        m_appearance = std::make_unique<AppearanceWatcher>(*m_sessionBus);
+    // The appearance settings are on their way and the driver loads while
+    // the fonts are read.
+    if (platform == Platform::Wayland) {
+        m_sessionBus = base::dbus::Connection::session(m_loop);
+        if (m_sessionBus)
+            m_appearance = std::make_unique<AppearanceWatcher>(*m_sessionBus);
+        m_connection = wayland::Connection::open(*m_loop);
+        if (!m_connection)
+            std::exit(1);
+        m_gpu = gpu::EglContext::createInBackground(m_connection->display());
+        if (m_appearance)
+            m_appearance->advance();
+    }
+    if (m_appearance)
+        m_appearance->waitForSettings();
 }
 
 Application::~Application()
 {
+    if (m_textLoader.joinable())
+        m_textLoader.join();
     // Posted tasks may own windows, whose views still need the loop, the
     // connection and the GPU context while they are destroyed. A host's loop
     // keeps its tasks.
@@ -72,6 +85,24 @@ Application::~Application()
 Application* Application::instance()
 {
     return s_instance;
+}
+
+TextContext& Application::text() const
+{
+    if (m_textLoader.joinable()) {
+        m_textLoader.join();
+        if (m_fontsChangedWhileLoading)
+            m_text->clearFontCaches();
+    }
+    return *m_text;
+}
+
+void Application::fontsChanged()
+{
+    if (m_textLoader.joinable())
+        m_fontsChangedWhileLoading = true;
+    else
+        m_text->clearFontCaches();
 }
 
 int Application::run()

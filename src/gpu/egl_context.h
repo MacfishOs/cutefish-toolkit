@@ -6,6 +6,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "include/core/SkRefCnt.h"
@@ -24,15 +25,35 @@ class EglContext
 {
 public:
     static std::unique_ptr<EglContext> create(wl_display* display);
+    // Loads the driver and probes it on a thread of its own while the caller
+    // goes on; the first call that needs the context waits for it there, and
+    // exits the process when there is none.
+    static std::unique_ptr<EglContext> createInBackground(wl_display* display);
     ~EglContext();
 
     EglContext(const EglContext&) = delete;
     EglContext& operator=(const EglContext&) = delete;
 
-    GrDirectContext* skiaContext() const { return m_skiaContext.get(); }
-    EGLDisplay display() const { return m_display; }
-    EGLConfig config() const { return m_config; }
-    int stencilBits() const { return m_stencilBits; }
+    GrDirectContext* skiaContext() const
+    {
+        waitUntilReady();
+        return m_skiaContext.get();
+    }
+    EGLDisplay display() const
+    {
+        waitUntilReady();
+        return m_display;
+    }
+    EGLConfig config() const
+    {
+        waitUntilReady();
+        return m_config;
+    }
+    int stencilBits() const
+    {
+        waitUntilReady();
+        return m_stencilBits;
+    }
 
     // Swaps never wait for a frame callback: windows pace themselves.
     EGLSurface createSurface(wl_egl_window* window);
@@ -47,6 +68,14 @@ public:
 private:
     EglContext() = default;
 
+    bool initialize(wl_display* display);
+    void waitUntilReady() const
+    {
+        if (m_initializer.joinable())
+            finishInitialization();
+    }
+    void finishInitialization() const;
+
     EGLDisplay m_display = EGL_NO_DISPLAY;
     EGLConfig m_config = nullptr;
     EGLContext m_context = EGL_NO_CONTEXT;
@@ -54,6 +83,8 @@ private:
     bool m_hasBufferAge = false;
     PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC m_swapBuffersWithDamage = nullptr;
     sk_sp<GrDirectContext> m_skiaContext;
+    mutable std::thread m_initializer;
+    bool m_initialized = false;
 };
 
 } // namespace cutefish::ui::gpu

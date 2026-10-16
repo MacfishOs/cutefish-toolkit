@@ -49,7 +49,7 @@ void Theme::setCurrent(const Theme& theme)
     const bool fontChanged = theme.fontFamily != s_current.fontFamily;
     s_current = theme;
     if (Application* application = Application::instance(); application && fontChanged)
-        application->text().clearFontCaches();
+        application->fontsChanged();
     ++s_generation;
     if (Application* application = Application::instance())
         application->themeChanged();

@@ -7,6 +7,7 @@
 #include <clocale>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <strings.h>
@@ -63,6 +64,120 @@ static bool sameFamily(const SkString& a, const char* b)
     return strcasecmp(a.c_str(), b) == 0;
 }
 
+struct StyleRange
+{
+    float fontconfig;
+    float css;
+};
+
+// Piecewise linear, as Skia maps fontconfig's weights and widths.
+static int mapRanges(float value, const StyleRange* ranges, size_t count)
+{
+    if (value < ranges[0].fontconfig)
+        return SkScalarRoundToInt(ranges[0].css);
+    for (size_t i = 0; i + 1 < count; ++i) {
+        if (value < ranges[i + 1].fontconfig) {
+            const float result = (value - ranges[i].fontconfig) * (ranges[i + 1].css - ranges[i].css)
+                    / (ranges[i + 1].fontconfig - ranges[i].fontconfig) + ranges[i].css;
+            return SkScalarRoundToInt(result);
+        }
+    }
+    return SkScalarRoundToInt(ranges[count - 1].css);
+}
+
+static int patternInteger(FcPattern* pattern, const char* object, int fallback)
+{
+    int value = 0;
+    return FcPatternGetInteger(pattern, object, 0, &value) == FcResultMatch ? value : fallback;
+}
+
+// The style Skia's fontconfig typefaces report for the pattern.
+static SkFontStyle styleFromPattern(FcPattern* pattern)
+{
+    static constexpr StyleRange weights[] = {
+        {FC_WEIGHT_THIN, SkFontStyle::kThin_Weight},
+        {FC_WEIGHT_EXTRALIGHT, SkFontStyle::kExtraLight_Weight},
+        {FC_WEIGHT_LIGHT, SkFontStyle::kLight_Weight},
+        {FC_WEIGHT_DEMILIGHT, 350},
+        {FC_WEIGHT_BOOK, 380},
+        {FC_WEIGHT_REGULAR, SkFontStyle::kNormal_Weight},
+        {FC_WEIGHT_MEDIUM, SkFontStyle::kMedium_Weight},
+        {FC_WEIGHT_DEMIBOLD, SkFontStyle::kSemiBold_Weight},
+        {FC_WEIGHT_BOLD, SkFontStyle::kBold_Weight},
+        {FC_WEIGHT_EXTRABOLD, SkFontStyle::kExtraBold_Weight},
+        {FC_WEIGHT_BLACK, SkFontStyle::kBlack_Weight},
+        {FC_WEIGHT_EXTRABLACK, SkFontStyle::kExtraBlack_Weight},
+    };
+    static constexpr StyleRange widths[] = {
+        {FC_WIDTH_ULTRACONDENSED, SkFontStyle::kUltraCondensed_Width},
+        {FC_WIDTH_EXTRACONDENSED, SkFontStyle::kExtraCondensed_Width},
+        {FC_WIDTH_CONDENSED, SkFontStyle::kCondensed_Width},
+        {FC_WIDTH_SEMICONDENSED, SkFontStyle::kSemiCondensed_Width},
+        {FC_WIDTH_NORMAL, SkFontStyle::kNormal_Width},
+        {FC_WIDTH_SEMIEXPANDED, SkFontStyle::kSemiExpanded_Width},
+        {FC_WIDTH_EXPANDED, SkFontStyle::kExpanded_Width},
+        {FC_WIDTH_EXTRAEXPANDED, SkFontStyle::kExtraExpanded_Width},
+        {FC_WIDTH_ULTRAEXPANDED, SkFontStyle::kUltraExpanded_Width},
+    };
+    const int weight = mapRanges(float(patternInteger(pattern, FC_WEIGHT, FC_WEIGHT_REGULAR)), weights,
+                                 std::size(weights));
+    const int width = mapRanges(float(patternInteger(pattern, FC_WIDTH, FC_WIDTH_NORMAL)), widths, std::size(widths));
+    SkFontStyle::Slant slant = SkFontStyle::kUpright_Slant;
+    switch (patternInteger(pattern, FC_SLANT, FC_SLANT_ROMAN)) {
+    case FC_SLANT_ITALIC:
+        slant = SkFontStyle::kItalic_Slant;
+        break;
+    case FC_SLANT_OBLIQUE:
+        slant = SkFontStyle::kOblique_Slant;
+        break;
+    default:
+        break;
+    }
+    return SkFontStyle(weight, width, slant);
+}
+
+// One family's fonts as fontconfig lists them; a typeface is made only for
+// the style picked.
+class ListedFamilyStyleSet final : public SkFontStyleSet
+{
+public:
+    using Creator = std::function<sk_sp<SkTypeface>(int index)>;
+
+    ListedFamilyStyleSet(std::vector<SkFontStyle> styles, Creator creator)
+        : m_styles(std::move(styles))
+        , m_typefaces(m_styles.size())
+        , m_creator(std::move(creator))
+    {
+    }
+
+    int count() override { return int(m_styles.size()); }
+
+    void getStyle(int index, SkFontStyle* style, SkString* name) override
+    {
+        if (style)
+            *style = m_styles[size_t(index)];
+        if (name)
+            name->reset();
+    }
+
+    sk_sp<SkTypeface> createTypeface(int index) override
+    {
+        std::lock_guard lock(m_mutex);
+        sk_sp<SkTypeface>& typeface = m_typefaces[size_t(index)];
+        if (!typeface)
+            typeface = m_creator(index);
+        return typeface;
+    }
+
+    sk_sp<SkTypeface> matchStyle(const SkFontStyle& pattern) override { return matchStyleCSS3(pattern); }
+
+private:
+    std::vector<SkFontStyle> m_styles;
+    std::mutex m_mutex;
+    std::vector<sk_sp<SkTypeface>> m_typefaces;
+    Creator m_creator;
+};
+
 // The system font manager with its character fallback remembered. SkParagraph
 // keeps fallbacks only for one layout, so every layout asked fontconfig again
 // for each character the requested fonts lack (about 2 ms per layout of a
@@ -79,16 +194,51 @@ public:
     {
         std::lock_guard lock(m_mutex);
         m_fallbacks.clear();
+        m_families.clear();
     }
 
 protected:
     int onCountFamilies() const override { return m_fonts->countFamilies(); }
     void onGetFamilyName(int index, SkString* name) const override { m_fonts->getFamilyName(index, name); }
     sk_sp<SkFontStyleSet> onCreateStyleSet(int index) const override { return m_fonts->createStyleSet(index); }
-    // Fontconfig answers with every font, sorted; SkParagraph would then take
-    // the best style of any family. Only the family's own fonts, or the best
-    // match's family for an alias such as "monospace".
+    // Only the family's own fonts, or the best match's family for an alias
+    // such as "monospace". Skia's own answer sorts every installed font,
+    // checks each file can be read and loads every face of the family; here
+    // the family's fonts come from fontconfig's cache, a match is asked only
+    // for a family not installed, and only the face picked is loaded.
     sk_sp<SkFontStyleSet> onMatchFamily(const char family[]) const override
+    {
+        if (!family)
+            return m_fonts->matchFamily(family);
+        {
+            std::lock_guard lock(m_mutex);
+            if (const auto it = m_families.find(family); it != m_families.end())
+                return it->second;
+        }
+        std::vector<ListedFont> fonts = listFamily(family);
+        if (fonts.empty()) {
+            const std::string name = matchedFamily(family);
+            if (!name.empty())
+                fonts = listFamily(name);
+        }
+        sk_sp<SkFontStyleSet> set;
+        if (fonts.empty()) {
+            set = matchFamilyFromAllFonts(family);
+        } else {
+            std::vector<SkFontStyle> styles;
+            for (const ListedFont& font : fonts)
+                styles.push_back(font.style);
+            set = sk_make_sp<ListedFamilyStyleSet>(std::move(styles), [this, fonts = std::move(fonts)](int index) {
+                return typefaceFor(fonts[size_t(index)]);
+            });
+        }
+        std::lock_guard lock(m_mutex);
+        m_families.emplace(family, set);
+        return set;
+    }
+
+    // Skia's answer, kept to the family's own fonts.
+    sk_sp<SkFontStyleSet> matchFamilyFromAllFonts(const char family[]) const
     {
         sk_sp<SkFontStyleSet> sorted = m_fonts->matchFamily(family);
         if (!sorted || !family)
@@ -165,17 +315,102 @@ protected:
 private:
     using Key = std::tuple<std::string, int, int, int, std::string, SkUnichar>;
 
+    struct ListedFont
+    {
+        SkFontStyle style;
+        std::string family;
+        std::string file;
+        int index = 0;
+    };
+
+    // The static fonts whose first family is the one named.
+    static std::vector<ListedFont> listFamily(const std::string& family)
+    {
+        FcPattern* pattern = FcPatternCreate();
+        FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family.c_str()));
+        FcPatternAddBool(pattern, FC_VARIABLE, FcFalse);
+        FcObjectSet* objects = FcObjectSetBuild(FC_FAMILY, FC_FILE, FC_INDEX, FC_WEIGHT, FC_WIDTH, FC_SLANT, nullptr);
+        FcFontSet* fonts = FcFontList(nullptr, pattern, objects);
+        FcObjectSetDestroy(objects);
+        FcPatternDestroy(pattern);
+        std::vector<ListedFont> list;
+        for (int i = 0; fonts && i < fonts->nfont; ++i) {
+            FcPattern* font = fonts->fonts[i];
+            FcChar8* first = nullptr;
+            FcChar8* file = nullptr;
+            if (FcPatternGetString(font, FC_FAMILY, 0, &first) != FcResultMatch
+                || strcasecmp(reinterpret_cast<const char*>(first), family.c_str()) != 0
+                || FcPatternGetString(font, FC_FILE, 0, &file) != FcResultMatch)
+                continue;
+            list.push_back({styleFromPattern(font), reinterpret_cast<const char*>(first),
+                            reinterpret_cast<const char*>(file), patternInteger(font, FC_INDEX, 0)});
+        }
+        if (fonts)
+            FcFontSetDestroy(fonts);
+        return list;
+    }
+
+    // The family fontconfig answers with, for an alias or a family that is
+    // not installed.
+    static std::string matchedFamily(const char family[])
+    {
+        FcPattern* pattern = FcPatternCreate();
+        FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family));
+        FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+        FcDefaultSubstitute(pattern);
+        FcResult result = FcResultNoMatch;
+        FcPattern* match = FcFontMatch(nullptr, pattern, &result);
+        FcPatternDestroy(pattern);
+        if (!match)
+            return {};
+        FcChar8* name = nullptr;
+        std::string matched;
+        if (FcPatternGetString(match, FC_FAMILY, 0, &name) == FcResultMatch)
+            matched = reinterpret_cast<const char*>(name);
+        FcPatternDestroy(match);
+        return matched;
+    }
+
+    // Made from the file without another match when it reports what
+    // fontconfig's own typeface would: the shaper fakes bold and italic by
+    // the style, and terminals look fonts up by the family. Named instances
+    // of variable fonts need fontconfig's, which knows their axes.
+    sk_sp<SkTypeface> typefaceFor(const ListedFont& font) const
+    {
+        const std::pair<std::string, int> key(font.file, font.index);
+        {
+            std::lock_guard lock(m_mutex);
+            if (const auto it = m_typefaces.find(key); it != m_typefaces.end())
+                return it->second;
+        }
+        sk_sp<SkTypeface> typeface;
+        if (font.index <= 0xffff)
+            typeface = m_fonts->makeFromFile(font.file.c_str(), font.index);
+        if (typeface) {
+            SkString name;
+            typeface->getFamilyName(&name);
+            if (!(typeface->fontStyle() == font.style) || !name.equals(font.family.c_str()))
+                typeface.reset();
+        }
+        if (!typeface)
+            typeface = m_fonts->matchFamilyStyle(font.family.c_str(), font.style);
+        std::lock_guard lock(m_mutex);
+        m_typefaces.emplace(key, typeface);
+        return typeface;
+    }
+
     sk_sp<SkFontMgr> m_fonts;
     mutable std::mutex m_mutex;
     mutable std::map<Key, sk_sp<SkTypeface>> m_fallbacks;
+    mutable std::map<std::string, sk_sp<SkFontStyleSet>> m_families;
+    mutable std::map<std::pair<std::string, int>, sk_sp<SkTypeface>> m_typefaces;
 };
 
 } // namespace
 
-static std::string localeName()
+static std::string localeName(const std::string& ctypeLocale)
 {
-    const char* name = std::setlocale(LC_CTYPE, nullptr);
-    std::string locale = name ? name : "";
+    std::string locale = ctypeLocale;
     locale = locale.substr(0, locale.find_first_of(".@"));
     if (locale == "C" || locale == "POSIX")
         return {};
@@ -186,11 +421,26 @@ static std::string localeName()
     return locale;
 }
 
-TextContext::TextContext()
-    : m_locale(localeName())
+TextContext::TextContext(const std::string& ctypeLocale)
+    : m_locale(localeName(ctypeLocale))
 {
-    m_fontManager = sk_make_sp<FallbackCachingFontMgr>(
-        SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType()));
+    // Skia's font manager lists every family when it is made, comparing each
+    // font's families with all names found so far (about 30 ms with 3000
+    // fonts); it gets the configuration before the fonts are read, so the
+    // list stays empty, and nothing here enumerates families through it. The
+    // same configuration becomes the current one, which the other fontconfig
+    // calls would otherwise load again.
+    FcConfig* config = FcInitLoadConfig();
+    if (config) {
+        m_fontManager = sk_make_sp<FallbackCachingFontMgr>(
+            SkFontMgr_New_FontConfig(FcConfigReference(config), SkFontScanner_Make_FreeType()));
+        FcConfigBuildFonts(config);
+        FcConfigSetCurrent(config);
+        FcConfigDestroy(config);
+    } else {
+        m_fontManager = sk_make_sp<FallbackCachingFontMgr>(
+            SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType()));
+    }
     m_fontCollection = sk_make_sp<skia::textlayout::FontCollection>();
     m_fontCollection->setDefaultFontManager(m_fontManager);
     m_fontCollection->enableFontFallback();

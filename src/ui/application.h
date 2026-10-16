@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace cutefish::base {
@@ -69,7 +70,9 @@ public:
     // Wayland only.
     wayland::Connection& connection() const { return *m_connection; }
     gpu::EglContext& gpu() const { return *m_gpu; }
-    TextContext& text() const { return *m_text; }
+    // Waits for the fonts the first time, which load on a thread of their
+    // own while the application starts.
+    TextContext& text() const;
 
     // The loop's shared session bus connection, when there is one.
     base::dbus::Connection* sessionBus() const { return m_sessionBus; }
@@ -84,6 +87,8 @@ private:
     friend class Window;
 
     void themeChanged();
+    // The theme's font family changed: cached font lookups go.
+    void fontsChanged();
     // Notifies the windows whose isActive() changed, after the events at hand.
     void scheduleActiveUpdate();
 
@@ -94,7 +99,9 @@ private:
     base::EventLoop* m_loop = nullptr;
     std::unique_ptr<wayland::Connection> m_connection;
     std::unique_ptr<gpu::EglContext> m_gpu;
-    std::unique_ptr<TextContext> m_text;
+    mutable std::unique_ptr<TextContext> m_text;
+    mutable std::thread m_textLoader;
+    mutable bool m_fontsChangedWhileLoading = false;
     base::dbus::Connection* m_sessionBus = nullptr;
     std::unique_ptr<AppearanceWatcher> m_appearance;
     std::vector<Window*> m_windows;

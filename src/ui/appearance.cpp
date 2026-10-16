@@ -25,22 +25,38 @@ AppearanceWatcher::AppearanceWatcher(base::dbus::Connection& connection)
     : m_connection(connection)
 {
     sd_bus* bus = connection.bus();
-    // One blocking read at start-up, so the first frame has the right colours.
-    sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message* reply = nullptr;
-    if (sd_bus_call_method(bus, kService, kPath, "org.freedesktop.DBus.Properties", "GetAll", &error,
-                           &reply, "s", kInterface) >= 0) {
-        apply(reply);
-        sd_bus_message_unref(reply);
-    }
-    sd_bus_error_free(&error);
+    sd_bus_match_signal_async(bus, &m_match, kService, kPath, kInterface, nullptr,
+                              &AppearanceWatcher::changed, nullptr, this);
+    sd_bus_call_method_async(bus, &m_call, kService, kPath, "org.freedesktop.DBus.Properties", "GetAll",
+                             &AppearanceWatcher::replied, this, "s", kInterface);
+}
 
-    sd_bus_match_signal(bus, &m_match, kService, kPath, kInterface, nullptr,
-                        &AppearanceWatcher::changed, this);
+void AppearanceWatcher::advance()
+{
+    while (sd_bus_process(m_connection.bus(), nullptr) > 0) {
+    }
+}
+
+void AppearanceWatcher::waitForSettings()
+{
+    sd_bus* bus = m_connection.bus();
+    while (m_call) {
+        const int r = sd_bus_process(bus, nullptr);
+        if (r < 0)
+            break;
+        if (r == 0 && sd_bus_wait(bus, UINT64_MAX) < 0)
+            break;
+    }
+    m_waited = true;
+    if (m_firstReply) {
+        apply(m_firstReply);
+        m_firstReply = sd_bus_message_unref(m_firstReply);
+    }
 }
 
 AppearanceWatcher::~AppearanceWatcher()
 {
+    sd_bus_message_unref(m_firstReply);
     sd_bus_slot_unref(m_call);
     sd_bus_slot_unref(m_match);
 }
@@ -64,8 +80,14 @@ int AppearanceWatcher::changed(sd_bus_message* message, void* data, sd_bus_error
 int AppearanceWatcher::replied(sd_bus_message* reply, void* data, sd_bus_error*)
 {
     auto* self = static_cast<AppearanceWatcher*>(data);
-    if (!sd_bus_message_is_method_error(reply, nullptr))
-        apply(reply);
+    if (!sd_bus_message_is_method_error(reply, nullptr)) {
+        if (self->m_waited) {
+            apply(reply);
+        } else {
+            sd_bus_message_unref(self->m_firstReply);
+            self->m_firstReply = sd_bus_message_ref(reply);
+        }
+    }
     sd_bus_slot_unref(self->m_call);
     self->m_call = nullptr;
     return 0;
