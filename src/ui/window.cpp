@@ -262,7 +262,6 @@ void Window::updateActive()
     if (active == m_active)
         return;
     m_active = active;
-    m_frameDamage->full = true;
     requestPaint();
     if (onActiveChanged)
         onActiveChanged();
@@ -573,7 +572,7 @@ void Window::requestLayout()
 
 void Window::requestPaint()
 {
-    m_frameDamage->full = true;
+    damageWhole();
     scheduleFrame();
 }
 
@@ -633,7 +632,7 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
     if (width > 0 && height > 0 && (width != m_size.width || height != m_size.height)) {
         m_size = {double(width), double(height)};
         m_layoutNeeded = true;
-        m_frameDamage->full = true;
+        damageWhole();
         if (m_interactiveResize)
             m_resized = true;
     } else if ((width <= 0 || height <= 0) && !m_boundsApplied && !m_restoreId.empty() && m_bounds.width > 0
@@ -650,7 +649,7 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
     WindowStates others = states;
     others.activated = m_states.activated;
     if (!(others == m_states))
-        m_frameDamage->full = true;
+        damageWhole();
     m_states = states;
     // Focus rings and title colours follow isActive(), once the whole batch
     // of configures is in: focus passing to a dialog leaves the family active.

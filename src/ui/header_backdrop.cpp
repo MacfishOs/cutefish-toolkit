@@ -7,12 +7,14 @@
 #include <cstdio>
 #include <array>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkBitmap.h"
+#include "include/core/SkRegion.h"
 #include "include/core/SkSurface.h"
 #include "include/effects/SkRuntimeEffect.h"
 
@@ -22,6 +24,7 @@
 #include "ui/text_context.h"
 #include "ui/scroll_view.h"
 #include "ui/theme.h"
+#include "ui/window.h"
 
 namespace cutefish::ui {
 
@@ -71,6 +74,25 @@ half4 main(float2 p)
 }
 )";
 
+// The blur as last made, and what it was made from: on the CPU the finished
+// image, on the GPU the blur items the effect draws from. Kept outside the
+// class, whose layout the applications are built against.
+struct BlurCache
+{
+    sk_sp<SkImage> image;
+    std::vector<sk_sp<SkImage>> items;
+    GrRecordingContext* context = nullptr;
+    uint64_t changes = 0;
+    double scale = 0;
+    SkISize size;
+    PointF viewPosition;
+    PointF contentPosition;
+    int firstRow = 0;
+    int lastRow = 0;
+};
+
+static std::unordered_map<const HeaderBackdrop*, BlurCache> s_blurs;
+
 static sk_sp<SkRuntimeEffect> makeEffect(const char* code)
 {
     SkRuntimeEffect::Result result = SkRuntimeEffect::MakeForShader(SkString(code));
@@ -84,15 +106,13 @@ static sk_sp<SkShader> textureShader(const sk_sp<SkImage>& image)
     return image->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, SkSamplingOptions(SkFilterMode::kLinear));
 }
 
-// The blurred source on the GPU: the blur items as textures, then the
-// effect drawn at the device position for the rows from first to last.
-static void drawBlurredOnGpu(SkCanvas* canvas, SkSurface* source, double width, double height, double scale,
-                             SkPoint origin, int firstRow, int lastRow, float opacity)
+// The blur items of the source on the GPU, as textures; none when the
+// shaders or the surfaces cannot be made.
+static std::vector<sk_sp<SkImage>> makeBlurItemsOnGpu(SkSurface* source, double width, double height, double scale)
 {
     static const sk_sp<SkRuntimeEffect> blurItem = makeEffect(kBlurItemShader);
-    static const sk_sp<SkRuntimeEffect> compositeEffect = makeEffect(kCompositeShader);
-    if (!blurItem || !compositeEffect)
-        return;
+    if (!blurItem)
+        return {};
     sk_sp<SkImage> previous = source->makeImageSnapshot();
     std::vector<sk_sp<SkImage>> blurs;
     double itemWidth = std::ceil(width / 16) * 8;
@@ -102,7 +122,7 @@ static void drawBlurredOnGpu(SkCanvas* canvas, SkSurface* source, double width, 
         const int pixelHeight = textureLength(itemHeight, scale);
         sk_sp<SkSurface> surface = source->makeSurface(pixelWidth, pixelHeight);
         if (!surface)
-            return;
+            return {};
         SkRuntimeShaderBuilder builder(blurItem);
         builder.child("source") = textureShader(previous);
         builder.uniform("sourceSize") = SkV2{float(previous->width()), float(previous->height())};
@@ -117,7 +137,17 @@ static void drawBlurredOnGpu(SkCanvas* canvas, SkSurface* source, double width, 
         itemWidth /= 2;
         itemHeight /= 2;
     }
+    return blurs;
+}
 
+// The effect over the blur items, drawn at the device position for the rows
+// from first to last of a source of the size.
+static void drawCompositeOnGpu(SkCanvas* canvas, const std::vector<sk_sp<SkImage>>& blurs, SkISize sourceSize,
+                               SkPoint origin, int firstRow, int lastRow, float opacity)
+{
+    static const sk_sp<SkRuntimeEffect> compositeEffect = makeEffect(kCompositeShader);
+    if (!compositeEffect || blurs.empty())
+        return;
     // The source's own weight is nil at blur 1.
     const std::array<double, 6> weights = multiEffectBlurWeights(kBlurMax, 1);
     SkRuntimeShaderBuilder builder(compositeEffect);
@@ -127,14 +157,14 @@ static void drawBlurredOnGpu(SkCanvas* canvas, SkSurface* source, double width, 
         builder.child(children[i]) = textureShader(blurs[i]);
         builder.uniform(sizes[i]) = SkV2{float(blurs[i]->width()), float(blurs[i]->height())};
     }
-    builder.uniform("outputSize") = SkV2{float(source->width()), float(source->height())};
+    builder.uniform("outputSize") = SkV2{float(sourceSize.width()), float(sourceSize.height())};
     builder.uniform("weights") = SkV4{float(weights[1]), float(weights[2]), float(weights[3]), float(weights[4])};
     SkPaint paint;
     paint.setShader(builder.makeShader());
     paint.setAlphaf(opacity);
     canvas->save();
     canvas->translate(origin.fX, origin.fY);
-    canvas->drawRect(SkRect::MakeLTRB(0, float(firstRow), float(source->width()), float(lastRow)), paint);
+    canvas->drawRect(SkRect::MakeLTRB(0, float(firstRow), float(sourceSize.width()), float(lastRow)), paint);
     canvas->restore();
 }
 
@@ -145,7 +175,12 @@ HeaderBackdrop::HeaderBackdrop(ScrollView* view, Edge edge)
     m_scrolled = view->scrolled.connect([this] { requestPaint(); });
 }
 
-HeaderBackdrop::~HeaderBackdrop() = default;
+HeaderBackdrop::~HeaderBackdrop()
+{
+    s_blurs.erase(this);
+    if (Window* window = this->window())
+        window->unwatchDamage(this);
+}
 
 void HeaderBackdrop::setSeparatorVisible(bool visible)
 {
@@ -196,31 +231,73 @@ void HeaderBackdrop::paint(Painter& painter)
     const double height = bounds.height + kBlurPadding;
     const PointF viewPosition = mapToWindow({}) - m_view->mapToWindow({});
     const SkImageInfo info = SkImageInfo::MakeN32Premul(textureLength(width, scale), textureLength(height, scale));
-    // Greyscale text, as in any texture that starts transparent.
-    const SkSurfaceProps properties = Application::instance()->text().surfaceProps(false);
-    // Made by the window's canvas, so layered views draw from their textures.
-    sk_sp<SkSurface> surface = painter.canvas()->makeSurface(info, &properties);
-    if (!surface)
-        surface = SkSurfaces::Raster(info, &properties);
-    if (surface) {
-        surface->getCanvas()->clear(SK_ColorTRANSPARENT);
-        Painter source(surface->getCanvas(), scale);
-        source.translate({-viewPosition.x, -(viewPosition.y - (bottom ? kBlurPadding : 0))});
-        content->paintTree(source, nullptr);
+    // Only the rows the clip leaves: the padding lies outside the bar.
+    const int padding = info.height() - textureLength(bounds.height, scale);
+    const int firstRow = bottom ? std::max(0, padding) : 0;
+    const int lastRow = bottom ? info.height() : info.height() - std::max(0, padding);
+    const PointF origin = painter.offset() + PointF{0, bottom ? -kBlurPadding : 0};
+    const SkPoint deviceOrigin = SkPoint::Make(SkScalar(std::round(origin.x * scale)),
+                                               SkScalar(std::round(origin.y * scale)));
 
-        // Only the rows the clip leaves: the padding lies outside the bar.
-        const int padding = info.height() - textureLength(bounds.height, scale);
-        const int firstRow = bottom ? std::max(0, padding) : 0;
-        const int lastRow = bottom ? info.height() : info.height() - std::max(0, padding);
-        const PointF origin = painter.offset() + PointF{0, bottom ? -kBlurPadding : 0};
-        const SkPoint deviceOrigin = SkPoint::Make(SkScalar(std::round(origin.x * scale)),
-                                                   SkScalar(std::round(origin.y * scale)));
+    // The blur stays while the content under the bar paints as it did.
+    // Damage is tracked untransformed, as the content paints into the source.
+    SkCanvas* canvas = painter.canvas();
+    GrRecordingContext* context = canvas->recordingContext();
+    BlurCache* cached = nullptr;
+    uint64_t changes = 0;
+    bool untransformed = true;
+    for (const View* view = content; view; view = view->parent())
+        untransformed = untransformed && view->transform().isIdentity();
+    Window* window = this->window();
+    if (window && untransformed) {
+        PointF viewOrigin;
+        for (const View* view = m_view; view; view = view->parent())
+            viewOrigin += view->geometry().topLeft();
+        const PointF sourceOrigin = viewOrigin + viewPosition + PointF{0, bottom ? -kBlurPadding : 0};
+        const SkIRect sourceRect = SkIRect::MakeLTRB(int(std::floor(sourceOrigin.x * scale)) - 1,
+                                                     int(std::floor(sourceOrigin.y * scale)) - 1,
+                                                     int(std::ceil((sourceOrigin.x + width) * scale)) + 1,
+                                                     int(std::ceil((sourceOrigin.y + height) * scale)) + 1);
+        changes = window->watchDamage(this, content, sourceRect);
+        cached = &s_blurs[this];
+        const bool current = cached->context == context && cached->changes == changes && cached->scale == scale
+                && cached->size == info.dimensions() && cached->viewPosition == viewPosition
+                && cached->contentPosition == content->geometry().topLeft() && cached->firstRow == firstRow
+                && cached->lastRow == lastRow;
+        if (!current)
+            *cached = {};
+    }
+
+    const float alpha = float(painter.opacity());
+    if (cached && !context && cached->image) {
+        SkPaint paint;
+        paint.setAlphaf(alpha);
+        canvas->drawImage(cached->image, deviceOrigin.fX, deviceOrigin.fY + float(firstRow), SkSamplingOptions(),
+                          &paint);
+    } else if (cached && context && !cached->items.empty()) {
+        drawCompositeOnGpu(canvas, cached->items, info.dimensions(), deviceOrigin, firstRow, lastRow, alpha);
+    } else {
+        // Greyscale text, as in any texture that starts transparent.
+        const SkSurfaceProps properties = Application::instance()->text().surfaceProps(false);
+        // Made by the window's canvas, so layered views draw from their textures.
+        sk_sp<SkSurface> surface = canvas->makeSurface(info, &properties);
+        if (!surface)
+            surface = SkSurfaces::Raster(info, &properties);
+        if (surface) {
+            surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+            Painter source(surface->getCanvas(), scale);
+            source.translate({-viewPosition.x, -(viewPosition.y - (bottom ? kBlurPadding : 0))});
+            const SkRegion sourceRegion(SkIRect::MakeWH(info.width(), info.height()));
+            content->paintTree(source, &sourceRegion);
+        }
+
+        BlurCache made;
         SkBitmap pixels;
         SkPixmap pixmap;
-        if (surface->recordingContext()) {
-            drawBlurredOnGpu(painter.canvas(), surface.get(), width, height, scale, deviceOrigin, firstRow, lastRow,
-                             float(painter.opacity()));
-        } else if (pixels.tryAllocPixels(info) && surface->readPixels(pixels.pixmap(), 0, 0)
+        if (surface && surface->recordingContext()) {
+            made.items = makeBlurItemsOnGpu(surface.get(), width, height, scale);
+            drawCompositeOnGpu(canvas, made.items, info.dimensions(), deviceOrigin, firstRow, lastRow, alpha);
+        } else if (surface && pixels.tryAllocPixels(info) && surface->readPixels(pixels.pixmap(), 0, 0)
                    && pixels.peekPixels(&pixmap)) {
             const Texture texture = readTexture(pixmap);
             // The first blur item is half the source, in multiples of eight;
@@ -234,11 +311,24 @@ void HeaderBackdrop::paint(Painter& painter)
                 itemHeight /= 2;
             }
 
-            const SkBitmap bitmap = composite(texture, blurs, multiEffectBlurWeights(kBlurMax, 1), firstRow, lastRow);
+            made.image = composite(texture, blurs, multiEffectBlurWeights(kBlurMax, 1), firstRow, lastRow).asImage();
             SkPaint paint;
-            paint.setAlphaf(float(painter.opacity()));
-            painter.canvas()->drawImage(bitmap.asImage(), deviceOrigin.fX, deviceOrigin.fY + float(firstRow),
-                                        SkSamplingOptions(), &paint);
+            paint.setAlphaf(alpha);
+            canvas->drawImage(made.image, deviceOrigin.fX, deviceOrigin.fY + float(firstRow), SkSamplingOptions(),
+                              &paint);
+        }
+        // A surface the GPU canvas could not make falls back to the CPU: its
+        // image is not one this canvas keeps.
+        if (cached && bool(context) == bool(surface && surface->recordingContext())) {
+            made.context = context;
+            made.changes = changes;
+            made.scale = scale;
+            made.size = info.dimensions();
+            made.viewPosition = viewPosition;
+            made.contentPosition = content->geometry().topLeft();
+            made.firstRow = firstRow;
+            made.lastRow = lastRow;
+            *cached = std::move(made);
         }
     }
 

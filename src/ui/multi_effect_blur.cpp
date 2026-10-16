@@ -4,6 +4,7 @@
 #include "ui/multi_effect_blur.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 
@@ -13,6 +14,12 @@ namespace cutefish::ui {
 
 Texture readTexture(const SkPixmap& pixmap)
 {
+    static const std::array<float, 256> kLevels = [] {
+        std::array<float, 256> levels;
+        for (int i = 0; i < 256; ++i)
+            levels[size_t(i)] = i / 255.0f;
+        return levels;
+    }();
     Texture texture;
     texture.width = pixmap.width();
     texture.height = pixmap.height();
@@ -22,10 +29,10 @@ Texture readTexture(const SkPixmap& pixmap)
     for (int y = 0; y < texture.height; ++y) {
         const auto* row = static_cast<const uint8_t*>(pixmap.addr(0, y));
         for (int x = 0; x < texture.width; ++x, row += 4, out += 4) {
-            out[0] = row[bgra ? 2 : 0] / 255.0f;
-            out[1] = row[1] / 255.0f;
-            out[2] = row[bgra ? 0 : 2] / 255.0f;
-            out[3] = row[3] / 255.0f;
+            out[0] = kLevels[row[bgra ? 2 : 0]];
+            out[1] = kLevels[row[1]];
+            out[2] = kLevels[row[bgra ? 0 : 2]];
+            out[3] = kLevels[row[3]];
         }
     }
     return texture;
@@ -63,13 +70,32 @@ Texture blurPass(const Texture& source, double logicalWidth, double logicalHeigh
         rows.emplace_back(result.height, source.height, offset[1]);
     }
     for (int y = 0; y < result.height; ++y) {
+        const float* top[4];
+        const float* bottom[4];
+        float fy[4];
+        for (size_t k = 0; k < 4; ++k) {
+            top[k] = &source.pixels[size_t(rows[k].first[size_t(y)]) * size_t(source.width) * 4];
+            bottom[k] = &source.pixels[size_t(rows[k].second[size_t(y)]) * size_t(source.width) * 4];
+            fy[k] = rows[k].fraction[size_t(y)];
+        }
         float* out = &result.pixels[size_t(y) * size_t(result.width) * 4];
         for (int x = 0; x < result.width; ++x, out += 4) {
+            // Summed in registers, in the order the taps are listed.
+            float sum[4] = {0, 0, 0, 0};
             for (size_t k = 0; k < 4; ++k) {
-                source.blend(columns[k].first[size_t(x)], columns[k].second[size_t(x)], columns[k].fraction[size_t(x)],
-                             rows[k].first[size_t(y)], rows[k].second[size_t(y)], rows[k].fraction[size_t(y)], 0.25f,
-                             out);
+                const float* a = top[k] + columns[k].first[size_t(x)] * 4;
+                const float* b = top[k] + columns[k].second[size_t(x)] * 4;
+                const float* c = bottom[k] + columns[k].first[size_t(x)] * 4;
+                const float* d = bottom[k] + columns[k].second[size_t(x)] * 4;
+                const float fx = columns[k].fraction[size_t(x)];
+                for (int i = 0; i < 4; ++i) {
+                    const float upper = a[i] + (b[i] - a[i]) * fx;
+                    const float lower = c[i] + (d[i] - c[i]) * fx;
+                    sum[i] += (upper + (lower - upper) * fy[k]) * 0.25f;
+                }
             }
+            for (int i = 0; i < 4; ++i)
+                out[i] = sum[i];
         }
     }
     return result;
@@ -121,47 +147,77 @@ SkBitmap composite(const Texture& source, const std::vector<Texture>& blurs, con
     }
 
     // Linear filtering is separable: each texture's rows widened to the
-    // output first, then blended down the columns into the sum.
+    // output first, then each output row blended down the columns, texture
+    // by texture into the sum. Column by column of tiles, which stay in cache.
     const int width = source.width;
     const int height = std::max(1, lastRow - firstRow);
-    std::vector<float> sum(size_t(width) * size_t(height) * 4, 0.0f);
-    std::vector<float> widened;
+    struct Used
+    {
+        size_t index;
+        // The texture rows the output rows read.
+        int firstRead;
+        int lastRead;
+    };
+    std::vector<Used> used;
     for (size_t i = 0; i < textures.size(); ++i) {
         if (weights[i] <= 0)
             continue;
-        const Texture& texture = *textures[i];
-        const Taps& column = columns[i];
-        widened.assign(size_t(width) * size_t(texture.height) * 4, 0.0f);
-        for (int ty = 0; ty < texture.height; ++ty) {
-            const float* in = &texture.pixels[size_t(ty) * size_t(texture.width) * 4];
-            float* out = &widened[size_t(ty) * size_t(width) * 4];
-            for (int x = 0; x < width; ++x, out += 4) {
-                const float* a = in + column.first[size_t(x)] * 4;
-                const float* b = in + column.second[size_t(x)] * 4;
-                const float f = column.fraction[size_t(x)];
-                for (int c = 0; c < 4; ++c)
-                    out[c] = a[c] + (b[c] - a[c]) * f;
-            }
-        }
-        const float weight = float(weights[i]);
+        int firstRead = textures[i]->height;
+        int lastRead = 0;
         for (int y = firstRow; y < lastRow; ++y) {
-            const float* top = &widened[size_t(rows[i].first[size_t(y)]) * size_t(width) * 4];
-            const float* bottom = &widened[size_t(rows[i].second[size_t(y)]) * size_t(width) * 4];
-            const float f = rows[i].fraction[size_t(y)];
-            float* out = &sum[size_t(y - firstRow) * size_t(width) * 4];
-            for (int k = 0; k < width * 4; ++k)
-                out[k] += (top[k] + (bottom[k] - top[k]) * f) * weight;
+            firstRead = std::min(firstRead, rows[i].first[size_t(y)]);
+            lastRead = std::max(lastRead, rows[i].second[size_t(y)] + 1);
         }
+        used.push_back({i, firstRead, lastRead});
     }
 
     SkBitmap bitmap;
     bitmap.allocPixels(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType));
-    for (int y = 0; y < height; ++y) {
-        auto* out = static_cast<uint8_t*>(bitmap.getAddr(0, y));
-        const float* in = &sum[size_t(y) * size_t(width) * 4];
-        for (int k = 0; k < width * 4; ++k)
-            out[k] = uint8_t(std::clamp(in[k], 0.0f, 1.0f) * 255 + 0.5f);
+    constexpr int kTileWidth = 128;
+    std::vector<std::vector<float>> widened(textures.size());
+    std::vector<float> sum(size_t(kTileWidth) * 4);
+    for (int x0 = 0; x0 < width; x0 += kTileWidth) {
+        const int tile = std::min(kTileWidth, width - x0);
+        for (const Used& use : used) {
+            const Texture& texture = *textures[use.index];
+            const Taps& column = columns[use.index];
+            widened[use.index].resize(size_t(tile) * size_t(texture.height) * 4);
+            for (int ty = use.firstRead; ty < use.lastRead; ++ty) {
+                const float* in = &texture.pixels[size_t(ty) * size_t(texture.width) * 4];
+                float* out = &widened[use.index][size_t(ty) * size_t(tile) * 4];
+                for (int x = x0; x < x0 + tile; ++x, out += 4) {
+                    const float* a = in + column.first[size_t(x)] * 4;
+                    const float* b = in + column.second[size_t(x)] * 4;
+                    const float f = column.fraction[size_t(x)];
+                    float texel[4];
+                    for (int c = 0; c < 4; ++c)
+                        texel[c] = a[c] + (b[c] - a[c]) * f;
+                    for (int c = 0; c < 4; ++c)
+                        out[c] = texel[c];
+                }
+            }
+        }
+        for (int y = firstRow; y < lastRow; ++y) {
+            std::fill(sum.begin(), sum.end(), 0.0f);
+            for (const Used& use : used) {
+                const std::vector<float>& rowsOfTile = widened[use.index];
+                const Taps& row = rows[use.index];
+                const float* top = &rowsOfTile[size_t(row.first[size_t(y)]) * size_t(tile) * 4];
+                const float* bottom = &rowsOfTile[size_t(row.second[size_t(y)]) * size_t(tile) * 4];
+                const float f = row.fraction[size_t(y)];
+                const float weight = float(weights[use.index]);
+                float* out = sum.data();
+                for (int k = 0; k < tile * 4; ++k)
+                    out[k] += (top[k] + (bottom[k] - top[k]) * f) * weight;
+            }
+            auto* out = static_cast<uint8_t*>(bitmap.getAddr(x0, y - firstRow));
+            for (int k = 0; k < tile * 4; ++k)
+                out[k] = uint8_t(int(std::min(std::max(sum[size_t(k)], 0.0f), 1.0f) * 255 + 0.5f));
+        }
     }
+    // No rows asked for: one transparent row.
+    if (lastRow <= firstRow)
+        bitmap.eraseColor(SK_ColorTRANSPARENT);
     bitmap.setImmutable();
     return bitmap;
 }

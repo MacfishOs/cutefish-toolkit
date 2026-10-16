@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <deque>
+#include <vector>
 
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
@@ -11,6 +13,8 @@
 #include "include/core/SkSurface.h"
 
 namespace cutefish::ui {
+
+class View;
 
 // A layered view's texture: the view and its children painted untransformed.
 struct Layer
@@ -30,6 +34,17 @@ struct FrameDamage
     bool full = true;
     // What each of the last presented frames changed, newest first.
     std::deque<SkRegion> history;
+
+    // A view that draws what a subtree paints: where it reads it, untransformed
+    // in window device pixels, and how often that may have changed.
+    struct Watch
+    {
+        const View* watcher;
+        const View* subtree;
+        SkIRect rect;
+        uint64_t changes = 0;
+    };
+    std::vector<Watch> watches;
 };
 
 } // namespace cutefish::ui

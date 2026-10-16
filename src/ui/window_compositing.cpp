@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <cmath>
+#include <vector>
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkMatrix.h"
@@ -145,6 +146,22 @@ void Window::addDamage(const View* view, SkIRect rect, bool painted)
         it->second = origin;
     }
 
+    // Unclipped, through the transforms up to the subtree's own: as the
+    // subtree paints on its own.
+    for (FrameDamage::Watch& watch : m_frameDamage->watches) {
+        SkIRect placed = rect;
+        bool inside = view == watch.subtree;
+        for (const auto& [ancestor, position] : ancestors) {
+            if (inside)
+                break;
+            if (ancestor->isComposited(painted))
+                placed = mapThroughTransform(ancestor, placed, position);
+            inside = ancestor == watch.subtree;
+        }
+        if (inside && SkIRect::Intersects(placed, watch.rect))
+            ++watch.changes;
+    }
+
     for (const auto& [ancestor, position] : ancestors) {
         if (!ancestor->m_visible || ancestor->m_opacity <= 0)
             return;
@@ -188,9 +205,39 @@ void Window::collectDamage(View* view, PointF origin)
         collectDamage(child.get(), position);
 }
 
-void Window::damageAll()
+void Window::damageWhole()
 {
     m_frameDamage->full = true;
+    for (FrameDamage::Watch& watch : m_frameDamage->watches)
+        ++watch.changes;
+}
+
+uint64_t Window::watchDamage(const View* watcher, const View* subtree, const SkIRect& rect)
+{
+    for (FrameDamage::Watch& watch : m_frameDamage->watches) {
+        if (watch.watcher != watcher)
+            continue;
+        if (watch.subtree != subtree) {
+            watch.subtree = subtree;
+            ++watch.changes;
+        }
+        watch.rect = rect;
+        return watch.changes;
+    }
+    m_frameDamage->watches.push_back({watcher, subtree, rect});
+    return 0;
+}
+
+void Window::unwatchDamage(const View* watcher)
+{
+    std::erase_if(m_frameDamage->watches, [watcher](const FrameDamage::Watch& watch) {
+        return watch.watcher == watcher;
+    });
+}
+
+void Window::damageAll()
+{
+    damageWhole();
     const auto markLayers = [](const auto& self, View* view) -> void {
         if (view->m_layer)
             view->m_layer->repaintAll = true;

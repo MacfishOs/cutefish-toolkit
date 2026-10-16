@@ -296,6 +296,7 @@ private:
 
     friend class EmbeddedWindow;
     friend class FrameClient;
+    friend class HeaderBackdrop;
     friend class PlatformWindow;
     friend class Subsurface;
     friend class TestInput;
@@ -385,6 +386,13 @@ private:
     void collectDamage(View* view, PointF origin);
     // Theme and scale changes: the window and every texture.
     void damageAll();
+    // The whole window repaints, and any view may paint differently.
+    void damageWhole();
+    // How often damage from the subtree reached the rect, untransformed in
+    // window device pixels, or the whole window repainted, since the watcher
+    // first asked; the rect is the one later damage is checked against.
+    uint64_t watchDamage(const View* watcher, const View* subtree, const SkIRect& rect);
+    void unwatchDamage(const View* watcher);
     // How text draws into this window's canvas, before it is painted.
     void applyTextTarget() const;
     void updateLayers(View* view, PointF origin, SkCanvas* target);

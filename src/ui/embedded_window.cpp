@@ -259,7 +259,7 @@ void EmbeddedWindow::setSize(SizeF size)
         return;
     m_size = size;
     m_layoutNeeded = true;
-    m_frameDamage->full = true;
+    damageWhole();
     scheduleFrame();
 }
 
