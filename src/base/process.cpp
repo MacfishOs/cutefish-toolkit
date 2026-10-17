@@ -6,10 +6,13 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
-#include <memory>
 #include <fcntl.h>
+#include <memory>
+#include <linux/close_range.h>
 #include <poll.h>
-#include <spawn.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/mman.h>
 #include <sys/epoll.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -18,38 +21,126 @@
 #include "base/event_loop.h"
 #include "base/file.h"
 
-extern char** environ;
-
 namespace cutefish::base {
 
 namespace {
 
-struct SpawnSetup
+// What a new program starts with. The pipes' ends become its standard input,
+// output and error; -1 keeps this process's.
+struct Spawn
 {
-    posix_spawn_file_actions_t actions;
-    posix_spawnattr_t attributes;
-
-    SpawnSetup()
-    {
-        posix_spawn_file_actions_init(&actions);
-        posix_spawnattr_init(&attributes);
-        // The program starts with no signal blocked and default handlers,
-        // whatever this process changed.
-        sigset_t none;
-        sigemptyset(&none);
-        posix_spawnattr_setsigmask(&attributes, &none);
-        sigset_t defaults;
-        sigfillset(&defaults);
-        posix_spawnattr_setsigdefault(&attributes, &defaults);
-    }
-    ~SpawnSetup()
-    {
-        posix_spawn_file_actions_destroy(&actions);
-        posix_spawnattr_destroy(&attributes);
-    }
+    char* const* argv = nullptr;
+    // Null keeps this process's environment.
+    char* const* envp = nullptr;
+    const char* workingDirectory = nullptr;
+    int input = -1;
+    int output = -1;
+    int error = -1;
+    int inherited = -1;
+    bool newSession = false;
+    bool dropsOomProtection = false;
+    // Set by the child when it cannot start the program.
+    int failure = 0;
 };
 
 } // namespace
+
+// The child shares this process's memory until exec and may not take a lock
+// another thread holds: system calls only.
+static bool placeFd(int from, int to)
+{
+    if (from == to)
+        return fcntl(to, F_SETFD, 0) == 0;
+    return dup2(from, to) == to;
+}
+
+static int runSpawnedChild(void* data)
+{
+    Spawn& spawn = *static_cast<Spawn*>(data);
+
+    // The program starts with default handlers and no signal blocked, whatever
+    // this process changed; the parent blocked them all around the clone.
+    struct sigaction defaults = {};
+    defaults.sa_handler = SIG_DFL;
+    for (int signal = 1; signal < NSIG; ++signal)
+        sigaction(signal, &defaults, nullptr);
+    sigset_t none;
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, nullptr);
+
+    bool ready = !spawn.newSession || setsid() >= 0;
+    ready = ready && (spawn.input < 0 || placeFd(spawn.input, STDIN_FILENO));
+    ready = ready && (spawn.output < 0 || placeFd(spawn.output, STDOUT_FILENO));
+    ready = ready && (spawn.error < 0 || placeFd(spawn.error, STDERR_FILENO));
+    // Close-on-exec rather than closed, so a failed exec can still report.
+    ready = ready && (spawn.inherited < 0
+                      || (placeFd(spawn.inherited, Process::kInheritedFd)
+                          && close_range(Process::kInheritedFd + 1, ~0U, CLOSE_RANGE_CLOEXEC) == 0));
+    if (ready && spawn.dropsOomProtection)
+        dropOomProtection();
+    ready = ready && (!spawn.workingDirectory || chdir(spawn.workingDirectory) == 0);
+    if (ready) {
+        if (spawn.envp)
+            execvpe(spawn.argv[0], spawn.argv, spawn.envp);
+        else
+            execvp(spawn.argv[0], spawn.argv);
+    }
+    spawn.failure = errno ? errno : ENOEXEC;
+    _exit(127);
+}
+
+// As posix_spawn does it: the child runs on a stack of its own in this
+// process's memory, and this thread waits until it has called exec, so a large
+// process does not copy its page tables for every program it starts.
+static pid_t spawnProcess(Spawn& spawn, size_t argumentCount)
+{
+    const size_t stackSize = 256 * 1024 + argumentCount * sizeof(char*);
+    void* stack = mmap(nullptr, stackSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+    if (stack == MAP_FAILED)
+        return -1;
+
+    sigset_t all;
+    sigset_t previous;
+    sigfillset(&all);
+    pthread_sigmask(SIG_SETMASK, &all, &previous);
+    spawn.failure = 0;
+    pid_t pid = clone(runSpawnedChild, static_cast<char*>(stack) + stackSize, CLONE_VM | CLONE_VFORK | SIGCHLD,
+                      &spawn);
+    const int cloneError = errno;
+    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    munmap(stack, stackSize);
+
+    if (pid < 0) {
+        errno = cloneError;
+        return -1;
+    }
+    if (spawn.failure) {
+        while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
+        }
+        errno = spawn.failure;
+        return -1;
+    }
+    return pid;
+}
+
+void dropOomProtection(const char* path)
+{
+    const int input = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (input < 0)
+        return;
+    char value[16];
+    const ssize_t length = ::read(input, value, sizeof(value));
+    ::close(input);
+    if (length <= 0 || value[0] != '-')
+        return;
+
+    const int output = ::open(path, O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (output < 0)
+        return;
+    if (::write(output, "0", 1) != 1) {
+    }
+    ::close(output);
+}
 
 static std::vector<char*> argumentVector(const std::string& program, const std::vector<std::string>& arguments)
 {
@@ -158,6 +249,11 @@ void Process::setInheritedFd(int fd)
     m_inheritedFd = fd;
 }
 
+void Process::setOomProtectionDropped(bool dropped)
+{
+    m_dropsOomProtection = dropped;
+}
+
 bool Process::start(const std::string& program, const std::vector<std::string>& arguments)
 {
     if (m_pid > 0)
@@ -194,32 +290,26 @@ bool Process::start(const std::string& program, const std::vector<std::string>& 
         }
     }
 
-    SpawnSetup setup;
-    posix_spawn_file_actions_adddup2(&setup.actions, input[0], STDIN_FILENO);
-    if (!m_outputForwarded)
-        posix_spawn_file_actions_adddup2(&setup.actions, output[1], STDOUT_FILENO);
-    if (collectsErrors)
-        posix_spawn_file_actions_adddup2(&setup.actions, error[1], STDERR_FILENO);
-    if (inherited >= 0) {
-        posix_spawn_file_actions_adddup2(&setup.actions, inherited, kInheritedFd);
-        posix_spawn_file_actions_addclosefrom_np(&setup.actions, kInheritedFd + 1);
-    }
-    if (!m_workingDirectory.empty())
-        posix_spawn_file_actions_addchdir_np(&setup.actions, m_workingDirectory.c_str());
-    posix_spawnattr_setflags(&setup.attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
     std::vector<char*> argv = argumentVector(program, arguments);
     std::vector<char*> envp;
     for (const std::string& entry : m_environment)
         envp.push_back(const_cast<char*>(entry.c_str()));
     envp.push_back(nullptr);
-    pid_t pid = -1;
-    const int result = posix_spawnp(&pid, program.c_str(), &setup.actions, &setup.attributes, argv.data(),
-                                    m_environment.empty() ? environ : envp.data());
+    Spawn spawn;
+    spawn.argv = argv.data();
+    spawn.envp = m_environment.empty() ? nullptr : envp.data();
+    spawn.workingDirectory = m_workingDirectory.empty() ? nullptr : m_workingDirectory.c_str();
+    spawn.input = input[0];
+    spawn.output = m_outputForwarded ? -1 : output[1];
+    spawn.error = collectsErrors ? error[1] : -1;
+    spawn.inherited = inherited;
+    spawn.dropsOomProtection = m_dropsOomProtection;
+    const pid_t pid = spawnProcess(spawn, argv.size());
     closeFd(inherited);
     closeFd(input[0]);
     closeFd(output[1]);
     closeFd(error[1]);
-    if (result != 0) {
+    if (pid < 0) {
         closePipes();
         return false;
     }
@@ -406,13 +496,14 @@ bool Process::kill()
 pid_t Process::startDetached(const std::string& program, const std::vector<std::string>& arguments,
                              const std::string& workingDirectory)
 {
-    SpawnSetup setup;
-    if (!workingDirectory.empty())
-        posix_spawn_file_actions_addchdir_np(&setup.actions, workingDirectory.c_str());
-    posix_spawnattr_setflags(&setup.attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSID);
     std::vector<char*> argv = argumentVector(program, arguments);
-    pid_t pid = -1;
-    if (posix_spawnp(&pid, program.c_str(), &setup.actions, &setup.attributes, argv.data(), environ) != 0)
+    Spawn spawn;
+    spawn.argv = argv.data();
+    spawn.workingDirectory = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
+    spawn.newSession = true;
+    spawn.dropsOomProtection = true;
+    const pid_t pid = spawnProcess(spawn, argv.size());
+    if (pid < 0)
         return -1;
     // Reaped when it ends, so it never lingers as a zombie; after this
     // process, init does it.

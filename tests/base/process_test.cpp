@@ -6,10 +6,13 @@
 #include <chrono>
 #include <csignal>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <unistd.h>
 #include <string>
 
 #include "base/event_loop.h"
+#include "base/file.h"
 #include "base/process.h"
 #include "base/timer.h"
 
@@ -274,4 +277,67 @@ TEST(ProcessTest, WaitForFinishedKeepsReadingAndWriting)
     ASSERT_TRUE(copier.start("cat"));
     ASSERT_TRUE(copier.waitForFinished(5s));
     EXPECT_EQ(copier.standardOutput(), input);
+}
+
+TEST(ProcessTest, DropsOnlyANegativeOomScore)
+{
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string());
+    ASSERT_TRUE(directory.isValid());
+    const std::string protectedScore = directory.path() + "/protected";
+    const std::string zero = directory.path() + "/zero";
+    const std::string raised = directory.path() + "/raised";
+    std::ofstream(protectedScore) << "-900\n";
+    std::ofstream(zero) << "0\n";
+    std::ofstream(raised) << "300\n";
+
+    dropOomProtection(protectedScore.c_str());
+    dropOomProtection(zero.c_str());
+    dropOomProtection(raised.c_str());
+    dropOomProtection((directory.path() + "/missing").c_str());
+
+    EXPECT_EQ(file::read(protectedScore), "0");
+    EXPECT_EQ(file::read(zero), "0\n");
+    EXPECT_EQ(file::read(raised), "300\n");
+    EXPECT_FALSE(std::filesystem::exists(directory.path() + "/missing"));
+}
+
+// Without privilege the test cannot go below 0; a raised score shows that the
+// programs inherit it and that nothing lowers it.
+TEST(ProcessTest, ProgramsKeepARaisedOomScore)
+{
+    std::ofstream("/proc/self/oom_score_adj") << "250";
+    ASSERT_EQ(file::read("/proc/self/oom_score_adj"), "250\n");
+
+    EventLoop loop;
+    for (const bool dropped : {false, true}) {
+        Process process(&loop);
+        process.setOomProtectionDropped(dropped);
+        ASSERT_TRUE(process.start("cat", {"/proc/self/oom_score_adj"}));
+        ASSERT_TRUE(runUntilFinished(loop, process));
+        EXPECT_EQ(process.standardOutput(), "250\n");
+    }
+
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string());
+    const std::string written = directory.path() + "/score";
+    ASSERT_GT(Process::startDetached("sh", {"-c", "cat /proc/self/oom_score_adj > " + written + ".part; mv "
+                                                          + written + ".part " + written}),
+              0);
+    Timer poll(&loop);
+    poll.onTimeout = [&] {
+        if (std::filesystem::exists(written))
+            loop.quit();
+    };
+    poll.start(10ms);
+    Timer timeout(&loop);
+    timeout.setSingleShot(true);
+    timeout.onTimeout = [&loop] { loop.quit(); };
+    timeout.start(5s);
+    loop.run();
+    EXPECT_EQ(file::read(written), "250\n");
+}
+
+TEST(ProcessTest, DetachedStartsReportFailures)
+{
+    EXPECT_EQ(Process::startDetached("cutefish-no-such-program"), -1);
+    EXPECT_EQ(Process::startDetached("true", {}, "/nonexistent/directory"), -1);
 }

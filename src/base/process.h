@@ -14,6 +14,12 @@ namespace cutefish::base {
 
 class EventLoop;
 
+// Takes the oom_score_adj value in the file at `path` back to 0 when it is
+// below, and never lowers it: what the session protects from the
+// out-of-memory killer, the programs it starts need not share. System calls
+// only, so safe between fork and exec.
+void dropOomProtection(const char* path = "/proc/self/oom_score_adj");
+
 // A program run in the background: its output is collected and its end reported
 // on the loop. The program is looked up on PATH; its environment is this
 // process's unless setEnvironment() says otherwise.
@@ -53,6 +59,9 @@ public:
     // open until start() returns.
     static constexpr int kInheritedFd = 3;
     void setInheritedFd(int fd);
+    // Before start(): the program does not keep a protection from the
+    // out-of-memory killer this process has; see dropOomProtection().
+    void setOomProtectionDropped(bool dropped);
 
     // False when the program cannot be started; onFinished follows otherwise.
     bool start(const std::string& program, const std::vector<std::string>& arguments = {});
@@ -78,7 +87,8 @@ public:
     // The exit code, or the signal that ended the program with crashed set.
     std::function<void(int exitCode, bool crashed)> onFinished;
 
-    // Runs a program on its own, in a session of its own; its end is collected
+    // Runs a program on its own, in a session of its own and without this
+    // process's protection from the out-of-memory killer; its end is collected
     // in the background. The program's id, or -1.
     static pid_t startDetached(const std::string& program, const std::vector<std::string>& arguments = {},
                                const std::string& workingDirectory = {});
@@ -97,6 +107,7 @@ private:
     bool m_outputForwarded = false;
     bool m_errorForwarded = false;
     bool m_inputOpen = false;
+    bool m_dropsOomProtection = false;
     int m_inheritedFd = -1;
     size_t m_inputWritten = 0;
     pid_t m_pid = -1;
