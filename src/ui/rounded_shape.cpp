@@ -12,6 +12,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkRegion.h"
 #include "include/effects/SkRuntimeEffect.h"
 
 namespace cutefish::ui {
@@ -301,8 +302,13 @@ void drawRoundedShape(SkCanvas* canvas, const RoundedShapeSpec& spec)
             canvas->drawIRect(quad, paint);
             return;
         }
-        for (const SkIRect& corner : corners)
-            canvas->drawIRect(corner.makeOffset(quad.left(), quad.top()), paint);
+        // The four corners in one draw, which sets the shader up once.
+        SkIRect placed[4];
+        for (int i = 0; i < 4; ++i)
+            placed[i] = corners[i].makeOffset(quad.left(), quad.top());
+        SkRegion region;
+        region.setRects(placed, 4);
+        canvas->drawRegion(region, paint);
     } else {
         // Small shapes cached whole; large ones by their corners, whatever
         // their size, since their curves never meet.
