@@ -11,9 +11,13 @@
 #include <sys/timerfd.h>
 #include <unistd.h>
 
+#include "base/auto_reset.h"
+
 namespace cutefish::base {
 
 static thread_local EventLoop* s_current = nullptr;
+// The loop whose run() is innermost on the calling thread.
+static thread_local EventLoop* s_running = nullptr;
 
 bool LoopHandle::post(std::function<void()> task) const
 {
@@ -238,6 +242,9 @@ void EventLoop::post(Task task)
         std::lock_guard lock(m_postedMutex);
         m_posted.push_back(std::move(task));
     }
+    // run() looks at the queue before it waits.
+    if (s_running == this)
+        return;
     const uint64_t one = 1;
     [[maybe_unused]] const auto written = write(m_wakeFd, &one, sizeof(one));
 }
@@ -275,6 +282,7 @@ void EventLoop::removePrepareHook(int id)
 
 int EventLoop::run()
 {
+    const AutoReset<EventLoop*> running(s_running, this);
     m_running = true;
     while (m_running) {
         runPosted();
