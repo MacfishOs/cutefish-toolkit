@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 #include "base/json.h"
@@ -73,4 +74,13 @@ TEST(JsonTest, ReadsNumbersOutOfRange)
     EXPECT_TRUE(std::signbit((*value)[3].toDouble()));
     EXPECT_EQ((*value)[4].toDouble(), std::numeric_limits<double>::infinity());
     EXPECT_EQ((*value)[0].toInt(-1), -1);
+}
+
+TEST(JsonTest, ClampsIntegersOutOfRange)
+{
+    EXPECT_EQ(Value(1e19).toInt(), std::numeric_limits<int64_t>::max());
+    EXPECT_EQ(Value(-1e19).toInt(), std::numeric_limits<int64_t>::min());
+    EXPECT_EQ(Value(9223372036854775807.0).toInt(), std::numeric_limits<int64_t>::max());
+    EXPECT_EQ(Value(-9223372036854775808.0).toInt(), std::numeric_limits<int64_t>::min());
+    EXPECT_EQ(Value(-2.5).toInt(), -3);
 }

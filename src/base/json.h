@@ -58,7 +58,8 @@ public:
     // The fallback when the value is of another type.
     bool toBool(bool fallback = false) const { return isBool() ? m_bool : fallback; }
     double toDouble(double fallback = 0) const { return isNumber() ? m_number : fallback; }
-    // Rounded to the nearest integer, halfway away from zero.
+    // Rounded to the nearest integer, halfway away from zero, and clamped to
+    // the range.
     int64_t toInt(int64_t fallback = 0) const;
     std::string toString(const std::string& fallback = {}) const { return isString() ? m_string : fallback; }
     const Array& toArray() const;

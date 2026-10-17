@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace cutefish::base::json {
 
@@ -330,6 +331,11 @@ int64_t Value::toInt(int64_t fallback) const
 {
     if (!isNumber() || !std::isfinite(m_number))
         return fallback;
+    // Beyond the range, where llround() has no defined result.
+    if (m_number >= 9223372036854775807.0)
+        return std::numeric_limits<int64_t>::max();
+    if (m_number <= -9223372036854775808.0)
+        return std::numeric_limits<int64_t>::min();
     return int64_t(std::llround(m_number));
 }
 
