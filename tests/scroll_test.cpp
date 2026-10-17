@@ -12,6 +12,7 @@
 #include "ui/layout.h"
 #include "ui/list_view.h"
 #include "ui/painter.h"
+#include "ui/scroll_bar.h"
 #include "ui/scroll_view.h"
 #include "ui/scroller.h"
 #include "ui/test_input.h"
@@ -202,6 +203,51 @@ TEST_F(ScrollTest, PressStopsACoast)
     TestInput::click(scene.window, {50, 50});
     frame(scene.window, 2200);
     EXPECT_EQ(scene.left->scrollPosition().y, stopped);
+}
+
+// A drop-down's content goes to a new popup window at every opening: the
+// coast and the bar's fade run on the frames of the window it is in now.
+TEST_F(ScrollTest, CoastsAndFadesInTheWindowItMovedTo)
+{
+    auto first = std::make_unique<Window>();
+    auto column = std::make_unique<Column>();
+    auto* view = column->addChild<ScrollView>();
+    view->setLayoutHints({.fillWidth = true, .fillHeight = true});
+    view->setScrollDirections(false, true);
+    view->setContent<Box>(SizeF{300, 2000});
+    first->resize({300, 300});
+    first->setContentView(std::move(column));
+    first->show();
+    first->grab(1);
+    view->setScrollPosition({0, 500});
+    swipe(*first, 16, 1000);
+    frame(*first, 1048);
+    std::unique_ptr<View> scroll = first->contentView()->takeChild(view);
+    first.reset();
+
+    Window second;
+    second.resize({300, 300});
+    second.setContentView(std::move(scroll));
+    second.show();
+    const Image before = second.grab(uint64_t(4000 * 1e6));
+    swipe(second, 16, 5000);
+    frame(second, 5048);
+    const double released = view->scrollPosition().y;
+    frame(second, 5200);
+    EXPECT_GT(view->scrollPosition().y, released);
+
+    // Faded in by now, the handle shows at the right edge.
+    const Image after = second.grab(uint64_t((5600 + Scroller::resampleLatency) * 1e6));
+    bool shown = false;
+    for (int y = 0; y < after.height() && !shown; ++y) {
+        for (int x = after.width() - int(ScrollBar::thickness); x < after.width(); ++x) {
+            if (after.pixel(x, y) != before.pixel(x, y)) {
+                shown = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(shown);
 }
 
 TEST_F(ScrollTest, ListViewMakesOnlyRowsInSight)

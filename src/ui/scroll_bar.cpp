@@ -189,6 +189,8 @@ void ScrollBar::updateShown()
 
 void ScrollBar::fadeTo(double opacity)
 {
+    if (m_fade && m_fade->window() != window())
+        m_fade.reset();
     if (opacity == m_fadeTo && (m_opacity == opacity || (m_fade && m_fade->isRunning())))
         return;
     if (!window()) {

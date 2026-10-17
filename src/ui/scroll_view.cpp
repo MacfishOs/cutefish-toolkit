@@ -41,6 +41,10 @@ struct ScrollView::Private final : Scroller::Target
 
     Scroller* scroller()
     {
+        // Content that moves to another window, as a drop-down's between
+        // openings, needs a scroller on the frames of the new one.
+        if (instance && instance->window() != view->window())
+            instance.reset();
         if (!instance && view->window()) {
             instance = std::make_unique<Scroller>(view->window(), this);
             instance->setElastic(elastic);
