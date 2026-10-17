@@ -852,20 +852,42 @@ void paintTextLines(SkCanvas* canvas, textlayout::Paragraph* paragraph, const st
     }
 }
 
-static size_t utf8Offset(const std::string& text, size_t utf16)
+namespace {
+
+// UTF-16 offsets into UTF-8 ones, walking on from the last offset asked for
+// while they grow, so a paragraph's lines cost one pass over the text.
+class Utf8Offsets
 {
-    size_t units = 0;
-    size_t i = 0;
-    for (; i < text.size(); ++i) {
-        const auto byte = static_cast<unsigned char>(text[i]);
-        if ((byte & 0xc0) == 0x80)
-            continue;
-        if (units >= utf16)
-            break;
-        units += byte >= 0xf0 ? 2 : 1;
+public:
+    explicit Utf8Offsets(const std::string& text)
+        : m_text(text)
+    {
     }
-    return i;
-}
+
+    size_t operator()(size_t utf16)
+    {
+        if (utf16 < m_units) {
+            m_index = 0;
+            m_units = 0;
+        }
+        for (; m_index < m_text.size(); ++m_index) {
+            const auto byte = static_cast<unsigned char>(m_text[m_index]);
+            if ((byte & 0xc0) == 0x80)
+                continue;
+            if (m_units >= utf16)
+                break;
+            m_units += byte >= 0xf0 ? 2 : 1;
+        }
+        return m_index;
+    }
+
+private:
+    const std::string& m_text;
+    size_t m_index = 0;
+    size_t m_units = 0;
+};
+
+} // namespace
 
 TextGeometry textGeometry(textlayout::Paragraph* paragraph, const std::string& text, double width, double align,
                           const AdvanceRule& roundAdvances)
@@ -874,10 +896,12 @@ TextGeometry textGeometry(textlayout::Paragraph* paragraph, const std::string& t
     std::vector<textlayout::LineMetrics> metrics;
     paragraph->getLineMetrics(metrics);
     const std::vector<GlyphLine> glyphs = glyphLines(paragraph, roundAdvances);
+    Utf8Offsets starts(text);
+    Utf8Offsets ends(text);
     for (size_t l = 0; l < metrics.size(); ++l) {
         TextGeometry::Line line;
-        line.start = utf8Offset(text, metrics[l].fStartIndex);
-        line.end = utf8Offset(text, metrics[l].fEndIndex);
+        line.start = starts(metrics[l].fStartIndex);
+        line.end = ends(metrics[l].fEndIndex);
         // A line's start excludes the spaces a soft break left; keep them.
         if (l > 0)
             line.start = std::min(line.start, geometry.lines.back().end);
