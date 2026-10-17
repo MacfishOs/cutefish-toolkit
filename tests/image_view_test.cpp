@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <fcntl.h>
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -37,8 +39,10 @@ constexpr Color kWhite = Color::rgb(0xFFFFFF);
 
 // One per process: ctest runs the tests of this suite side by side.
 const fs::path kDirectory = "/tmp/cutefish-toolkit-image-test-" + std::to_string(getpid());
-// The thumbnail cache keys are this fixed path's, and only one test uses it.
+// The thumbnail cache keys are this fixed path's, so build trees testing at
+// the same time take turns through the lock file next to it.
 const fs::path kThumbnailDirectory = "/tmp/cutefish-toolkit-thumbnail-test";
+const fs::path kThumbnailLock = "/tmp/cutefish-toolkit-thumbnail-test.lock";
 
 bool near(Color a, Color b, int tolerance = 6)
 {
@@ -225,6 +229,25 @@ Shown show(const std::string& path, SizeF size, ImageView::FillMode mode, double
     return shown;
 }
 
+struct FileLock
+{
+    explicit FileLock(const fs::path& path)
+        : fd(open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600))
+    {
+        if (fd >= 0)
+            flock(fd, LOCK_EX);
+    }
+    ~FileLock()
+    {
+        if (fd >= 0)
+            close(fd);
+    }
+    FileLock(const FileLock&) = delete;
+    FileLock& operator=(const FileLock&) = delete;
+
+    int fd;
+};
+
 class ImageViewTest : public testing::Test
 {
 protected:
@@ -367,6 +390,8 @@ TEST_F(ImageViewTest, TurnsByExifOnlyWhenAsked)
 
 TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
 {
+    const FileLock lock(kThumbnailLock);
+    ASSERT_GE(lock.fd, 0);
     fs::remove_all(kThumbnailDirectory);
     fs::create_directories(kThumbnailDirectory);
     const std::string path = writePng("a b[1].png", 300, 150, kThumbnailDirectory);
@@ -388,6 +413,7 @@ TEST_F(ImageViewTest, SharesTheFreedesktopThumbnailCache)
 
     const std::string broken = (kThumbnailDirectory / "broken.png").string();
     FILE* file = std::fopen(broken.c_str(), "wb");
+    ASSERT_NE(file, nullptr);
     std::fputs("not an image", file);
     std::fclose(file);
     const fs::path marker = fs::path(cutefish::base::paths::cacheHome())

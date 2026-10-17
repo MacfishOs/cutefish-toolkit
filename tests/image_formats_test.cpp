@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "base/event_loop.h"
@@ -225,7 +226,7 @@ TEST(ImageFormatsTest, DecodesTga)
 TEST(AnimatedImageTest, PlaysGifFramesOnTheFrameClock)
 {
     const std::string data = gif(2, 2, {{0, 0, 2, 2, {0, 0, 0, 0}, 5}, {0, 0, 2, 2, {1, 1, 1, 1}, 5}}, 0);
-    const std::string path = "/tmp/cutefish-toolkit-animated-test.gif";
+    const std::string path = "/tmp/cutefish-toolkit-animated-test-" + std::to_string(getpid()) + ".gif";
     {
         FILE* file = fopen(path.c_str(), "wb");
         ASSERT_NE(file, nullptr);
