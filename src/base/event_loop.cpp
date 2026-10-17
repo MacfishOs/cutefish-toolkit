@@ -306,10 +306,14 @@ void EventLoop::dispatch()
 
 void EventLoop::runPrepareHooks()
 {
-    // A hook may remove hooks.
+    // A hook may remove hooks; one removed before its turn does not run.
     const auto hooks = m_prepareHooks;
-    for (const auto& [id, hook] : hooks)
-        hook();
+    for (const auto& [id, hook] : hooks) {
+        const bool present = std::any_of(m_prepareHooks.begin(), m_prepareHooks.end(),
+                                         [id](const auto& entry) { return entry.first == id; });
+        if (present)
+            hook();
+    }
 }
 
 bool EventLoop::dispatchEvents(int timeout)

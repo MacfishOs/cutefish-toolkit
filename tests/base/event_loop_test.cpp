@@ -160,3 +160,15 @@ TEST(EventLoopTest, DueTimerMayStopAnother)
     loop.dispatch();
     EXPECT_EQ(second, 0);
 }
+
+TEST(EventLoopTest, PrepareHookRemovedByAnotherDoesNotRun)
+{
+    EventLoop loop;
+    int second = 0;
+    int secondId = 0;
+    const int first = loop.addPrepareHook([&] { loop.removePrepareHook(secondId); });
+    secondId = loop.addPrepareHook([&] { ++second; });
+    loop.dispatch();
+    EXPECT_EQ(second, 0);
+    loop.removePrepareHook(first);
+}
