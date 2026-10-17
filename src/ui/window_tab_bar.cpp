@@ -172,7 +172,7 @@ public:
         const int i = index();
         const bool selected = i == m_bar->m_current;
         m_label->setWeight(selected ? 500 : 400);
-        m_label->setColor(selected ? m_bar->textColor() : m_bar->dimTextColor());
+        m_label->setColor(selected ? m_bar->textRecipe() : withAlpha(m_bar->textRecipe(), 0.6));
         m_label->setVisible(m_bar->m_editing != i);
         m_close->setVisible(closeShown());
         requestPaint();
@@ -202,7 +202,7 @@ public:
                 }
             };
         }
-        const Color text = m_bar->textColor();
+        const ColorRecipe text = m_bar->textRecipe();
         m_editor->setTextColor(text);
         m_editor->setSelectionColors(withAlpha(text, 0.25), text);
         m_editor->setText(m_title);
@@ -513,7 +513,12 @@ const ColorProvider& WindowTabBar::colors() const
 
 Color WindowTabBar::textColor() const
 {
-    return m_textColor.value_or(Theme::current().text);
+    return m_textColor ? m_textColor->resolve() : Theme::current().text;
+}
+
+ColorRecipe WindowTabBar::textRecipe() const
+{
+    return m_textColor.value_or(ColorId::Text);
 }
 
 Color WindowTabBar::trackColor() const
@@ -718,9 +723,9 @@ void WindowTabBar::setDarkMode(std::optional<bool> dark)
     requestPaint();
 }
 
-void WindowTabBar::setTextColor(std::optional<Color> color)
+void WindowTabBar::setTextColor(std::optional<ColorRecipe> color)
 {
-    m_textColor = color;
+    m_textColor = std::move(color);
     updateSlots();
     requestPaint();
 }

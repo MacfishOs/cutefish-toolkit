@@ -43,9 +43,9 @@ void Icon::setIconName(std::string name)
     requestPaint();
 }
 
-void Icon::setColor(std::optional<Color> color)
+void Icon::setColor(std::optional<ColorRecipe> color)
 {
-    m_color = color;
+    m_color = std::move(color);
     requestPaint();
 }
 
@@ -62,7 +62,7 @@ void Icon::paint(Painter& painter)
     if (m_name.empty())
         return;
     const Theme& theme = Theme::current();
-    const Color color = isEnabled() ? m_color.value_or(theme.text) : theme.disabledText;
+    const Color color = isEnabled() ? (m_color ? m_color->resolve() : theme.text) : theme.disabledText;
     const Rect rect = iconRect(painter, localRect(), m_size);
     if (sk_sp<SkImage> image = IconLoader::instance().glyph(m_name, rect.width, color, painter.scale()))
         painter.drawImage(image.get(), rect.x, rect.y);
@@ -118,11 +118,11 @@ std::string ThemeIcon::path(double scale) const
     return IconLoader::instance().themeIconPath(m_name, int(m_size), scale);
 }
 
-void ThemeIcon::setColor(std::optional<Color> color)
+void ThemeIcon::setColor(std::optional<ColorRecipe> color)
 {
-    if (color == m_color)
+    if (sameColor(color, m_color))
         return;
-    m_color = color;
+    m_color = std::move(color);
     requestPaint();
 }
 
@@ -133,10 +133,9 @@ void ThemeIcon::paint(Painter& painter)
     const Rect rect = iconRect(painter, localRect(), m_size);
     // Tinted in device pixels with SourceIn, before placing the raster.
     sk_sp<SkColorFilter> tint;
-    if (m_color && m_color->a > 0) {
-        const Color color = *m_color;
+    const Color color = m_color ? m_color->resolve() : Color{0, 0, 0, 0};
+    if (color.a > 0)
         tint = SkColorFilters::Blend(SkColorSetARGB(color.a, color.r, color.g, color.b), SkBlendMode::kSrcIn);
-    }
     if (m_provider) {
         // At the application's integer scale (the outputs'): the theme is
         // searched at sourceSize × scale at that scale, for a pixmap that many

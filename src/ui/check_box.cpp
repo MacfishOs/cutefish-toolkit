@@ -42,7 +42,7 @@ CheckBox::CheckBox(std::string text)
     : ToggleControl(std::move(text), kIndicator, kPadding)
     , m_check(addChild<Icon>("check", kCheckSize))
 {
-    m_check->setColor(color(ColorId::ToggleMark));
+    m_check->setColor(ColorId::ToggleMark);
     m_check->setVisible(false);
 }
 

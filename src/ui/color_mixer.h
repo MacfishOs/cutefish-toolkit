@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 
 #include "ui/color_id.h"
@@ -30,12 +31,20 @@ public:
     explicit ColorRecipe(std::function<Color(const ColorProvider&)> make);
 
     Color resolve(const ColorProvider& provider) const;
+    // The current theme's colour.
+    Color resolve() const;
+    // Set for a recipe made from a colour, which no theme changes.
+    const std::optional<Color>& fixedColor() const { return m_fixed; }
 
 private:
     static std::function<Color(const ColorProvider&)> reference(uint16_t id);
 
     std::function<Color(const ColorProvider&)> m_make;
+    std::optional<Color> m_fixed;
 };
+
+// Whether two optional recipes surely give the same colour in every theme.
+bool sameColor(const std::optional<ColorRecipe>& a, const std::optional<ColorRecipe>& b);
 
 // The colour with its alpha replaced, as Color::withAlpha.
 ColorRecipe withAlpha(const ColorRecipe& recipe, double alpha);

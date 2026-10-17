@@ -51,13 +51,13 @@ SearchField::SearchField(std::string placeholder)
     updateMargins();
 }
 
-void SearchField::setFill(std::optional<Color> fill)
+void SearchField::setFill(std::optional<ColorRecipe> fill)
 {
-    m_fill = fill;
+    m_fill = std::move(fill);
     requestPaint();
 }
 
-void SearchField::setGlyphColor(std::optional<Color> color)
+void SearchField::setGlyphColor(std::optional<ColorRecipe> color)
 {
     m_search->setColor(color);
     m_clear->setColor(color);
@@ -78,7 +78,7 @@ void SearchField::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
     const RectF bounds = localRect();
-    const Color fill = m_fill.value_or(theme.secondBackground);
+    const Color fill = m_fill ? m_fill->resolve() : theme.secondBackground;
     const double radius = bounds.height / 2;
     const bool focused = hasFocus();
     painter.drawRoundedRect(bounds, {radius, 0, Corners::Circular}, fill, 1, focused ? theme.highlight : fill);

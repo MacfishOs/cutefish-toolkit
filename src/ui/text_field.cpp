@@ -91,10 +91,10 @@ struct TextField::Private
     int weight = 400;
     bool centred = false;
     std::string family;
-    std::optional<Color> textColor;
-    std::optional<Color> placeholderColor;
-    std::optional<Color> selectionColor;
-    std::optional<Color> selectedTextColor;
+    std::optional<ColorRecipe> textColor;
+    std::optional<ColorRecipe> placeholderColor;
+    std::optional<ColorRecipe> selectionColor;
+    std::optional<ColorRecipe> selectedTextColor;
     std::string mask = kPasswordDot;
     double caretWidth = 0;
     int cursorFlashTime = kCursorFlashTime;
@@ -193,7 +193,7 @@ struct TextField::Private
 
         const TextContext& context = Application::instance()->text();
         const Theme& theme = Theme::current();
-        const Color color = textColor.value_or(enabled ? theme.text : theme.disabledText);
+        const Color color = textColor ? textColor->resolve() : enabled ? theme.text : theme.disabledText;
         const textlayout::TextStyle normal = context.style(fontSize, weight, color, family);
         textlayout::ParagraphStyle style;
         style.setTextStyle(normal);
@@ -222,7 +222,7 @@ struct TextField::Private
             const size_t start = toDisplay(edit.selectionStart());
             const size_t end = toDisplay(edit.selectionEnd());
             textlayout::TextStyle selected = normal;
-            selected.setColor(selectedTextColor.value_or(theme.highlightedText).argb());
+            selected.setColor((selectedTextColor ? selectedTextColor->resolve() : theme.highlightedText).argb());
             add(0, start);
             builder->pushStyle(selected);
             add(start, end);
@@ -245,8 +245,8 @@ struct TextField::Private
         if (placeholderParagraph && placeholderTheme == Theme::generation())
             return placeholderParagraph.get();
         const TextContext& context = Application::instance()->text();
-        const textlayout::TextStyle style = context.style(
-            fontSize, weight, placeholderColor.value_or(color(ColorId::TextFieldPlaceholder)), family);
+        const Color ink = placeholderColor ? placeholderColor->resolve() : color(ColorId::TextFieldPlaceholder);
+        const textlayout::TextStyle style = context.style(fontSize, weight, ink, family);
         textlayout::ParagraphStyle paragraphStyle;
         paragraphStyle.setTextStyle(style);
         if (centred)
@@ -411,24 +411,24 @@ void TextField::setFadesWhenDisabled(bool fades)
     enabledChanged();
 }
 
-void TextField::setTextColor(std::optional<Color> color)
+void TextField::setTextColor(std::optional<ColorRecipe> color)
 {
-    d->textColor = color;
+    d->textColor = std::move(color);
     d->dirty = true;
     requestPaint();
 }
 
-void TextField::setPlaceholderColor(std::optional<Color> color)
+void TextField::setPlaceholderColor(std::optional<ColorRecipe> color)
 {
-    d->placeholderColor = color;
+    d->placeholderColor = std::move(color);
     d->placeholderParagraph.reset();
     requestPaint();
 }
 
-void TextField::setSelectionColors(std::optional<Color> background, std::optional<Color> text)
+void TextField::setSelectionColors(std::optional<ColorRecipe> background, std::optional<ColorRecipe> text)
 {
-    d->selectionColor = background;
-    d->selectedTextColor = text;
+    d->selectionColor = std::move(background);
+    d->selectedTextColor = std::move(text);
     d->dirty = true;
     requestPaint();
 }
@@ -692,7 +692,7 @@ void TextField::paint(Painter& painter)
     // A selection shows with or without the focus.
     if (d->preedit.empty() && d->edit.hasSelection()) {
         SkPaint selection;
-        selection.setColor(d->selectionColor.value_or(theme.highlight).argb());
+        selection.setColor((d->selectionColor ? d->selectionColor->resolve() : theme.highlight).argb());
         const size_t start = utf16Index(d->display, d->toDisplay(d->edit.selectionStart()));
         const size_t end = utf16Index(d->display, d->toDisplay(d->edit.selectionEnd()));
         for (const textlayout::TextBox& box : text->getRectsForRange(
@@ -722,7 +722,7 @@ void TextField::paint(Painter& painter)
         startBlinking();
     if (focused && window && window->hasKeyboardFocus() && d->caretVisible) {
         SkPaint paint;
-        paint.setColor(d->textColor.value_or(theme.text).argb());
+        paint.setColor((d->textColor ? d->textColor->resolve() : theme.text).argb());
         const SkPoint top = device(originX + caret, lineTop);
         const SkPoint bottom = device(originX + caret, lineTop + line.height);
         canvas->drawRect(SkRect::MakeXYWH(top.fX, top.fY, SkScalar(caretPixels),

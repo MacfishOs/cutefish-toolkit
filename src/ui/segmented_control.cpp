@@ -133,9 +133,9 @@ void SegmentedControl::setFontSize(double size)
     requestLayout();
 }
 
-void SegmentedControl::setTrackColor(std::optional<Color> color)
+void SegmentedControl::setTrackColor(std::optional<ColorRecipe> color)
 {
-    m_trackColor = color;
+    m_trackColor = std::move(color);
     requestPaint();
 }
 
@@ -188,7 +188,7 @@ void SegmentedControl::paint(Painter& painter)
     const double tabRadius = theme.smallRadius + 2;
     if (m_style == Style::Segmented) {
         painter.drawRoundedRect(bounds, {bounds.height / 2},
-                                m_trackColor.value_or(color(ColorId::SegmentedControlTrack)));
+                                m_trackColor ? m_trackColor->resolve() : color(ColorId::SegmentedControlTrack));
     } else {
         painter.drawRoundedRect(bounds, {tabRadius, 0, themeCorners()}, color(ColorId::SegmentedTabBackground));
     }
@@ -220,14 +220,13 @@ void SegmentedControl::enabledChanged()
 
 void SegmentedControl::updateColors()
 {
-    const Theme& theme = Theme::current();
     for (size_t i = 0; i < m_segments.size(); ++i) {
         // The disabled text colour, half the text colour while pressed.
         Label* label = m_segments[i]->label();
         if (!isEnabled())
-            label->setColor(theme.disabledText);
+            label->setColor(ColorId::DisabledText);
         else if (int(i) == m_pressed && m_pressShown)
-            label->setColor(color(ColorId::SegmentedControlTextPressed));
+            label->setColor(ColorId::SegmentedControlTextPressed);
         else
             label->setColor(std::nullopt);
     }

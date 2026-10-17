@@ -47,7 +47,7 @@ DialogButton::DialogButton(std::string text, bool primary)
     m_label->setWeight(500);
     m_label->setFontSize(12);
     if (primary)
-        m_label->setColor(color(ColorId::DialogButtonProminentText));
+        m_label->setColor(ColorId::DialogButtonProminentText);
 }
 
 void DialogButton::setText(std::string text)
@@ -58,7 +58,7 @@ void DialogButton::setText(std::string text)
 void DialogButton::setPrimary(bool primary)
 {
     m_primary = primary;
-    m_label->setColor(primary ? std::optional<Color>(color(ColorId::DialogButtonProminentText)) : std::nullopt);
+    m_label->setColor(primary ? std::optional<ColorRecipe>(ColorId::DialogButtonProminentText) : std::nullopt);
     requestPaint();
 }
 
@@ -383,7 +383,7 @@ private:
 void ConfirmDialog::show()
 {
     m_window = std::make_unique<Window>();
-    m_window->setBackgroundColor(Theme::current().secondBackground);
+    m_window->setBackgroundColor(ColorId::SecondBackground);
     m_window->setTransientParent(m_parent, true);
     m_window->setTitle(m_title);
     m_window->onCloseRequested = [this] { finish(false); };
@@ -406,7 +406,7 @@ void ConfirmDialog::show()
     // Kept when empty, so a text set while shown has its place.
     Label* text = texts->addChild<Label>(m_text);
     text->setFontSize(kTitleSize);
-    text->setColor(Theme::current().disabledText);
+    text->setColor(ColorId::DisabledText);
     text->setWrap(true);
     text->setLayoutHints({.fillWidth = true});
     text->setVisible(!m_text.empty());

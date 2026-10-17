@@ -112,11 +112,11 @@ void Label::setWeight(int weight)
     invalidate();
 }
 
-void Label::setColor(std::optional<Color> color)
+void Label::setColor(std::optional<ColorRecipe> color)
 {
-    if (color == m_color)
+    if (sameColor(color, m_color))
         return;
-    m_color = color;
+    m_color = std::move(color);
     requestPaint();
 }
 
@@ -420,7 +420,7 @@ void Label::paintText(Painter& painter, PointF shift, std::optional<Color> color
     const double offset = textOffset(textHeight(lines));
 
     const Theme& theme = Theme::current();
-    const Color textColor = color.value_or(m_color.value_or(theme.text));
+    const Color textColor = color.value_or(m_color ? m_color->resolve() : theme.text);
     const bool wrapped = m_wrapped && text == m_wrapped.get() && !m_wrappedElided;
     const bool spans = !color && !m_spans.empty() && (text == m_paragraph.get() || wrapped);
     const auto colorAt = [&](size_t utf8Offset) -> SkColor {
@@ -435,7 +435,7 @@ void Label::paintText(Painter& painter, PointF shift, std::optional<Color> color
             size_t start = 0;
             for (const Span& span : m_spans) {
                 if (utf8Offset < start + span.text.size())
-                    return span.color.value_or(textColor).argb();
+                    return (span.color ? span.color->resolve() : textColor).argb();
                 start += span.text.size();
             }
         }
@@ -494,7 +494,7 @@ void Label::paintText(Painter& painter, PointF shift, std::optional<Color> color
             if (!span.underline && span.link.empty())
                 continue;
             SkPaint paint;
-            paint.setColor(span.color.value_or(textColor).argb());
+            paint.setColor((span.color ? span.color->resolve() : textColor).argb());
             const double y = std::round((painter.offset().y + box.baseline + shift.y + position) * scale);
             target->drawRect(SkRect::MakeLTRB(SkScalar((painter.offset().x + box.left + shift.x) * scale), SkScalar(y),
                                               SkScalar((painter.offset().x + box.right + shift.x) * scale),
@@ -656,7 +656,7 @@ std::unique_ptr<textlayout::Paragraph> Label::build(const std::string* text, con
 {
     const TextContext& context = Application::instance()->text();
     const Theme& theme = Theme::current();
-    const Color color = m_color.value_or(theme.text);
+    const Color color = m_color ? m_color->resolve() : theme.text;
     textlayout::TextStyle style = context.style(m_fontSize, m_weight, color, m_family);
     for (const auto& [feature, value] : m_features)
         style.addFontFeature(SkString(feature.c_str()), value);

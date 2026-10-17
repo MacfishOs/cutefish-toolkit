@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "ui/color_mixer.h"
 #include "ui/view.h"
 
 namespace skia::textlayout {
@@ -47,7 +48,7 @@ public:
     {
         std::string text;
         int weight = 0;
-        std::optional<Color> color;
+        std::optional<ColorRecipe> color;
         bool italic = false;
         bool underline = false;
         std::string link;
@@ -65,8 +66,8 @@ public:
     void setWeight(int weight);
     // Empty follows the theme's.
     void setFontFamily(std::string family);
-    // Unset follows the theme's text colour.
-    void setColor(std::optional<Color> color);
+    // Unset follows the theme's text colour, as does a recipe naming theme colours.
+    void setColor(std::optional<ColorRecipe> color);
     // Disabled, a plain label fades to 0.6; a control's own label, which the
     // control colours, does not.
     void setFadesWhenDisabled(bool fades);
@@ -207,7 +208,7 @@ private:
     bool m_fadesWhenDisabled = true;
     bool m_subpixel = true;
     double m_letterSpacing = 0;
-    std::optional<Color> m_color;
+    std::optional<ColorRecipe> m_color;
     bool m_wrap = false;
     bool m_wrapAnywhere = false;
     double m_fixedLineHeight = 0;

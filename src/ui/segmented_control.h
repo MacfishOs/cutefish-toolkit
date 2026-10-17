@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "ui/color_mixer.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -38,7 +39,7 @@ public:
     // Logical pixels; 0 follows the theme.
     void setFontSize(double size);
     // The segmented track; unset is the translucent one.
-    void setTrackColor(std::optional<Color> color);
+    void setTrackColor(std::optional<ColorRecipe> color);
     // Around the buttons: 2 for a segmented control, none for a tab bar.
     double padding() const;
     // A button's own width, its label's.
@@ -76,7 +77,7 @@ private:
     int m_pressTimer = 0;
     double m_contentHeight;
     double m_fontSize = 0;
-    std::optional<Color> m_trackColor;
+    std::optional<ColorRecipe> m_trackColor;
 };
 
 // A tab bar.

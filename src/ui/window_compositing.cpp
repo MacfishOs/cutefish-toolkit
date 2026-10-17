@@ -413,7 +413,7 @@ void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
         updateLayers(m_toolTip.get(), {}, canvas);
 
     const auto paintInside = [&](SkCanvas* target) {
-        target->clear(m_backgroundColor.value_or(Theme::current().background).argb());
+        target->clear(backgroundColor().argb());
         Painter painter(target, m_scale);
         m_contentView->paintTree(painter, region);
         if (m_overlay)
@@ -433,7 +433,7 @@ void Window::applyTextTarget() const
     application->text().setTranslucentSubpixel(m_translucentSubpixel);
     // Embedded windows already draw into canvases without a pixel geometry
     // when they are not opaque.
-    application->text().setTransparentWindow(m_backgroundColor && m_backgroundColor->a == 0
+    application->text().setTransparentWindow(m_backgroundColor && backgroundColor().a == 0
                                              && application->platform() != Application::Platform::Embedded);
 }
 

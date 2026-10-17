@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "ui/color_mixer.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -47,7 +48,7 @@ public:
     // The colours follow these: the bar may sit on a colour scheme rather
     // than the theme.
     void setDarkMode(std::optional<bool> dark);
-    void setTextColor(std::optional<Color> color);
+    void setTextColor(std::optional<ColorRecipe> color);
     // The terminal and the editor: 140 to 220; the file manager: at least
     // 140 and no maximum (0).
     void setTabWidthRange(double minimum, double maximum);
@@ -125,6 +126,7 @@ private:
     // The bar's own colour mode's colours.
     const ColorProvider& colors() const;
     Color textColor() const;
+    ColorRecipe textRecipe() const;
     Color trackColor() const;
     Color selectedColor() const;
     Color hoverColor() const;
@@ -154,7 +156,7 @@ private:
     std::unique_ptr<Ticker> m_ticker;
     int m_current = 0;
     std::optional<bool> m_darkMode;
-    std::optional<Color> m_textColor;
+    std::optional<ColorRecipe> m_textColor;
     double m_minimumTabWidth = 140;
     double m_maximumTabWidth = 220;
     Margins m_trackInsets;

@@ -201,15 +201,15 @@ void HeaderBackdrop::setSeparatorVisible(bool visible)
     requestPaint();
 }
 
-void HeaderBackdrop::setBaseColor(std::optional<Color> color)
+void HeaderBackdrop::setBaseColor(std::optional<ColorRecipe> color)
 {
-    m_baseColor = color;
+    m_baseColor = std::move(color);
     requestPaint();
 }
 
-void HeaderBackdrop::setTintColor(std::optional<Color> color)
+void HeaderBackdrop::setTintColor(std::optional<ColorRecipe> color)
 {
-    m_tintColor = color;
+    m_tintColor = std::move(color);
     requestPaint();
 }
 
@@ -235,7 +235,7 @@ void HeaderBackdrop::paint(Painter& painter)
     painter.clip(bounds);
 
     // The view's content is still drawn beneath; an opaque base hides it.
-    painter.fillRect(bounds, m_baseColor.value_or(theme.background));
+    painter.fillRect(bounds, m_baseColor ? m_baseColor->resolve() : theme.background);
 
     // The source: the content alone, from where the bar lies over the view, the
     // padding on the content's side.
@@ -349,7 +349,7 @@ void HeaderBackdrop::paint(Painter& painter)
         }
     }
 
-    painter.fillRect(bounds, m_tintColor.value_or(theme.secondBackground).withAlpha(kTintAlpha));
+    painter.fillRect(bounds, (m_tintColor ? m_tintColor->resolve() : theme.secondBackground).withAlpha(kTintAlpha));
 
     // A 0.5 px hairline; below 2x a device pixel with its alpha scaled to
     // the same weight.

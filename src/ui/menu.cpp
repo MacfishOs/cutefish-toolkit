@@ -631,7 +631,6 @@ private:
 
     void updateColors()
     {
-        const Theme& theme = Theme::current();
         for (size_t i = 0; i < m_rows.size(); ++i) {
             const Row& row = m_rows[i];
             if (!row.label)
@@ -640,23 +639,22 @@ private:
             const bool active = enabled && (int(i) == m_current
                                             || (m_menu->m_openSubmenu
                                                 && m_menu->m_items[row.index].submenu.get() == m_menu->m_openSubmenu));
-            const Color disabled = color(ColorId::MenuDisabledText);
-            const std::optional<Color> text = !enabled ? std::optional<Color>(disabled)
-                                                       : active ? std::optional<Color>(theme.highlightedText)
-                                                                : std::nullopt;
+            const std::optional<ColorRecipe> text = !enabled ? std::optional<ColorRecipe>(ColorId::MenuDisabledText)
+                                                    : active ? std::optional<ColorRecipe>(ColorId::HighlightedText)
+                                                             : std::nullopt;
             row.label->setColor(text);
             if (row.check)
                 row.check->setColor(text);
             if (row.glyph)
                 row.glyph->setColor(text);
             if (row.shortcut)
-                row.shortcut->setColor(!enabled ? disabled
-                                       : active ? theme.highlightedText
-                                                : color(ColorId::MenuShortcutText));
+                row.shortcut->setColor(!enabled ? ColorId::MenuDisabledText
+                                       : active ? ColorId::HighlightedText
+                                                : ColorId::MenuShortcutText);
             if (row.arrow)
-                row.arrow->setColor(active    ? theme.highlightedText
-                                    : enabled ? color(ColorId::MenuArrow)
-                                              : color(ColorId::MenuArrowDisabled));
+                row.arrow->setColor(active    ? ColorId::HighlightedText
+                                    : enabled ? ColorId::MenuArrow
+                                              : ColorId::MenuArrowDisabled);
         }
     }
 

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ui/bitmap.h"
+#include "ui/color_mixer.h"
 
 #include "ui/view.h"
 
@@ -28,7 +29,8 @@ public:
 
     void setIconName(std::string name);
     const std::string& iconName() const { return m_name; }
-    void setColor(std::optional<Color> color);
+    // Unset is the theme's text colour.
+    void setColor(std::optional<ColorRecipe> color);
     void setSize(double size);
 
     SizeF sizeHint() const override { return {m_size, m_size}; }
@@ -38,7 +40,7 @@ protected:
 
 private:
     std::string m_name;
-    std::optional<Color> m_color;
+    std::optional<ColorRecipe> m_color;
     double m_size;
 };
 
@@ -54,7 +56,7 @@ public:
     void setSize(double size);
     // The icon as a silhouette in one colour (its alpha times the colour's);
     // unset, or fully transparent, draws it as it is.
-    void setColor(std::optional<Color> color);
+    void setColor(std::optional<ColorRecipe> color);
     // The file the theme gives for the name at this size, at the scale.
     std::string path(double scale = 1) const;
     // Looked up as an image provider does: the device-pixel size at the
@@ -75,7 +77,7 @@ private:
     double m_size;
     bool m_provider = false;
     int m_themeSize = 0;
-    std::optional<Color> m_color;
+    std::optional<ColorRecipe> m_color;
 };
 
 // The file the icon theme (its parents, hicolor, the dash fallbacks, then

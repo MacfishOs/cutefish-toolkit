@@ -142,7 +142,7 @@ public:
         description->setLayoutHints(centred);
 
         LinkLabel* link = m_column->addChild<LinkLabel>();
-        link->setSpans({{dialog->m_link, 0, Theme::current().highlight, false, true, dialog->m_link}});
+        link->setSpans({{dialog->m_link, 0, ColorId::Highlight, false, true, dialog->m_link}});
         link->setLayoutHints(centred);
         link->onClicked = [dialog] {
             const std::string url = dialog->m_link;

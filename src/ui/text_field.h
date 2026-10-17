@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 
+#include "ui/color_mixer.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -61,11 +62,11 @@ public:
     // text input with the frame off and no margins.
     void setFadesWhenDisabled(bool fades);
     // The text and the caret, in every state; unset follows the theme.
-    void setTextColor(std::optional<Color> color);
-    void setPlaceholderColor(std::optional<Color> color);
+    void setTextColor(std::optional<ColorRecipe> color);
+    void setPlaceholderColor(std::optional<ColorRecipe> color);
     // The selection's background and text colours; unset, the theme's
     // highlight colours.
-    void setSelectionColors(std::optional<Color> background, std::optional<Color> text);
+    void setSelectionColors(std::optional<ColorRecipe> background, std::optional<ColorRecipe> text);
     // A family as Label::setFontFamily takes it; empty follows the theme.
     void setFontFamily(std::string family);
     // What a password shows for each character; U+2022 unless set.

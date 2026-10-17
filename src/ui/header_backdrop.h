@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "base/signal.h"
+#include "ui/color_mixer.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -30,9 +31,9 @@ public:
 
     void setSeparatorVisible(bool visible);
     // What the view's content is drawn on; the theme's background unless set.
-    void setBaseColor(std::optional<Color> color);
+    void setBaseColor(std::optional<ColorRecipe> color);
     // The tint, at 0.72; the theme's second background unless set.
-    void setTintColor(std::optional<Color> color);
+    void setTintColor(std::optional<ColorRecipe> color);
 
 protected:
     void paint(Painter& painter) override;
@@ -43,8 +44,8 @@ private:
     ScrollView* m_view;
     Edge m_edge;
     bool m_separatorVisible = true;
-    std::optional<Color> m_baseColor;
-    std::optional<Color> m_tintColor;
+    std::optional<ColorRecipe> m_baseColor;
+    std::optional<ColorRecipe> m_tintColor;
     base::Subscription m_scrolled;
 };
 

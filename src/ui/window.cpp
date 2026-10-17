@@ -337,10 +337,15 @@ void Window::fitContentHeight()
     setMaximumSize(m_size);
 }
 
-void Window::setBackgroundColor(std::optional<Color> color)
+void Window::setBackgroundColor(std::optional<ColorRecipe> color)
 {
-    m_backgroundColor = color;
+    m_backgroundColor = std::move(color);
     requestPaint();
+}
+
+Color Window::backgroundColor() const
+{
+    return m_backgroundColor ? m_backgroundColor->resolve() : Theme::current().background;
 }
 
 void Window::handleThemeChanged()
@@ -1501,7 +1506,7 @@ bool Window::renderFrame(uint64_t frameTimeNs, bool prepared)
         prepareFrame(frameTimeNs);
     // Whatever asked for a paint until here is drawn by this frame.
     m_needsFrame = false;
-    const Color background = m_backgroundColor.value_or(Theme::current().background);
+    const Color background = backgroundColor();
     const bool presented = m_platform->present(
         m_size, m_scale, background.a == 255,
         [this](SkCanvas* canvas, int bufferAge) { return paintFrame(canvas, bufferAge); });

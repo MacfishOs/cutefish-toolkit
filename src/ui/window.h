@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "ui/color_mixer.h"
 #include "ui/event.h"
 #include "ui/geometry.h"
 #include "ui/image.h"
@@ -144,8 +145,9 @@ public:
     // Keeps the window exactly as tall as its content at its width, measured
     // at the window's scale, since text is taller at some scales.
     void setFitsContentHeight(bool fits);
-    // A colour with alpha makes the window translucent. Unset follows the theme.
-    void setBackgroundColor(std::optional<Color> color);
+    // A colour with alpha makes the window translucent. Unset is the theme's
+    // background; a recipe naming theme colours follows the theme.
+    void setBackgroundColor(std::optional<ColorRecipe> color);
     // A tool tip over a rect of the view, in its coordinates, until unpinned,
     // such as one showing a control's state; hover tool tips wait meanwhile.
     void pinToolTip(View* view, const RectF& rect, std::string text);
@@ -303,6 +305,7 @@ private:
     friend class Application;
     // Repaints and notifies when isActive() differs from what was notified.
     void updateActive();
+    Color backgroundColor() const;
 
     friend class EmbeddedWindow;
     friend class FrameClient;
@@ -457,7 +460,7 @@ private:
     double m_scale = 1.0;
     bool m_fitsContentHeight = false;
     SizeF m_fittedSize;
-    std::optional<Color> m_backgroundColor;
+    std::optional<ColorRecipe> m_backgroundColor;
     WindowStates m_states;
     Window* m_transientParent = nullptr;
     // isActive() as last notified.
