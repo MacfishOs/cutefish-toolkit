@@ -167,6 +167,8 @@ private:
     // In the lines the text breaks into at the width, the last one shown elided
     // when there are more than the maximum.
     skia::textlayout::Paragraph* wrappedParagraph(double width) const;
+    // Trades the wrapping in use for the previous one.
+    void swapWrapping() const;
     // `content` (the paragraph's text, laid out unbounded) from `from` to `to`
     // elided to the width by whole graphemes, the ellipsis counted in.
     std::string elidedText(const std::string& content, size_t from, size_t to, double width, Elide mode) const;
@@ -229,6 +231,10 @@ private:
     mutable double m_wrappedWidth = -1;
     mutable bool m_wrappedRounded = false;
     mutable bool m_wrappedElided = false;
+    // The wrapping at the width asked for before, as layouts ask for two
+    // widths in turn.
+    struct Wrapping;
+    mutable std::unique_ptr<Wrapping> m_previousWrapping;
     // Measured unbounded, for the rounding they were measured with.
     mutable double m_naturalWidth = -1;
     mutable double m_intrinsicWidth = 0;

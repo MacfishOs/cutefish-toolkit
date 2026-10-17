@@ -39,6 +39,16 @@ static constexpr const char* kEllipsis = "…";
 // Ganesh draws text from 162 device pixels as distance fields; a pixel of margin.
 static constexpr double kDistanceFieldTextSize = 161;
 
+struct Label::Wrapping
+{
+    std::unique_ptr<textlayout::Paragraph> paragraph;
+    std::vector<size_t> breaks;
+    std::string text;
+    double width = -1;
+    bool rounded = false;
+    bool elided = false;
+};
+
 Label::Label(std::string text)
     : m_text(std::move(text))
 {
@@ -636,6 +646,7 @@ void Label::invalidate()
     m_elided.reset();
     m_wrapped.reset();
     m_wrappedWidth = -1;
+    m_previousWrapping.reset();
     requestLayout();
 }
 
@@ -717,7 +728,21 @@ textlayout::Paragraph* Label::paragraph() const
     m_elided.reset();
     m_wrapped.reset();
     m_wrappedWidth = -1;
+    m_previousWrapping.reset();
     return m_paragraph.get();
+}
+
+void Label::swapWrapping() const
+{
+    if (!m_previousWrapping)
+        m_previousWrapping = std::make_unique<Wrapping>();
+    Wrapping& other = *m_previousWrapping;
+    std::swap(m_wrapped, other.paragraph);
+    std::swap(m_wrappedBreaks, other.breaks);
+    std::swap(m_wrappedText, other.text);
+    std::swap(m_wrappedWidth, other.width);
+    std::swap(m_wrappedRounded, other.rounded);
+    std::swap(m_wrappedElided, other.elided);
 }
 
 textlayout::Paragraph* Label::wrappedParagraph(double width) const
@@ -726,6 +751,13 @@ textlayout::Paragraph* Label::wrappedParagraph(double width) const
     const bool round = roundsAdvances();
     if (m_wrappedWidth == width && m_wrappedRounded == round)
         return m_wrapped ? m_wrapped.get() : text;
+    if (m_previousWrapping && m_previousWrapping->width == width && m_previousWrapping->rounded == round) {
+        swapWrapping();
+        return m_wrapped ? m_wrapped.get() : text;
+    }
+    // What is in use becomes the previous wrapping; all of it is made anew below.
+    if (m_wrappedWidth >= 0)
+        swapWrapping();
     if (m_layoutWidth != kUnboundedWidth) {
         text->layout(SkScalar(kUnboundedWidth));
         m_layoutWidth = kUnboundedWidth;
