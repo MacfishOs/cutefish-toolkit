@@ -44,7 +44,8 @@ public:
         clientFd = fds[1];
         m_display = wl_display_create();
         m_wakeFd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-        wl_event_loop_add_fd(wl_display_get_event_loop(m_display), m_wakeFd, WL_EVENT_READABLE, runTasks, this);
+        m_wakeSource = wl_event_loop_add_fd(wl_display_get_event_loop(m_display), m_wakeFd, WL_EVENT_READABLE,
+                                            runTasks, this);
         global(&wl_compositor_interface, 4);
         global(&xdg_wm_base_interface, 1);
         global(&wp_viewporter_interface, 1);
@@ -66,6 +67,7 @@ public:
         m_stop = true;
         m_thread.join();
         wl_display_destroy_clients(m_display);
+        wl_event_source_remove(m_wakeSource);
         wl_display_destroy(m_display);
         close(m_wakeFd);
     }
@@ -168,6 +170,7 @@ private:
 
     wl_display* m_display = nullptr;
     int m_wakeFd = -1;
+    wl_event_source* m_wakeSource = nullptr;
     std::thread m_thread;
     std::atomic<bool> m_stop = false;
     std::mutex m_mutex;
