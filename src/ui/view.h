@@ -60,6 +60,8 @@ struct LayoutHints
     // a field 40 high.
     double fallbackWidth = -1;
     double fallbackHeight = -1;
+
+    bool operator==(const LayoutHints&) const = default;
 };
 
 // How a window lays its text out: the scale, and whether advances and line
@@ -183,13 +185,16 @@ public:
     // The size hint, overridden by the preferred sizes in the layout hints.
     SizeF preferredSize() const;
 
+    // The view's size hint may have changed, or its children need placing
+    // again: the view and its ancestors lay out in the next pass. Other
+    // views lay out only when their size changes.
     void requestLayout();
     void requestPaint();
-    // Changes at the start of every layout pass and whenever a view, or the
-    // window's scale, theme or text layout, asks for layout, but not when a
-    // view is only moved or resized. Measurements taken in one generation
-    // may be kept for it.
-    static uint64_t measurementGeneration();
+    // Changes whenever the view or one of its children asks for layout, or
+    // the window's scale, theme or text layout changes, but not when a view
+    // is only moved or resized. Measurements of the view taken in one
+    // generation may be kept for it.
+    uint64_t measurementGeneration() const;
     // The view and its children drawn alone, as for a drag image: device
     // pixels at the scale (the window's when 0), transparent around them.
     // Layers are drawn flat, without their transforms.
@@ -258,6 +263,9 @@ protected:
 
     // Positions the children once this view has its geometry.
     virtual void layout() {}
+    // After a pass laid out the view or views under it, which have their
+    // geometry by now: for placing what follows a view inside it.
+    virtual void childrenLaidOut() {}
     virtual void paint(Painter&) {}
 
 private:
@@ -266,7 +274,13 @@ private:
     friend class TestInput;
     friend class Window;
 
+    // Every view's measurements, in every window.
     static void invalidateMeasurements();
+    // The view and every view under it lay out again, and measure again too
+    // unless told otherwise.
+    void invalidateSubtree(bool remeasure = true);
+    // Lays out the views that need it, and those under them whose size
+    // changes.
     void layoutTree();
     // Culls what lies outside the region, in the target's device pixels.
     void paintTree(Painter& painter, const SkRegion* region);
@@ -315,6 +329,9 @@ private:
     std::unique_ptr<Layer> m_layer;
     bool m_dirty = false;
     bool m_compositeDirty = false;
+    bool m_needsLayout = true;
+    bool m_descendantNeedsLayout = false;
+    uint64_t m_measurementStamp = 0;
 };
 
 } // namespace cutefish::ui

@@ -14,6 +14,7 @@
 #include "base/process.h"
 #include "ui/application.h"
 #include "ui/cell_layout.h"
+#include "ui/color_provider.h"
 #include "ui/icon_loader.h"
 #include "ui/label.h"
 #include "ui/painter.h"
@@ -184,7 +185,7 @@ protected:
     void paint(Painter& painter) override
     {
         // Over the compositor's blur, as FishUI.Window's background.
-        painter.fillRect(localRect(), Theme::current().background.withAlpha(0.8));
+        painter.fillRect(localRect(), color(ColorId::AboutDialogBackground));
     }
 
 private:

@@ -65,6 +65,13 @@ public:
     static size_t damageWatches(Window& window);
     // Headless windows report glass as available, or not (the default).
     static void setGlassAvailable(bool available);
+    // After every layout pass, every window lays out again in full and
+    // reports on standard error each view the pass left elsewhere, as a view
+    // that changed what it measures without asking for layout does.
+    static void setVerifiesLayout(bool verifies);
+    static bool verifiesLayout();
+    // The views reported so far.
+    static int layoutMismatches();
     // The glass the window asked for, or none.
     static std::optional<GlassMaterial> backgroundGlass(Window& window);
 

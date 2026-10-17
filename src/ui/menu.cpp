@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/menu.h"
 
 #include <algorithm>
@@ -322,8 +323,7 @@ protected:
             const Row& row = m_rows[i];
             if (!row.label) {
                 // One device pixel, centred, kept on the pixel grid.
-                const Color line = theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.14)
-                                                  : Color::rgb(0x000000).withAlpha(0.1);
+                const Color line = color(ColorId::MenuSeparator);
                 const double height = 1 / painter.scale();
                 painter.drawRoundedRect({row.rect.x + theme.largeSpacing, row.rect.y + (kSeparatorHeight - height) / 2,
                                          row.rect.width - 2 * theme.largeSpacing, height},
@@ -333,8 +333,8 @@ protected:
             if (int(i) == m_current && m_menu->m_items[row.index].enabled) {
                 const RectF highlight = row.rect.adjusted(kHighlightInsetX, kHighlightInsetY,
                                                           -kHighlightInsetX, -kHighlightInsetY);
-                const Color color = theme.highlight.withAlpha(theme.darkMode ? 0.82 : 0.9);
-                painter.drawRoundedRect(highlight, {theme.smallRadius, 0, themeCorners()}, color);
+                painter.drawRoundedRect(highlight, {theme.smallRadius, 0, themeCorners()},
+                                        color(ColorId::MenuHighlight));
             }
         }
     }
@@ -640,7 +640,7 @@ private:
             const bool active = enabled && (int(i) == m_current
                                             || (m_menu->m_openSubmenu
                                                 && m_menu->m_items[row.index].submenu.get() == m_menu->m_openSubmenu));
-            const Color disabled = theme.text.withAlpha(0.4);
+            const Color disabled = color(ColorId::MenuDisabledText);
             const std::optional<Color> text = !enabled ? std::optional<Color>(disabled)
                                                        : active ? std::optional<Color>(theme.highlightedText)
                                                                 : std::nullopt;
@@ -650,13 +650,13 @@ private:
             if (row.glyph)
                 row.glyph->setColor(text);
             if (row.shortcut)
-                row.shortcut->setColor(!enabled ? disabled : active ? theme.highlightedText : theme.text.withAlpha(0.5));
-            // Dark glass over a bright backdrop washes out the grey chevron,
-            // so in dark mode it takes the label's colour.
+                row.shortcut->setColor(!enabled ? disabled
+                                       : active ? theme.highlightedText
+                                                : color(ColorId::MenuShortcutText));
             if (row.arrow)
-                row.arrow->setColor(active          ? theme.highlightedText
-                                    : theme.darkMode ? text.value_or(theme.text)
-                                                     : theme.disabledText);
+                row.arrow->setColor(active    ? theme.highlightedText
+                                    : enabled ? color(ColorId::MenuArrow)
+                                              : color(ColorId::MenuArrowDisabled));
         }
     }
 
@@ -690,13 +690,10 @@ protected:
         const double content = m_view->contentSize().height;
         if (content <= view.height)
             return;
-        const Theme& theme = Theme::current();
         const double length = std::max(kIndicatorMinimumLength, view.height * view.height / content);
         const RectF bar = {view.right() - kIndicatorWidth,
                            view.y + view.height * (m_view->scrollPosition().y / content), kIndicatorWidth, length};
-        painter.drawSmoothRectangle(bar, kIndicatorWidth / 2,
-                                   theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.35)
-                                                  : Color::rgb(0x000000).withAlpha(0.25));
+        painter.drawSmoothRectangle(bar, kIndicatorWidth / 2, color(ColorId::MenuScrollIndicator));
     }
 
 private:

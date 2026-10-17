@@ -27,12 +27,16 @@ BoxLayout::BoxLayout(Direction direction)
 
 void BoxLayout::setSpacing(double spacing)
 {
+    if (spacing == m_spacing)
+        return;
     m_spacing = spacing;
     requestLayout();
 }
 
 void BoxLayout::setMargins(const Margins& margins)
 {
+    if (margins == m_margins)
+        return;
     m_margins = margins;
     requestLayout();
 }
@@ -180,24 +184,32 @@ Grid::Grid(int columns)
 
 void Grid::setColumns(int columns)
 {
+    if (std::max(1, columns) == m_columns)
+        return;
     m_columns = std::max(1, columns);
     requestLayout();
 }
 
 void Grid::setColumnSpacing(double spacing)
 {
+    if (spacing == m_columnSpacing)
+        return;
     m_columnSpacing = spacing;
     requestLayout();
 }
 
 void Grid::setRowSpacing(double spacing)
 {
+    if (spacing == m_rowSpacing)
+        return;
     m_rowSpacing = spacing;
     requestLayout();
 }
 
 void Grid::setMargins(const Margins& margins)
 {
+    if (margins == m_margins)
+        return;
     m_margins = margins;
     requestLayout();
 }

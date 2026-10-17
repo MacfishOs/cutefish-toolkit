@@ -84,6 +84,8 @@ void Label::setFontSize(double size)
 
 void Label::setFontFeatures(std::vector<std::pair<std::string, int>> features)
 {
+    if (features == m_features)
+        return;
     m_features = std::move(features);
     invalidate();
 }

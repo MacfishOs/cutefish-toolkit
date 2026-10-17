@@ -190,6 +190,21 @@ void TestInput::setGlassAvailable(bool available)
     PlatformWindow::setHeadlessGlassAvailable(available);
 }
 
+void TestInput::setVerifiesLayout(bool verifies)
+{
+    Window::setVerifiesLayout(verifies);
+}
+
+bool TestInput::verifiesLayout()
+{
+    return Window::verifiesLayout();
+}
+
+int TestInput::layoutMismatches()
+{
+    return Window::layoutMismatches();
+}
+
 std::optional<GlassMaterial> TestInput::backgroundGlass(Window& window)
 {
     return window.m_platform->requestedGlass();

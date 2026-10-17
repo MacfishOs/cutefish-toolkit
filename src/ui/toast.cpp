@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/toast.h"
 
 #include <algorithm>
@@ -111,7 +112,7 @@ protected:
         const Theme& theme = Theme::current();
         painter.save();
         painter.multiplyOpacity(0.9);
-        painter.drawShadow(localRect(), theme.mediumRadius, kShadowSigma, Color::rgb(0).withAlpha(0.14));
+        painter.drawShadow(localRect(), theme.mediumRadius, kShadowSigma, color(ColorId::ToastShadow));
         painter.drawRoundedRect(localRect(), {theme.mediumRadius, 0, themeCorners()}, theme.background);
         painter.restore();
     }

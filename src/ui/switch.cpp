@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/switch.h"
 
 #include <algorithm>
@@ -8,7 +9,6 @@
 
 #include "ui/animation.h"
 #include "ui/painter.h"
-#include "ui/theme.h"
 
 namespace cutefish::ui {
 
@@ -61,17 +61,16 @@ void Switch::checkedChanged(bool animated)
 
 void Switch::paintIndicator(Painter& painter, const RectF& rect)
 {
-    const Theme& theme = Theme::current();
     painter.save();
     if (!isEnabled())
         painter.multiplyOpacity(0.5);
-    const Color off = theme.text.withAlpha(0.2);
     // Plain antialiased rectangles, not snapped.
-    painter.drawSmoothRectangle(rect, rect.height / 2, mix(off, theme.highlight, m_color));
+    painter.drawSmoothRectangle(rect, rect.height / 2,
+                                mix(color(ColorId::SwitchTrack), color(ColorId::SwitchTrackOn), m_color));
     const double travel = rect.width - kHandle - 2 * kHandleMargin;
     const RectF handle = {rect.x + kHandleMargin + travel * m_handle,
                           rect.y + (rect.height - kHandle) / 2, kHandle, kHandle};
-    painter.drawSmoothRectangle(handle, kHandle / 2, Color::rgb(0xFFFFFF));
+    painter.drawSmoothRectangle(handle, kHandle / 2, color(ColorId::SwitchHandle));
     painter.restore();
 }
 

@@ -47,6 +47,8 @@ void ToggleControl::setChecked(bool checked)
 
 void ToggleControl::setPadding(Margins padding)
 {
+    if (padding == m_customPadding)
+        return;
     m_customPadding = padding;
     requestLayout();
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/text_field.h"
 
 #include <algorithm>
@@ -245,7 +246,7 @@ struct TextField::Private
             return placeholderParagraph.get();
         const TextContext& context = Application::instance()->text();
         const textlayout::TextStyle style = context.style(
-            fontSize, weight, placeholderColor.value_or(Theme::current().text.withAlpha(0.4)), family);
+            fontSize, weight, placeholderColor.value_or(color(ColorId::TextFieldPlaceholder)), family);
         textlayout::ParagraphStyle paragraphStyle;
         paragraphStyle.setTextStyle(style);
         if (centred)
@@ -357,6 +358,8 @@ void TextField::setValidator(std::function<bool(const std::string& text)> valida
 
 void TextField::setFontSize(double size)
 {
+    if (size == d->fontSize)
+        return;
     d->fontSize = size;
     d->dirty = true;
     d->placeholderParagraph.reset();
@@ -366,14 +369,17 @@ void TextField::setFontSize(double size)
 
 void TextField::setTextMargins(double left, double right)
 {
+    if (left == d->leftMargin && right == d->rightMargin)
+        return;
     d->leftMargin = left;
     d->rightMargin = right;
     requestLayout();
-    requestPaint();
 }
 
 void TextField::setFontWeight(int weight)
 {
+    if (weight == d->weight)
+        return;
     d->weight = weight;
     d->dirty = true;
     d->placeholderParagraph.reset();
@@ -429,6 +435,8 @@ void TextField::setSelectionColors(std::optional<Color> background, std::optiona
 
 void TextField::setFontFamily(std::string family)
 {
+    if (family == d->family)
+        return;
     d->family = std::move(family);
     d->dirty = true;
     d->placeholderParagraph.reset();
@@ -476,9 +484,11 @@ void TextField::clear()
 
 void TextField::setPlaceholder(std::string placeholder)
 {
+    if (placeholder == d->placeholder)
+        return;
     d->placeholder = std::move(placeholder);
     d->placeholderParagraph.reset();
-    requestPaint();
+    requestLayout();
 }
 
 void TextField::setEchoMode(EchoMode mode)
@@ -635,7 +645,7 @@ void TextField::paint(Painter& painter)
     if (focused && d->frameVisible) {
         painter.drawRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
                                 {theme.smallRadius, -kFocusRing, themeCorners()}, Color{0, 0, 0, 0}, 2,
-                                theme.highlight.withAlpha(0.25));
+                                color(ColorId::TextFieldFocusRing));
     }
 
     const RectF content = bounds.adjusted(d->left(), 0, -d->right(), 0);

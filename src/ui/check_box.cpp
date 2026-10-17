@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/color_provider.h"
 #include "ui/icon.h"
 #include "ui/painter.h"
 #include "ui/cell_layout.h"
@@ -25,17 +26,15 @@ static constexpr double kRingInset = 3;
 // light edge, both concentric through RoundedRectangle's inset.
 static void paintPlate(Painter& painter, const RectF& rect, double radius, bool on, bool focused, bool innerEdge)
 {
-    const Theme& theme = Theme::current();
     if (focused) {
         painter.drawRoundedRect(rect.adjusted(-kRingInset, -kRingInset, kRingInset, kRingInset), {radius, -kRingInset},
-                                Color{0, 0, 0, 0}, 2, theme.highlight.withAlpha(0.35));
+                                Color{0, 0, 0, 0}, 2, color(ColorId::ToggleFocusRing));
     }
-    const Color border = on ? theme.highlight.darker(1.12)
-                            : theme.text.withAlpha(theme.darkMode ? 0.28 : 0.2);
-    painter.drawRoundedRect(rect, {radius}, on ? theme.highlight : theme.secondBackground, 1, border);
+    painter.drawRoundedRect(rect, {radius}, color(on ? ColorId::ToggleBackgroundChecked : ColorId::ToggleBackground),
+                            1, color(on ? ColorId::ToggleBorderChecked : ColorId::ToggleBorder));
     if (innerEdge) {
         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), {radius, 1}, Color{0, 0, 0, 0}, 1,
-                                Color::rgb(0xFFFFFF).withAlpha(on ? 0.18 : 0.06));
+                                color(on ? ColorId::CheckBoxInnerEdgeChecked : ColorId::CheckBoxInnerEdge));
     }
 }
 
@@ -43,7 +42,7 @@ CheckBox::CheckBox(std::string text)
     : ToggleControl(std::move(text), kIndicator, kPadding)
     , m_check(addChild<Icon>("check", kCheckSize))
 {
-    m_check->setColor(Theme::current().highlightedText);
+    m_check->setColor(color(ColorId::ToggleMark));
     m_check->setVisible(false);
 }
 
@@ -167,7 +166,7 @@ void RadioButton::paintIndicator(Painter& painter, const RectF& rect)
         const double dot = 8;
         painter.drawSmoothRectangle({rect.x + rounding::centeredStart(rect.width, dot),
                                     rect.y + rounding::centeredStart(rect.height, dot), dot, dot},
-                                   dot / 2, Theme::current().highlightedText);
+                                   dot / 2, color(ColorId::ToggleMark));
     }
     painter.restore();
 }

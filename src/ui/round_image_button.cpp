@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/round_image_button.h"
 
 #include <algorithm>
@@ -26,6 +27,8 @@ RoundImageButton::RoundImageButton(std::string iconName, double size)
 
 void RoundImageButton::setButtonSize(double size)
 {
+    if (size == m_size)
+        return;
     m_size = size;
     requestLayout();
     requestPaint();
@@ -33,6 +36,8 @@ void RoundImageButton::setButtonSize(double size)
 
 void RoundImageButton::setIconMargins(double margins)
 {
+    if (margins == m_iconMargins)
+        return;
     m_iconMargins = margins;
     requestLayout();
     requestPaint();
@@ -40,6 +45,8 @@ void RoundImageButton::setIconMargins(double margins)
 
 void RoundImageButton::setIconSize(double size)
 {
+    if (size == m_iconSize)
+        return;
     m_iconSize = size;
     requestLayout();
     requestPaint();
@@ -53,6 +60,8 @@ double RoundImageButton::iconSize() const
 
 void RoundImageButton::setIconOffset(PointF offset)
 {
+    if (offset == m_iconOffset)
+        return;
     m_iconOffset = offset;
     requestLayout();
     requestPaint();
@@ -153,9 +162,9 @@ void RoundImageButton::paint(Painter& painter)
     if (!isEnabled())
         plate = Color{0, 0, 0, 0};
     else if (m_pressed || m_checked)
-        plate = m_pressedColor.value_or(theme.text.withAlpha(theme.darkMode ? 0.06 : 0.21));
+        plate = m_pressedColor.value_or(color(ColorId::RoundButtonPressed));
     else if (m_hovered || m_highlighted)
-        plate = m_hoveredColor.value_or(theme.text.withAlpha(theme.darkMode ? 0.12 : 0.11));
+        plate = m_hoveredColor.value_or(color(ColorId::RoundButtonHovered));
 
     if (plate.a > 0) {
         // Whole device pixels of the icon's parity, so the snapped plate and

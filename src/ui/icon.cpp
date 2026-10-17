@@ -51,6 +51,8 @@ void Icon::setColor(std::optional<Color> color)
 
 void Icon::setSize(double size)
 {
+    if (size == m_size)
+        return;
     m_size = size;
     requestLayout();
 }
@@ -80,6 +82,8 @@ void ThemeIcon::setIconName(std::string name)
 
 void ThemeIcon::setSize(double size)
 {
+    if (size == m_size)
+        return;
     m_size = size;
     requestLayout();
 }

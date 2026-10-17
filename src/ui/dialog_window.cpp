@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/dialog_window.h"
 
 #include <algorithm>
@@ -46,7 +47,7 @@ DialogButton::DialogButton(std::string text, bool primary)
     m_label->setWeight(500);
     m_label->setFontSize(12);
     if (primary)
-        m_label->setColor(Color::rgb(0xFFFFFF));
+        m_label->setColor(color(ColorId::DialogButtonProminentText));
 }
 
 void DialogButton::setText(std::string text)
@@ -57,7 +58,7 @@ void DialogButton::setText(std::string text)
 void DialogButton::setPrimary(bool primary)
 {
     m_primary = primary;
-    m_label->setColor(primary ? std::optional<Color>(Color::rgb(0xFFFFFF)) : std::nullopt);
+    m_label->setColor(primary ? std::optional<Color>(color(ColorId::DialogButtonProminentText)) : std::nullopt);
     requestPaint();
 }
 
@@ -85,37 +86,33 @@ void DialogButton::layout()
 
 Color DialogButton::actionColor() const
 {
-    const Theme& theme = Theme::current();
-    if (m_destructive)
-        return theme.darkMode ? Color::rgb(0xFF453A) : Color::rgb(0xD92D20);
-    return theme.highlight;
+    return color(m_destructive ? ColorId::DestructiveAction : ColorId::Highlight);
 }
 
 void DialogButton::paint(Painter& painter)
 {
-    const Theme& theme = Theme::current();
     const RectF bounds = localRect();
     const double radius = bounds.height / 2;
-    const Color surface = m_primary ? actionColor() : theme.alternateBackground;
-    Color color = surface;
+    const Color surface = m_primary ? actionColor() : color(ColorId::DialogButtonBackground);
+    Color fill = surface;
     if (isEnabled() && m_pressed)
-        color = surface.darker(1.08);
+        fill = surface.darker(1.08);
     else if (isEnabled() && m_hovered)
-        color = m_primary || theme.darkMode ? surface.lighter(1.05) : surface.darker(1.04);
+        fill = m_primary ? surface.lighter(1.05) : color(ColorId::DialogButtonBackgroundHovered);
     // Borders are one device pixel, 1 / scale; the inner edge
     // and the focus ring keep the button's shape through RoundedRectangle's inset.
     const double pixel = 1 / painter.scale();
-    painter.drawRoundedRect(bounds, {radius}, color, pixel,
-                            m_primary ? actionColor().darker(1.25)
-                                      : (theme.darkMode ? Color::rgb(0x545455) : Color::rgb(0xD9DADD)));
-    if (m_primary || !theme.darkMode) {
+    painter.drawRoundedRect(bounds, {radius}, fill, pixel,
+                            m_primary ? actionColor().darker(1.25) : color(ColorId::DialogButtonBorder));
+    const Color innerEdge = color(m_primary ? ColorId::DialogButtonProminentInnerEdge : ColorId::DialogButtonInnerEdge);
+    if (innerEdge.a > 0) {
         painter.drawRoundedRect(bounds.adjusted(pixel, pixel, -pixel, -pixel), {radius, pixel}, Color{0, 0, 0, 0},
-                                pixel, Color::rgb(0xFFFFFF).withAlpha(m_primary ? 0.2 : 0.08));
+                                pixel, innerEdge);
     }
     if (hasVisibleFocus()) {
         painter.drawRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
                                 {radius, -kFocusRing}, Color{0, 0, 0, 0}, 2,
-                                (m_primary ? actionColor() : theme.highlight).withAlpha(0.3));
+                                m_primary ? actionColor().withAlpha(0.3) : color(ColorId::DialogButtonFocusRing));
     }
 }
 

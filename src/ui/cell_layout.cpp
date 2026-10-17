@@ -290,6 +290,8 @@ CellLayout::CellLayout(Flow flow, int columns)
 
 void CellLayout::setSpacing(double spacing)
 {
+    if (spacing == m_rowSpacing && spacing == m_columnSpacing)
+        return;
     m_rowSpacing = spacing;
     m_columnSpacing = spacing;
     requestLayout();
@@ -297,24 +299,32 @@ void CellLayout::setSpacing(double spacing)
 
 void CellLayout::setRowSpacing(double spacing)
 {
+    if (spacing == m_rowSpacing)
+        return;
     m_rowSpacing = spacing;
     requestLayout();
 }
 
 void CellLayout::setColumnSpacing(double spacing)
 {
+    if (spacing == m_columnSpacing)
+        return;
     m_columnSpacing = spacing;
     requestLayout();
 }
 
 void CellLayout::setPadding(const Margins& padding)
 {
+    if (padding == m_padding)
+        return;
     m_padding = padding;
     requestLayout();
 }
 
 void CellLayout::setColumnCount(int columns)
 {
+    if (columns == m_columns)
+        return;
     m_columns = columns;
     requestLayout();
 }

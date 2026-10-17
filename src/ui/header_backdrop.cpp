@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/header_backdrop.h"
 
 #include <algorithm>
@@ -355,9 +356,9 @@ void HeaderBackdrop::paint(Painter& painter)
     if (m_separatorVisible) {
         const double devicePixels = std::max(1.0, std::round(0.5 * scale));
         const double lineHeight = devicePixels / scale;
-        const double alpha = (theme.darkMode ? 0.12 : 0.08) * 0.5 * scale / devicePixels;
+        const Color separator = color(ColorId::HeaderSeparator);
         painter.drawRoundedRect({0, bottom ? 0 : bounds.height - lineHeight, bounds.width, lineHeight}, {0},
-                                theme.text.withAlpha(alpha));
+                                separator.withAlpha(separator.a / 255.0 * 0.5 * scale / devicePixels));
     }
     painter.restore();
 }

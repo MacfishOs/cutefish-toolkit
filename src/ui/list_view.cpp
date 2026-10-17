@@ -54,20 +54,26 @@ void ListView::setRowCount(size_t count)
 
 void ListView::setRowHeight(double height)
 {
+    if (height == m_rowHeight)
+        return;
     m_rowHeight = height;
-    requestLayout();
+    m_rows->requestLayout();
 }
 
 void ListView::setSpacing(double spacing)
 {
+    if (spacing == m_spacing)
+        return;
     m_spacing = spacing;
-    requestLayout();
+    m_rows->requestLayout();
 }
 
 void ListView::setMargins(const Margins& margins)
 {
+    if (margins == m_margins)
+        return;
     m_margins = margins;
-    requestLayout();
+    m_rows->requestLayout();
 }
 
 void ListView::reload()

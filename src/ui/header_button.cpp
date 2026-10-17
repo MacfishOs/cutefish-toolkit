@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/header_button.h"
 
 #include <algorithm>
@@ -75,7 +76,7 @@ void HeaderButton::paint(Painter& painter)
     const Window* window = this->window();
     // The header's mode, which a window may set apart from the theme.
     const bool dark = window ? window->headerDarkMode() : Theme::current().darkMode;
-    const Color tint = dark ? Color::rgb(0xFFFFFF) : Color::rgb(0x323238);
+    const Color tint = ColorProvider::forMode(dark).get(ColorId::HeaderButtonTint);
     const Rect box = painter.deviceRect(localRect());
     // The icon at whole logical pixels in the button, then snapped onto the
     // device grid as Icon snaps it.

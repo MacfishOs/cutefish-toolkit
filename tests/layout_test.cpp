@@ -4,12 +4,48 @@
 #include <gtest/gtest.h>
 
 #include "test_views.h"
+#include "ui/cell_layout.h"
 #include "ui/label.h"
 #include "ui/layout.h"
+#include "ui/test_input.h"
 #include "ui/window.h"
 
 using namespace cutefish::ui;
 using test::Box;
+
+// A view whose size hint changes, counting its measurements and layouts.
+class CountingView : public View
+{
+public:
+    explicit CountingView(SizeF size)
+        : m_size(size)
+    {
+    }
+
+    // Without asking for layout, as a view should not.
+    void setSizeQuietly(SizeF size) { m_size = size; }
+
+    void setSize(SizeF size)
+    {
+        m_size = size;
+        requestLayout();
+    }
+
+    SizeF sizeHint() const override
+    {
+        ++measurements;
+        return m_size;
+    }
+
+    mutable int measurements = 0;
+    int layouts = 0;
+
+protected:
+    void layout() override { ++layouts; }
+
+private:
+    SizeF m_size;
+};
 
 // Lays the content out at the given size by rendering it once.
 template<typename T>
@@ -136,4 +172,238 @@ TEST(LayoutTest, DumpListsLogicalAndDeviceGeometry)
     EXPECT_EQ(window.layoutDump(),
               "Column \"content\" logical 0 0 21 21 device 0 0 32 32\n"
               "  test::Box \"box\" logical 5 5 11 11 device 8 8 16 16\n");
+}
+
+TEST(LayoutTest, RequestLayoutLaysOutTheViewAndItsAncestorsOnly)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* changing = content->addChild<RowLayout>()->addChild<CountingView>(SizeF{20, 10});
+    auto* other = content->addChild<ColumnLayout>()->addChild<CountingView>(SizeF{30, 10});
+    host(window, std::move(content), {100, 100});
+    changing->layouts = 0;
+    other->layouts = 0;
+    other->measurements = 0;
+    const PointF position = other->mapToWindow({});
+
+    changing->setSize({40, 20});
+    window.grab();
+
+    EXPECT_EQ(changing->layouts, 1);
+    EXPECT_EQ(changing->geometry().size(), (SizeF{40, 20}));
+    // Its column moved but kept its size and measurements.
+    EXPECT_NE(other->mapToWindow({}), position);
+    EXPECT_EQ(other->layouts, 0);
+    EXPECT_EQ(other->measurements, 0);
+}
+
+TEST(LayoutTest, ResizedViewsLayOutTheirChildren)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* row = content->addChild<RowLayout>();
+    row->setLayoutHints({.fillWidth = true});
+    auto* filling = row->addChild<CountingView>(SizeF{10, 10});
+    filling->setLayoutHints({.fillWidth = true});
+    auto* fixed = content->addChild<CountingView>(SizeF{10, 10});
+    host(window, std::move(content), {100, 100});
+    filling->layouts = 0;
+    fixed->layouts = 0;
+
+    TestInput::configure(window, 150, 100, {});
+    window.grab();
+
+    EXPECT_EQ(filling->geometry().width, 150);
+    EXPECT_EQ(filling->layouts, 1);
+    EXPECT_EQ(fixed->layouts, 0);
+}
+
+TEST(LayoutTest, ParentPlacesAViewResizedOutsideAPass)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* box = content->addChild<CountingView>(SizeF{20, 10});
+    host(window, std::move(content), {100, 100});
+    const RectF placed = box->geometry();
+
+    box->setGeometry({0, 0, 50, 50});
+    window.grab();
+
+    EXPECT_EQ(box->geometry(), placed);
+}
+
+TEST(LayoutTest, ScaleChangeMeasuresEveryViewAgain)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* box = content->addChild<ColumnLayout>()->addChild<CountingView>(SizeF{20, 10});
+    host(window, std::move(content), {100, 100});
+    box->measurements = 0;
+
+    window.setScale(1.5);
+    window.grab();
+
+    EXPECT_GT(box->measurements, 0);
+}
+
+TEST(LayoutTest, MovedSubtreeMeasuresAgain)
+{
+    Window first;
+    auto firstContent = std::make_unique<ColumnLayout>();
+    auto* moving = firstContent->addChild<ColumnLayout>();
+    auto* box = moving->addChild<CountingView>(SizeF{20, 10});
+    ColumnLayout* firstRoot = host(first, std::move(firstContent), {100, 100});
+    Window second;
+    ColumnLayout* secondRoot = host(second, std::make_unique<ColumnLayout>(), {100, 100});
+    box->measurements = 0;
+    box->layouts = 0;
+
+    secondRoot->addChild(firstRoot->takeChild(moving));
+    second.grab();
+
+    EXPECT_GT(box->measurements, 0);
+    EXPECT_EQ(box->layouts, 1);
+}
+
+TEST(LayoutTest, VerifierReportsSizeHintsChangedWithoutLayout)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* quiet = content->addChild<ColumnLayout>()->addChild<CountingView>(SizeF{20, 10});
+    auto* other = content->addChild<CountingView>(SizeF{20, 10});
+    host(window, std::move(content), {100, 100});
+    const bool verified = TestInput::verifiesLayout();
+    const int before = TestInput::layoutMismatches();
+    TestInput::setVerifiesLayout(true);
+
+    quiet->setSizeQuietly({40, 10});
+    other->setSize({30, 10});
+    window.grab();
+    const int mismatches = TestInput::layoutMismatches() - before;
+    TestInput::setVerifiesLayout(verified);
+
+    EXPECT_GT(mismatches, 0);
+}
+
+TEST(LayoutTest, RaisedChildMovesToTheEndOfAFlow)
+{
+    Window window;
+    auto content = std::make_unique<ColumnLayout>();
+    auto* first = content->addChild<CountingView>(SizeF{20, 10});
+    auto* second = content->addChild<CountingView>(SizeF{20, 10});
+    ColumnLayout* column = host(window, std::move(content), {100, 100});
+    ASSERT_LT(first->geometry().y, second->geometry().y);
+
+    column->raiseChild(first);
+    window.grab();
+
+    EXPECT_GT(first->geometry().y, second->geometry().y);
+}
+
+// Places its child at an offset that the child sets from its own layout.
+class OffsetParent : public View
+{
+public:
+    double offset = 0;
+
+protected:
+    void layout() override
+    {
+        for (const auto& child : children())
+            child->setGeometry({offset, 0, 10, 10});
+    }
+};
+
+class OffsetChild : public View
+{
+protected:
+    void layout() override
+    {
+        auto* parent = static_cast<OffsetParent*>(this->parent());
+        if (parent->offset != 30) {
+            parent->offset = 30;
+            parent->requestLayout();
+        }
+    }
+};
+
+TEST(LayoutTest, ParentAskedFromAChildsLayoutLaysOutInTheSameFrame)
+{
+    Window window;
+    auto content = std::make_unique<OffsetParent>();
+    auto* child = content->addChild<OffsetChild>();
+    host(window, std::move(content), {100, 100});
+
+    EXPECT_EQ(child->geometry().x, 30);
+}
+
+// Asks its child for layout from its own, as a view filling its children does.
+class FillingParent : public View
+{
+public:
+    int layouts = 0;
+
+protected:
+    void layout() override
+    {
+        ++layouts;
+        for (const auto& child : children()) {
+            child->setGeometry(localRect());
+            child->requestLayout();
+        }
+    }
+};
+
+TEST(LayoutTest, ChildrenAskedFromTheParentsLayoutLayOutInTheSamePass)
+{
+    Window window;
+    auto content = std::make_unique<FillingParent>();
+    auto* child = content->addChild<CountingView>(SizeF{10, 10});
+    FillingParent* parent = host(window, std::move(content), {100, 100});
+    parent->layouts = 0;
+    child->layouts = 0;
+
+    parent->requestLayout();
+    window.grab();
+
+    EXPECT_EQ(parent->layouts, 1);
+    EXPECT_EQ(child->layouts, 1);
+}
+
+// Places a marker under the last view of its column, which the column
+// places after this view's layout().
+class FollowingParent : public View
+{
+public:
+    FollowingParent()
+    {
+        column = addChild<ColumnLayout>();
+        marker = addChild<CountingView>(SizeF{10, 2});
+    }
+
+    ColumnLayout* column;
+    CountingView* marker;
+
+protected:
+    void layout() override { column->setGeometry(localRect()); }
+
+    void childrenLaidOut() override
+    {
+        const View* last = column->children().back().get();
+        marker->setGeometry({0, last->geometry().bottom(), 10, 2});
+    }
+};
+
+TEST(LayoutTest, ChildrenLaidOutSeesTheirGeometry)
+{
+    Window window;
+    auto content = std::make_unique<FollowingParent>();
+    content->column->addChild<CountingView>(SizeF{20, 10});
+    auto* growing = content->column->addChild<CountingView>(SizeF{20, 10});
+    FollowingParent* parent = host(window, std::move(content), {100, 100});
+
+    growing->setSize({20, 30});
+    window.grab();
+
+    EXPECT_EQ(parent->marker->geometry().y, growing->geometry().bottom());
 }

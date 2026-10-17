@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/segmented_control.h"
 
 #include <algorithm>
@@ -116,12 +117,16 @@ void SegmentedControl::setCurrentIndex(int index)
 
 void SegmentedControl::setContentHeight(double height)
 {
+    if (height == m_contentHeight)
+        return;
     m_contentHeight = height;
     requestLayout();
 }
 
 void SegmentedControl::setFontSize(double size)
 {
+    if (size == m_fontSize)
+        return;
     m_fontSize = size;
     for (Segment* segment : m_segments)
         segment->label()->setFontSize(size);
@@ -179,13 +184,13 @@ void SegmentedControl::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
     const RectF bounds = localRect();
-    const Color plate = theme.darkMode ? theme.secondBackground.lighter(2) : theme.secondBackground;
+    const Color plate = color(ColorId::SegmentedControlPlate);
     const double tabRadius = theme.smallRadius + 2;
     if (m_style == Style::Segmented) {
-        const Color track = theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.06) : Color::rgb(0x000000).withAlpha(0.04);
-        painter.drawRoundedRect(bounds, {bounds.height / 2}, m_trackColor.value_or(track));
+        painter.drawRoundedRect(bounds, {bounds.height / 2},
+                                m_trackColor.value_or(color(ColorId::SegmentedControlTrack)));
     } else {
-        painter.drawRoundedRect(bounds, {tabRadius, 0, themeCorners()}, theme.alternateBackground);
+        painter.drawRoundedRect(bounds, {tabRadius, 0, themeCorners()}, color(ColorId::SegmentedTabBackground));
     }
     if (m_current < 0 || m_current >= int(m_segments.size()))
         return;
@@ -194,14 +199,15 @@ void SegmentedControl::paint(Painter& painter)
     if (m_style == Style::Segmented) {
         // A plain rectangle with a drop shadow: Gaussian deviation (radius + 1) / 3.33.
         const RectF highlight = item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset);
-        painter.drawShadow(highlight, highlight.height / 2, 1.2,
-                           Color::rgb(0).withAlpha(theme.darkMode ? 0.18 : 0.12), {0, 1});
+        painter.drawShadow(highlight, highlight.height / 2, 1.2, color(ColorId::SegmentedControlPlateShadow),
+                           {0, 1});
         painter.drawSmoothRectangle(highlight, highlight.height / 2, plate);
     } else {
         // Concentric with the bar through the inset.
-        if (theme.darkMode)
+        const Color shadow = color(ColorId::SegmentedTabPlateShadow);
+        if (shadow.a > 0)
             painter.drawShadow(item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset), theme.smallRadius,
-                               0.9, Color::rgb(0).withAlpha(0.11));
+                               0.9, shadow);
         painter.drawRoundedRect(item.adjusted(kPlateInset, kPlateInset, -kPlateInset, -kPlateInset),
                                 {tabRadius, kPlateInset, themeCorners()}, plate);
     }
@@ -221,7 +227,7 @@ void SegmentedControl::updateColors()
         if (!isEnabled())
             label->setColor(theme.disabledText);
         else if (int(i) == m_pressed && m_pressShown)
-            label->setColor(theme.text.withAlpha(0.5));
+            label->setColor(color(ColorId::SegmentedControlTextPressed));
         else
             label->setColor(std::nullopt);
     }

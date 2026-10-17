@@ -88,12 +88,16 @@ void WindowHeader::setCloseVisible(bool visible)
 
 void WindowHeader::setButtonMargin(double margin)
 {
+    if (margin == m_buttonMargin)
+        return;
     m_buttonMargin = margin;
     requestLayout();
 }
 
 void WindowHeader::setButtonsCentered(bool centered)
 {
+    if (centered == m_buttonsCentered)
+        return;
     m_buttonsCentered = centered;
     requestLayout();
 }

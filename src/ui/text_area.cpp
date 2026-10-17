@@ -295,6 +295,8 @@ void TextArea::setText(std::string text)
 
 void TextArea::setPlaceholder(std::string placeholder)
 {
+    if (placeholder == d->placeholder)
+        return;
     d->placeholder = std::move(placeholder);
     d->placeholderLabel->setText(d->placeholder);
     d->placeholderLabel->setVisible(!d->placeholder.empty() && d->edit.text().empty() && d->preedit.empty());
@@ -324,6 +326,8 @@ bool TextArea::isReadOnly() const
 
 void TextArea::setWrapMode(WrapMode mode)
 {
+    if (mode == d->wrap)
+        return;
     d->wrap = mode;
     d->dirty = true;
     requestLayout();
@@ -331,18 +335,24 @@ void TextArea::setWrapMode(WrapMode mode)
 
 void TextArea::setPadding(const Margins& padding)
 {
+    if (padding == d->padding)
+        return;
     d->padding = padding;
     requestLayout();
 }
 
 void TextArea::setFrameVisible(bool visible)
 {
+    if (visible == d->frame)
+        return;
     d->frame = visible;
     requestLayout();
 }
 
 void TextArea::setFontSize(double size)
 {
+    if (size == d->fontSize)
+        return;
     d->fontSize = size;
     d->placeholderLabel->setFontSize(size);
     d->dirty = true;
@@ -351,6 +361,8 @@ void TextArea::setFontSize(double size)
 
 void TextArea::setFont(const std::string& family, double pixelSize, int weight)
 {
+    if (family == d->fontFamily && pixelSize == d->fontSize && weight == d->fontWeight)
+        return;
     d->fontFamily = family;
     d->fontSize = pixelSize;
     d->fontWeight = weight;

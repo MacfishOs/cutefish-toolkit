@@ -263,6 +263,8 @@ public:
     // none. From the window's last input.
     void requestActivationToken(std::function<void(const std::string& token)> done);
 
+    // Every view lays out again, keeping its measurements: for state that
+    // views read as they lay out, such as whether the window is active.
     void requestLayout();
     void requestPaint();
 
@@ -357,6 +359,12 @@ private:
     void prepareFrame(uint64_t frameTimeNs);
     // Lays the views out when something asked for it; false when nothing did.
     bool layoutIfNeeded();
+    // Lays everything out again and reports the views whose geometry the
+    // pass before left different, for TestInput::setVerifiesLayout.
+    void verifyLayout();
+    static void setVerifiesLayout(bool verifies);
+    static bool verifiesLayout();
+    static int layoutMismatches();
     // Everything inside the region, or everything without one.
     void paintContent(SkCanvas* canvas, const SkRegion* region);
     void updateHover();
@@ -372,8 +380,7 @@ private:
     bool pressMovesWindow() const;
 
     void scheduleFrame();
-    // Lays out again without invalidating measurements, for views that only
-    // moved or resized.
+    // A layout pass for the views marked as needing one, which may be none.
     void scheduleLayout();
     bool renderFrame(uint64_t frameTimeNs);
     std::vector<Rect> paintFrame(SkCanvas* canvas, int bufferAge);

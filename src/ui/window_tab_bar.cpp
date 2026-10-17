@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/window_tab_bar.h"
 
 #include <algorithm>
@@ -273,10 +274,8 @@ protected:
         else if (hovered() || i == m_bar->m_springLoad)
             fill = m_bar->hoverColor();
         if (fill.a > 0) {
-            // Light mode raises a white pill on a pale track; a hairline keeps its edge.
-            const bool hairline = selected && !m_bar->isDark();
-            painter.drawSmoothRectangle(pill, pill.height / 2, fill, hairline ? 1 : 0,
-                                       Color::fromArgb(0x0F000000));
+            const Color edge = selected ? m_bar->colors().get(ColorId::WindowTabBarSelectedEdge) : Color{0, 0, 0, 0};
+            painter.drawSmoothRectangle(pill, pill.height / 2, fill, edge.a > 0 ? 1 : 0, edge);
         }
         // Between two resting tabs only; a raised or hovered pill has its own edge.
         if (!m_bar->sliding() && i < m_bar->count() - 1 && i != m_bar->m_current && !hovered()
@@ -507,9 +506,9 @@ uint64_t WindowTabBar::now() const
     return m_ticker ? m_ticker->frameNs : 0;
 }
 
-bool WindowTabBar::isDark() const
+const ColorProvider& WindowTabBar::colors() const
 {
-    return m_darkMode.value_or(Theme::current().darkMode);
+    return ColorProvider::forMode(m_darkMode.value_or(Theme::current().darkMode));
 }
 
 Color WindowTabBar::textColor() const
@@ -519,13 +518,12 @@ Color WindowTabBar::textColor() const
 
 Color WindowTabBar::trackColor() const
 {
-    return isDark() ? Color::rgb(0xFFFFFF).withAlpha(0.06) : Color::rgb(0x000000).withAlpha(0.045);
+    return colors().get(ColorId::WindowTabBarTrack);
 }
 
 Color WindowTabBar::selectedColor() const
 {
-    // Light schemes are not always white; a translucent pill lifts off any of them.
-    return Color::rgb(0xFFFFFF).withAlpha(isDark() ? 0.13 : 0.8);
+    return colors().get(ColorId::WindowTabBarSelected);
 }
 
 Color WindowTabBar::hoverColor() const
@@ -578,7 +576,8 @@ double WindowTabBar::contentWidth() const
 
 double WindowTabBar::trackWidth() const
 {
-    return m_trackWidth.value(now());
+    // At rest it follows the bar's width at once, before the bar lays out.
+    return sliding() ? m_trackWidth.value(now()) : contentWidth();
 }
 
 bool WindowTabBar::sliding() const
@@ -728,6 +727,8 @@ void WindowTabBar::setTextColor(std::optional<Color> color)
 
 void WindowTabBar::setTabWidthRange(double minimum, double maximum)
 {
+    if (minimum == m_minimumTabWidth && maximum == m_maximumTabWidth)
+        return;
     m_minimumTabWidth = minimum;
     m_maximumTabWidth = maximum;
     requestLayout();
@@ -735,6 +736,8 @@ void WindowTabBar::setTabWidthRange(double minimum, double maximum)
 
 void WindowTabBar::setTrackInsets(const Margins& insets)
 {
+    if (insets == m_trackInsets)
+        return;
     m_trackInsets = insets;
     requestLayout();
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/window.h"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <ctime>
 #include <cxxabi.h>
 #include <typeinfo>
+#include <unordered_map>
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImageInfo.h"
@@ -82,8 +84,8 @@ protected:
     void paint(Painter& painter) override
     {
         const Theme& theme = Theme::current();
-        painter.drawShadow(localRect(), theme.smallRadius, kToolTipShadowSigma, Color::rgb(0).withAlpha(0.15));
-        painter.fillRoundedRect(localRect(), theme.smallRadius, theme.secondBackground.withAlpha(0.95),
+        painter.drawShadow(localRect(), theme.smallRadius, kToolTipShadowSigma, color(ColorId::ToolTipShadow));
+        painter.fillRoundedRect(localRect(), theme.smallRadius, color(ColorId::ToolTipBackground),
                                 themeCorners());
     }
 
@@ -104,6 +106,12 @@ static uint64_t monotonicNs()
     return uint64_t(now.tv_sec) * 1000000000 + uint64_t(now.tv_nsec);
 }
 
+// How often a frame lays out while views keep asking from inside a pass.
+static constexpr int kLayoutPasses = 4;
+
+static bool s_verifiesLayout = false;
+static int s_layoutMismatches = 0;
+
 static std::string typeName(const View& view)
 {
     const char* mangled = typeid(view).name();
@@ -115,6 +123,19 @@ static std::string typeName(const View& view)
     if (name.starts_with(prefix))
         name.erase(0, prefix.size());
     return name;
+}
+
+// The view's class and name and those of its parents, root first.
+static std::string viewPath(const View* view)
+{
+    std::string path;
+    for (const View* step = view; step; step = step->parent()) {
+        std::string name = typeName(*step);
+        if (!step->name().empty())
+            name += " \"" + step->name() + "\"";
+        path = path.empty() ? name : name + " > " + path;
+    }
+    return path;
 }
 
 Window::Window()
@@ -319,6 +340,7 @@ void Window::setBackgroundColor(std::optional<Color> color)
 void Window::handleThemeChanged()
 {
     // Font sizes and colours may have changed.
+    View::invalidateMeasurements();
     requestLayout();
     damageAll();
 }
@@ -328,6 +350,7 @@ void Window::setHintedTextLayout(bool hinted)
     if (hinted == m_hintedTextLayout)
         return;
     m_hintedTextLayout = hinted;
+    View::invalidateMeasurements();
     requestLayout();
     damageAll();
 }
@@ -473,8 +496,10 @@ void Window::setContentView(std::unique_ptr<View> view)
     m_hoverChain.clear();
     m_pressed = nullptr;
     m_contentView = std::move(view);
-    if (m_contentView)
+    if (m_contentView) {
         m_contentView->m_window = this;
+        m_contentView->invalidateSubtree();
+    }
     requestLayout();
     requestPaint();
 }
@@ -573,7 +598,10 @@ SizeF Window::screenSize() const
 
 void Window::requestLayout()
 {
-    View::invalidateMeasurements();
+    if (m_contentView)
+        m_contentView->invalidateSubtree(false);
+    if (m_overlay)
+        m_overlay->invalidateSubtree(false);
     scheduleLayout();
 }
 
@@ -698,6 +726,7 @@ void Window::handleScaleChanged(double scale)
     m_scale = scale;
     clearSubpixelCoverage();
     // Text is shaped at the device size.
+    View::invalidateMeasurements();
     requestLayout();
     damageAll();
 }
@@ -1525,17 +1554,93 @@ bool Window::layoutIfNeeded()
 {
     if (!m_layoutNeeded || !m_contentView)
         return false;
-    View::invalidateMeasurements();
     fitContentHeight();
     m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
-    m_contentView->layoutTree();
-    if (m_overlay) {
+    if (m_overlay)
         m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
-        m_overlay->layoutTree();
+    // A view laid out already in the pass may be asked again from a later
+    // one, such as a parent by its child; it lays out again in this frame.
+    const auto pending = [this] {
+        const auto marked = [](const View* view) { return view->m_needsLayout || view->m_descendantNeedsLayout; };
+        return marked(m_contentView.get()) || (m_overlay && marked(m_overlay.get()));
+    };
+    for (int pass = 0; pass < kLayoutPasses && pending(); ++pass) {
+        m_contentView->layoutTree();
+        if (m_overlay)
+            m_overlay->layoutTree();
+    }
+    if (s_verifiesLayout && pending()) {
+        const auto report = [](const auto& self, const View* view) -> void {
+            if (view->m_needsLayout) {
+                fprintf(stderr, "cutefish-toolkit: %s still asks for layout after %d passes\n",
+                        viewPath(view).c_str(), kLayoutPasses);
+            }
+            for (const auto& child : view->children())
+                self(self, child.get());
+        };
+        report(report, m_contentView.get());
+        if (m_overlay)
+            report(report, m_overlay.get());
     }
     // Geometry set by the pass itself asks for layout again.
     m_layoutNeeded = false;
+    if (s_verifiesLayout)
+        verifyLayout();
     return true;
+}
+
+void Window::verifyLayout()
+{
+    std::unordered_map<const View*, RectF> incremental;
+    const auto record = [&incremental](const auto& self, const View* view) -> void {
+        incremental[view] = view->geometry();
+        for (const auto& child : view->children())
+            self(self, child.get());
+    };
+    record(record, m_contentView.get());
+    if (m_overlay)
+        record(record, m_overlay.get());
+
+    View::invalidateMeasurements();
+    m_contentView->invalidateSubtree();
+    m_contentView->layoutTree();
+    if (m_overlay) {
+        m_overlay->invalidateSubtree();
+        m_overlay->layoutTree();
+    }
+
+    const auto compare = [&incremental, this](const auto& self, const View* view) -> void {
+        const auto it = incremental.find(view);
+        if (it != incremental.end() && !(it->second == view->geometry())) {
+            ++s_layoutMismatches;
+            const std::string path = viewPath(view);
+            const RectF& before = it->second;
+            const RectF& after = view->geometry();
+            fprintf(stderr, "cutefish-toolkit: %s at %g %g %g %g, %g %g %g %g when laid out in full\n",
+                    path.c_str(), before.x, before.y, before.width, before.height, after.x, after.y, after.width,
+                    after.height);
+        }
+        for (const auto& child : view->children())
+            self(self, child.get());
+    };
+    compare(compare, m_contentView.get());
+    if (m_overlay)
+        compare(compare, m_overlay.get());
+}
+
+void Window::setVerifiesLayout(bool verifies)
+{
+    s_verifiesLayout = verifies;
+}
+
+bool Window::verifiesLayout()
+{
+    return s_verifiesLayout;
+}
+
+int Window::layoutMismatches()
+{
+    return s_layoutMismatches;
 }
 
 void Window::addFrameClient(FrameClient* client)

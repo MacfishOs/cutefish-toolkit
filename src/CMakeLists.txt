@@ -66,6 +66,9 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/button.h
     ui/check_box.h
     ui/clipboard.h
+    ui/color_id.h
+    ui/color_mixer.h
+    ui/color_provider.h
     ui/combo_box.h
     ui/dialog_window.h
     ui/drag.h
@@ -139,6 +142,8 @@ add_library(cutefish-toolkit SHARED
     ui/button.cpp
     ui/check_box.cpp
     ui/clipboard.cpp
+    ui/color_mixer.cpp
+    ui/color_provider.cpp
     ui/combo_box.cpp
     ui/dialog_window.cpp
     ui/drop_down_popup.cpp
@@ -199,6 +204,7 @@ add_library(cutefish-toolkit SHARED
     ui/text_context.cpp
     ui/text_lines.cpp
     ui/theme.cpp
+    ui/toolkit_colors.cpp
     ui/thumbnail_cache.cpp
     ui/toast.cpp
     ui/trusted_connection.cpp

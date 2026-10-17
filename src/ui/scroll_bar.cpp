@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/scroll_bar.h"
 
 #include <algorithm>
@@ -104,9 +105,9 @@ void ScrollBar::paint(Painter& painter)
     if (m_opacity <= 0 || !isNeeded())
         return;
     const Theme& theme = Theme::current();
-    const bool dark = m_darkMode.value_or(theme.darkMode);
-    const double alpha = m_dragging ? (dark ? 0.4 : 0.5) : (dark ? 0.5 : 0.4);
-    const Color color = (dark ? Color::rgb(0xFFFFFF) : Color::rgb(0x000000)).withAlpha(alpha * m_opacity);
+    const ColorProvider& colors = ColorProvider::forMode(m_darkMode.value_or(theme.darkMode));
+    const Color thumb = colors.get(m_dragging ? ColorId::ScrollBarThumbDragging : ColorId::ScrollBarThumb);
+    const Color color = thumb.withAlpha(thumb.a / 255.0 * m_opacity);
     const double width = thickness - 2 * kPadding;
     RectF handle;
     if (m_orientation == Orientation::Vertical)

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 
 #include "ui/drag.h"
 #include "ui/layer.h"
@@ -13,7 +14,14 @@
 
 namespace cutefish::ui {
 
-static uint64_t s_measurementGeneration = 1;
+// Measurement stamps and the epoch come from one counter, so a view's
+// generation changes both when it is stamped and when the epoch moves.
+static uint64_t s_measurementCounter = 1;
+static uint64_t s_measurementEpoch = 1;
+// Inside a layout pass, a resized view's parent placed it already.
+static int s_layoutDepth = 0;
+// The view whose layout() runs: views under it lay out after it anyway.
+static View* s_layingOut = nullptr;
 
 View::View() = default;
 
@@ -45,6 +53,7 @@ TextLayoutMode View::textLayoutMode() const
 void View::setTextLayoutMode(TextLayoutMode mode)
 {
     m_textLayoutMode = mode;
+    invalidateSubtree();
     requestLayout();
 }
 
@@ -52,6 +61,8 @@ void View::addChild(std::unique_ptr<View> child)
 {
     child->m_parent = this;
     m_children.push_back(std::move(child));
+    // It may have been measured in another window, at another scale.
+    m_children.back()->invalidateSubtree();
     m_children.back()->invalidate();
     requestLayout();
 }
@@ -77,10 +88,12 @@ void View::raiseChild(View* child)
 {
     const auto it = std::find_if(m_children.begin(), m_children.end(),
                                  [child](const auto& view) { return view.get() == child; });
-    if (it == m_children.end())
+    if (it == m_children.end() || it + 1 == m_children.end())
         return;
     child->invalidate();
     std::rotate(it, it + 1, m_children.end());
+    // Layouts place children in their order.
+    requestLayout();
 }
 
 void View::setGeometry(const RectF& geometry)
@@ -90,10 +103,19 @@ void View::setGeometry(const RectF& geometry)
     invalidate();
     const bool resized = geometry.size() != m_geometry.size();
     m_geometry = geometry;
-    if (resized) {
-        if (Window* window = this->window())
-            window->scheduleLayout();
+    if (!resized)
+        return;
+    m_needsLayout = true;
+    // Outside a pass, the parent places the view again, as it would have.
+    if (m_parent && s_layoutDepth == 0)
+        m_parent->m_needsLayout = true;
+    View* root = this;
+    for (View* view = m_parent; view; view = view->m_parent) {
+        view->m_descendantNeedsLayout = true;
+        root = view;
     }
+    if (root->m_window)
+        root->m_window->scheduleLayout();
 }
 
 void View::setVisible(bool visible)
@@ -142,7 +164,7 @@ void View::setTransform(const Transform& transform)
     m_transform = transform;
     // Hit testing follows the transform.
     if (Window* window = this->window())
-        window->requestLayout();
+        window->scheduleLayout();
 }
 
 void View::setLayered(bool layered)
@@ -197,10 +219,9 @@ void View::setEnabled(bool enabled)
             notify(child.get());
     };
     notify(this);
-    // A layout looks again at what is under the pointer.
-    if (enabled)
-        requestLayout();
-    requestPaint();
+    // Views may lay out by it, and a layout looks again at what is under
+    // the pointer.
+    requestLayout();
 }
 
 bool View::hasFocus() const
@@ -245,6 +266,8 @@ bool View::startDrag(DragSource source)
 
 void View::setLayoutHints(const LayoutHints& hints)
 {
+    if (hints == m_layoutHints)
+        return;
     m_layoutHints = hints;
     requestLayout();
 }
@@ -261,20 +284,47 @@ SizeF View::preferredSize() const
 
 void View::requestLayout()
 {
-    invalidateMeasurements();
     invalidate();
-    if (Window* window = this->window())
-        window->requestLayout();
+    const uint64_t stamp = ++s_measurementCounter;
+    View* root = this;
+    bool placing = true;
+    for (View* view = this; view; view = view->m_parent) {
+        view->m_measurementStamp = stamp;
+        // Asked from the layout() of a view above it, as when that view
+        // fills its children: they lay out next in this pass, and that view
+        // and those above it keep their places.
+        if (view == s_layingOut)
+            placing = false;
+        if (placing)
+            view->m_needsLayout = true;
+        root = view;
+    }
+    if (root->m_window)
+        root->m_window->scheduleLayout();
 }
 
-uint64_t View::measurementGeneration()
+uint64_t View::measurementGeneration() const
 {
-    return s_measurementGeneration;
+    return std::max(m_measurementStamp, s_measurementEpoch);
 }
 
 void View::invalidateMeasurements()
 {
-    ++s_measurementGeneration;
+    s_measurementEpoch = ++s_measurementCounter;
+}
+
+void View::invalidateSubtree(bool remeasure)
+{
+    const uint64_t stamp = ++s_measurementCounter;
+    const auto mark = [stamp, remeasure](const auto& self, View* view) -> void {
+        if (remeasure)
+            view->m_measurementStamp = stamp;
+        view->m_needsLayout = true;
+        view->m_descendantNeedsLayout = !view->m_children.empty();
+        for (const auto& child : view->m_children)
+            self(self, child.get());
+    };
+    mark(mark, this);
 }
 
 void View::setTracksHover(bool tracks)
@@ -334,9 +384,36 @@ PointF View::mapToWindow(PointF point) const
 
 void View::layoutTree()
 {
-    layout();
-    for (const auto& child : m_children)
-        child->layoutTree();
+    ++s_layoutDepth;
+    if (m_needsLayout) {
+        m_needsLayout = false;
+        const uint64_t stamp = m_measurementStamp;
+        // What its parent placed it by, as measured already.
+        const SizeF size = m_parent ? preferredSize() : SizeF{};
+        const double height = m_parent ? heightForWidth(m_geometry.width) : 0;
+        View* const outer = std::exchange(s_layingOut, this);
+        layout();
+        s_layingOut = outer;
+        // A view under it changed what this view measures: the parent
+        // places it again.
+        if (m_parent && m_measurementStamp != stamp
+            && (!(preferredSize() == size) || heightForWidth(m_geometry.width) != height)) {
+            for (View* view = m_parent; view; view = view->m_parent)
+                view->m_needsLayout = true;
+        }
+    }
+    // Views below marked meanwhile set it again.
+    m_descendantNeedsLayout = false;
+    for (size_t i = 0; i < m_children.size(); ++i) {
+        View* child = m_children[i].get();
+        if (child->m_needsLayout || child->m_descendantNeedsLayout)
+            child->layoutTree();
+    }
+    childrenLaidOut();
+    m_descendantNeedsLayout = std::any_of(m_children.begin(), m_children.end(), [](const auto& child) {
+        return child->m_needsLayout || child->m_descendantNeedsLayout;
+    });
+    --s_layoutDepth;
 }
 
 View* View::viewAt(PointF point, bool input)

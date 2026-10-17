@@ -14,6 +14,8 @@
 
 namespace cutefish::ui {
 
+class ColorProvider;
+
 // The document tab bar of the terminal, the text editor and the file manager:
 // tabs on a pill-shaped track, the current one raised on it; only it or the
 // hovered tab shows a close button. Tabs are dragged to reorder them and
@@ -120,7 +122,8 @@ private:
         void start(double from, double to, int durationMs, uint64_t now);
     };
 
-    bool isDark() const;
+    // The bar's own colour mode's colours.
+    const ColorProvider& colors() const;
     Color textColor() const;
     Color trackColor() const;
     Color selectedColor() const;

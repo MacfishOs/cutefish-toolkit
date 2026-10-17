@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/color_provider.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/painter.h"
@@ -58,13 +59,14 @@ void Button::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
     const bool enabled = isEnabled();
-    Color color = theme.alternateBackground;
+    ColorId background = ColorId::ButtonBackground;
     if (enabled && m_pressed)
-        color = theme.darkMode ? color.lighter(1.1) : color.darker(1.2);
+        background = ColorId::ButtonBackgroundPressed;
     else if (enabled && m_hovered)
-        color = theme.darkMode ? color.lighter(1.2) : color.darker(1.1);
-    painter.drawRoundedRect(localRect(), {theme.mediumRadius, 0, themeCorners()}, color, 1 / painter.scale(),
-                            hasVisibleFocus() ? theme.highlight.withAlpha(0.5) : Color{0, 0, 0, 0});
+        background = ColorId::ButtonBackgroundHovered;
+    painter.drawRoundedRect(localRect(), {theme.mediumRadius, 0, themeCorners()}, color(background),
+                            1 / painter.scale(),
+                            hasVisibleFocus() ? color(ColorId::ButtonFocusRing) : Color{0, 0, 0, 0});
 }
 
 void Button::pointerEnter()

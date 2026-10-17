@@ -91,6 +91,8 @@ void ScrollView::setContentView(std::unique_ptr<View> view)
 
 void ScrollView::setScrollDirections(bool horizontal, bool vertical)
 {
+    if (horizontal == m_horizontal && vertical == m_vertical)
+        return;
     m_horizontal = horizontal;
     m_vertical = vertical;
     requestLayout();
@@ -110,6 +112,8 @@ void ScrollView::setVerticalBarPadding(double top, double bottom)
 
 void ScrollView::setVerticalBarPolicy(BarPolicy policy)
 {
+    if (policy == m_verticalPolicy)
+        return;
     m_verticalPolicy = policy;
     m_verticalBar->setAlwaysShown(policy == BarPolicy::AlwaysOn);
     requestLayout();

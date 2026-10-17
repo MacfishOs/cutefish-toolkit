@@ -266,6 +266,8 @@ void ImageView::setFillMode(FillMode mode)
 
 void ImageView::setSourceSize(SizeF size)
 {
+    if (size == m_sourceSize)
+        return;
     m_sourceSize = size;
     requestLayout();
 }
@@ -423,7 +425,7 @@ void ImageView::apply(const std::string& key, std::shared_ptr<const Picture> pic
     if (!picture) {
         m_picture.reset();
         setStatus(Status::Error);
-        requestPaint();
+        requestLayout();
         return;
     }
     store(key, picture);

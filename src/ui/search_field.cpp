@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/search_field.h"
 
 #include "ui/icon.h"
@@ -64,6 +65,8 @@ void SearchField::setGlyphColor(std::optional<Color> color)
 
 void SearchField::setIconMetrics(double inset, double gap, double hitMargin)
 {
+    if (inset == m_inset && gap == m_gap && hitMargin == m_hitMargin)
+        return;
     m_inset = inset;
     m_gap = gap;
     m_hitMargin = hitMargin;
@@ -82,7 +85,7 @@ void SearchField::paint(Painter& painter)
     if (focused) {
         painter.drawRoundedRect(bounds.adjusted(-kFocusRing, -kFocusRing, kFocusRing, kFocusRing),
                                 {radius, -kFocusRing, Corners::Circular}, Color{0, 0, 0, 0}, 2,
-                                theme.highlight.withAlpha(0.25));
+                                color(ColorId::TextFieldFocusRing));
     }
     TextField::paint(painter);
 }

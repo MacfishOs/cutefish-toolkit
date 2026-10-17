@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/combo_box.h"
 
 #include <algorithm>
@@ -315,15 +316,14 @@ void ComboBox::paint(Painter& painter)
 {
     const Theme& theme = Theme::current();
     const bool enabled = isEnabled();
-    Color color = theme.alternateBackground;
     // Pressed only, as FishUI's (no hover colour); an editable box keeps
     // its colour, the field taking the presses.
-    if (enabled && !m_field && m_pressed)
-        color = theme.darkMode ? color.lighter(1.1) : color.darker(1.2);
+    const Color background = color(enabled && !m_field && m_pressed ? ColorId::ComboBoxBackgroundPressed
+                                                                     : ColorId::ComboBoxBackground);
     const bool open = m_menu && m_menu->isOpen();
     const bool focused = m_field ? m_field->hasFocus() : hasFocus();
-    painter.drawRoundedRect(localRect(), {theme.smallRadius, 0, themeCorners()}, color, 1,
-                            enabled && (focused || open) ? theme.highlight : color);
+    painter.drawRoundedRect(localRect(), {theme.smallRadius, 0, themeCorners()}, background, 1,
+                            enabled && (focused || open) ? color(ColorId::ComboBoxFocusBorder) : background);
 }
 
 void ComboBox::enabledChanged()

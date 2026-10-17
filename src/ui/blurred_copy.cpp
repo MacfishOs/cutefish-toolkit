@@ -43,7 +43,8 @@ void BlurredCopy::setContentView(std::unique_ptr<View> content)
 void BlurredCopy::contentChanged()
 {
     m_cache->stale = true;
-    requestPaint();
+    // The content lies outside the window's tree: its requests stop at it.
+    requestLayout();
 }
 
 // autoPaddingEnabled: the effect reaches blurMax past the item.

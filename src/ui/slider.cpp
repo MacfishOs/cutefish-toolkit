@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "ui/color_provider.h"
 #include "ui/slider.h"
 
 #include <algorithm>
@@ -12,7 +13,6 @@
 #include "ui/keys.h"
 #include "ui/painter.h"
 #include "ui/smooth_rectangle.h"
-#include "ui/theme.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
@@ -136,7 +136,6 @@ RectF Slider::handleRect() const
 
 void Slider::paint(Painter& painter)
 {
-    const Theme& theme = Theme::current();
     const RectF bounds = localRect();
     const RectF handle = handleRect();
     const double centreY = bounds.height / 2;
@@ -149,20 +148,18 @@ void Slider::paint(Painter& painter)
     if (!isEnabled())
         painter.multiplyOpacity(0.4);
     // Rounded rectangles, snapped as the rounded-rectangle shader draws them.
-    painter.drawRoundedRect({start, centreY - kTrack / 2, length, kTrack}, {kTrack / 2},
-                            theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.3)
-                                           : Color::rgb(0x000000).withAlpha(0.1));
+    painter.drawRoundedRect({start, centreY - kTrack / 2, length, kTrack}, {kTrack / 2}, color(ColorId::SliderTrack));
     if (visualPosition() > 0) {
         const double filled = std::max(0.0, bounds.width - kHandle) * visualPosition() + kTrack;
-        painter.drawRoundedRect({start, centreY - kTrack / 2, filled, kTrack}, {kTrack / 2}, theme.highlight);
+        painter.drawRoundedRect({start, centreY - kTrack / 2, filled, kTrack}, {kTrack / 2},
+                                color(ColorId::SliderTrackFilled));
     }
     if (m_stepped && m_step > 0 && m_to != m_from) {
         const int intervals = int(std::ceil(std::abs(m_to - m_from) / m_step));
         const double travel = std::max(0.0, bounds.width - kHandle);
         // Marks only while they stay apart.
         if (intervals > 0 && intervals <= int(travel / 6)) {
-            const Color mark = theme.darkMode ? Color::rgb(0xFFFFFF).withAlpha(0.55)
-                                              : Color::rgb(0x000000).withAlpha(0.35);
+            const Color mark = color(ColorId::SliderTickMark);
             for (int i = 0; i <= intervals; ++i) {
                 const double x = kHandle / 2 + travel * std::min(1.0, double(i) / intervals);
                 painter.drawRoundedRect({x - 0.5, centreY + 12, 1, 3}, {0.5}, mark);
@@ -178,12 +175,13 @@ void Slider::paint(Painter& painter)
     if (isEnabled()) {
         // DropShadow radius 10 in device pixels, deviation (radius + 1) / 3.3333.
         const double sigma = (kShadowRadius * scale + 1) / 3.3333 / scale;
-        painter.drawShadow(handle, kHandle / 2, sigma, Color::rgb(0).withAlpha(m_pressed ? 0.15 : 0.1),
+        painter.drawShadow(handle, kHandle / 2, sigma,
+                           color(m_pressed ? ColorId::SliderHandleShadowPressed : ColorId::SliderHandleShadow),
                            {0, kShadowOffset});
     }
     // A plain antialiased rectangle, its border not pixel aligned.
-    const Color fill = m_pressed ? Color::rgb(0xFAFAFA) : Color::rgb(0xFFFFFF);
-    const Color border = Color::rgb(0).withAlpha(0.04);
+    const Color fill = color(m_pressed ? ColorId::SliderHandlePressed : ColorId::SliderHandle);
+    const Color border = color(ColorId::SliderHandleBorder);
     if (!isEnabled()) {
         painter.drawSmoothRectangle(handle, kHandle / 2, fill, 0.5, border);
         painter.restore();
