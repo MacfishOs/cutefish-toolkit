@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <pwd.h>
 #include <sstream>
@@ -338,14 +339,87 @@ static std::string prepareSvg(std::string svg)
     return out;
 }
 
+// Pictures decoded from data URIs lately, by their URI: application icons
+// share one shadow picture.
+static constexpr size_t kDataUriImages = 8;
+
+namespace {
+
+class DecodedImageAsset final : public skresources::ImageAsset
+{
+public:
+    explicit DecodedImageAsset(sk_sp<SkImage> image)
+        : m_image(std::move(image))
+    {
+    }
+
+    bool isMultiFrame() override { return false; }
+    sk_sp<SkImage> getFrame(float) override { return m_image; }
+
+private:
+    sk_sp<SkImage> m_image;
+};
+
+class SharedDataUris final : public skresources::ResourceProviderProxyBase
+{
+public:
+    SharedDataUris()
+        : ResourceProviderProxyBase(skresources::DataURIResourceProviderProxy::Make(
+                  nullptr, skresources::ImageDecodeStrategy::kPreDecode))
+    {
+    }
+
+    sk_sp<skresources::ImageAsset> loadImageAsset(const char path[], const char name[],
+                                                  const char id[]) const override
+    {
+        if (!name || std::strncmp(name, "data:", 5) != 0)
+            return ResourceProviderProxyBase::loadImageAsset(path, name, id);
+        const std::string_view uri(name);
+        {
+            std::lock_guard lock(mutex());
+            auto& images = decoded();
+            for (auto it = images.begin(); it != images.end(); ++it) {
+                if (it->first == uri) {
+                    images.splice(images.begin(), images, it);
+                    return sk_make_sp<DecodedImageAsset>(it->second);
+                }
+            }
+        }
+        const sk_sp<skresources::ImageAsset> asset = ResourceProviderProxyBase::loadImageAsset(path, name, id);
+        sk_sp<SkImage> image = asset ? asset->getFrameData(0).image : nullptr;
+        if (!image)
+            return nullptr;
+        std::lock_guard lock(mutex());
+        auto& images = decoded();
+        images.emplace_front(std::string(uri), image);
+        if (images.size() > kDataUriImages)
+            images.pop_back();
+        return sk_make_sp<DecodedImageAsset>(std::move(image));
+    }
+
+private:
+    static std::mutex& mutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    // Most recently used first.
+    static std::list<std::pair<std::string, sk_sp<SkImage>>>& decoded()
+    {
+        static std::list<std::pair<std::string, sk_sp<SkImage>>> images;
+        return images;
+    }
+};
+
+} // namespace
+
 static sk_sp<SkSVGDOM> loadSvg(sk_sp<SkData> data)
 {
     const std::string text = prepareSvg(std::string(static_cast<const char*>(data->data()), data->size()));
     SkMemoryStream stream(text.data(), text.size(), false);
     // Icons carry their raster parts, such as shadows, as data URIs.
-    auto resources = skresources::DataURIResourceProviderProxy::Make(
-        nullptr, skresources::ImageDecodeStrategy::kPreDecode);
-    return SkSVGDOM::Builder().setResourceProvider(std::move(resources)).make(stream);
+    return SkSVGDOM::Builder().setResourceProvider(sk_make_sp<SharedDataUris>()).make(stream);
 }
 
 IconLoader& IconLoader::instance()
