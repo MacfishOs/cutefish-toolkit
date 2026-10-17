@@ -81,3 +81,9 @@ TEST(ApplicationRegistryTest, ScansAndResolves)
         EXPECT_EQ(registry.resolveWindow("cutefish-settings", "", "", ""), settings);
     }
 }
+
+TEST(DesktopEntryTest, KeepsEmptyQuotedArguments)
+{
+    EXPECT_EQ(DesktopEntry::parseExec(R"(app --title "" '' --next %f)"),
+              (std::vector<std::string>{"app", "--title", "", "", "--next"}));
+}

@@ -146,6 +146,8 @@ static std::vector<std::string> tokenizeExec(const std::string& exec)
     std::string token;
     bool quoted = false;
     char quote = 0;
+    // A quoted empty argument is an argument too.
+    bool started = false;
 
     for (size_t i = 0; i < exec.size(); ++i) {
         const char c = exec[i];
@@ -156,6 +158,7 @@ static std::vector<std::string> tokenizeExec(const std::string& exec)
         if (c == '"' || c == '\'') {
             if (!quoted) {
                 quoted = true;
+                started = true;
                 quote = c;
             } else if (quote == c) {
                 quoted = false;
@@ -165,15 +168,16 @@ static std::vector<std::string> tokenizeExec(const std::string& exec)
             continue;
         }
         if (!quoted && std::isspace(static_cast<unsigned char>(c))) {
-            if (!token.empty()) {
+            if (!token.empty() || started) {
                 result.push_back(token);
                 token.clear();
+                started = false;
             }
             continue;
         }
         token += c;
     }
-    if (!token.empty())
+    if (!token.empty() || started)
         result.push_back(token);
     return result;
 }
@@ -282,7 +286,7 @@ std::vector<std::string> DesktopEntry::commandForArguments(const std::vector<std
             continue;
         }
         std::string substituted = substituteToken(token, *this, arguments);
-        if (!substituted.empty())
+        if (!substituted.empty() || token.empty())
             result.push_back(std::move(substituted));
     }
     return result;
