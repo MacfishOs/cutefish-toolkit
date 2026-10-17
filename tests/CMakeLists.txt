@@ -61,6 +61,7 @@ add_executable(cutefish-toolkit-tests
     scroll_test.cpp
     shell_protocol_test.cpp
     text_area_test.cpp
+    text_cost_test.cpp
     text_field_test.cpp
     text_layout_test.cpp
     text_metrics_test.cpp

@@ -6,4 +6,8 @@ set_tests_properties(FrameCostTest.PageOfCardsRepaintsWithinAFrame
                      LayoutCostTest.LongList
                      LayoutCostTest.CellLayoutSolve
                      LayoutCostTest.BoxLayoutMeasure
+                     TextCostTest.SettingsPage
+                     TextCostTest.LongTextArea
+                     TextCostTest.TextFieldTyping
+                     TextCostTest.CodeLines
                      PROPERTIES RUN_SERIAL TRUE)
