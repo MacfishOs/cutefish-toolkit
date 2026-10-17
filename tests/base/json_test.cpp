@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
+
 #include "base/json.h"
 
 using namespace cutefish::base::json;
@@ -58,4 +61,16 @@ TEST(JsonTest, SerializesCompactOrIndented)
     EXPECT_EQ(Value::parse(R"({"e":{},"x":{"b":[],"d":1.5}})")->serialize(false),
               "{\n    \"e\": {\n    },\n    \"x\": {\n        \"b\": [\n        ],\n        \"d\": 1.5\n    }\n}\n");
     EXPECT_EQ(Value::parse("{\"a\":[1]}")->serialize(false), "{\n    \"a\": [\n        1\n    ]\n}\n");
+}
+
+TEST(JsonTest, ReadsNumbersOutOfRange)
+{
+    const std::optional<Value> value = Value::parse("[1e400, -1e400, 1e-400, -1e-400, 1234567890123456789e300]");
+    ASSERT_TRUE(value);
+    EXPECT_EQ((*value)[0].toDouble(), std::numeric_limits<double>::infinity());
+    EXPECT_EQ((*value)[1].toDouble(), -std::numeric_limits<double>::infinity());
+    EXPECT_EQ((*value)[2].toDouble(), 0.0);
+    EXPECT_TRUE(std::signbit((*value)[3].toDouble()));
+    EXPECT_EQ((*value)[4].toDouble(), std::numeric_limits<double>::infinity());
+    EXPECT_EQ((*value)[0].toInt(-1), -1);
 }

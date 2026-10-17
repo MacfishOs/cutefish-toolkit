@@ -3,6 +3,7 @@
 
 #include "base/json.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -250,9 +251,54 @@ private:
         const char* first = m_text.data() + start;
         const char* last = m_text.data() + m_position;
         const std::from_chars_result result = std::from_chars(first, last, value);
-        if (result.ec != std::errc() && result.ec != std::errc::result_out_of_range)
+        if (result.ec == std::errc::result_out_of_range)
+            return Value(outOfRange(std::string_view(first, size_t(last - first))));
+        if (result.ec != std::errc())
             return std::nullopt;
         return Value(value);
+    }
+
+    // A number too large or too small for a double: infinite or zero with
+    // its sign, as other readers take it.
+    static double outOfRange(std::string_view number)
+    {
+        const bool negative = number.front() == '-';
+        const auto isDigit = [](char c) { return c >= '0' && c <= '9'; };
+        // The power of ten of the first digit that is not zero.
+        int64_t order = 0;
+        bool significant = false;
+        size_t i = negative ? 1 : 0;
+        const size_t integerStart = i;
+        while (i < number.size() && isDigit(number[i]))
+            ++i;
+        for (size_t k = integerStart; k < i && !significant; ++k) {
+            if (number[k] != '0') {
+                order = int64_t(i - k) - 1;
+                significant = true;
+            }
+        }
+        if (i < number.size() && number[i] == '.') {
+            const size_t point = i++;
+            for (; i < number.size() && isDigit(number[i]); ++i) {
+                if (!significant && number[i] != '0') {
+                    order = -int64_t(i - point);
+                    significant = true;
+                }
+            }
+        }
+        int64_t exponent = 0;
+        if (i < number.size()) {
+            ++i;
+            const bool negativeExponent = number[i] == '-';
+            if (number[i] == '+' || number[i] == '-')
+                ++i;
+            for (; i < number.size(); ++i)
+                exponent = std::min<int64_t>(exponent * 10 + (number[i] - '0'), 1000000);
+            if (negativeExponent)
+                exponent = -exponent;
+        }
+        const double magnitude = significant && order + exponent > 0 ? HUGE_VAL : 0.0;
+        return negative ? -magnitude : magnitude;
     }
 
     std::string_view m_text;
