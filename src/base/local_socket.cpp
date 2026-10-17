@@ -199,10 +199,23 @@ bool LocalServer::listen(const std::string& path)
         return false;
     }
     std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-    // A socket file nobody listens on any more, as after a crash.
+    // A socket file nobody listens on any more, as after a crash. One that
+    // another server still listens on stays its own.
     struct stat status{};
-    if (::lstat(path.c_str(), &status) == 0 && S_ISSOCK(status.st_mode))
+    if (::lstat(path.c_str(), &status) == 0 && S_ISSOCK(status.st_mode)) {
+        const int probe = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        // EAGAIN: the listener's backlog is full.
+        const bool listening = probe >= 0
+                && (::connect(probe, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0
+                    || errno == EAGAIN);
+        if (probe >= 0)
+            ::close(probe);
+        if (listening) {
+            m_error = std::strerror(EADDRINUSE);
+            return false;
+        }
         ::unlink(path.c_str());
+    }
     const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         m_error = std::strerror(errno);

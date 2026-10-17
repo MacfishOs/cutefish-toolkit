@@ -238,3 +238,32 @@ TEST(LocalServerTest, ListensOverAStaleSocketAndHandsOutClients)
     EXPECT_FALSE(server.isListening());
     EXPECT_FALSE(std::filesystem::exists(path));
 }
+
+TEST(LocalServerTest, LeavesAPathAnotherServerListensOn)
+{
+    EventLoop loop;
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string(), "cutefish-socket-");
+    const std::string path = directory.path() + "/server";
+    LocalServer first(&loop);
+    ASSERT_TRUE(first.listen(path));
+    LocalServer second(&loop);
+    EXPECT_FALSE(second.listen(path));
+    EXPECT_FALSE(second.errorText().empty());
+    EXPECT_FALSE(second.isListening());
+
+    // The first one still gets its clients.
+    bool connected = false;
+    first.onNewConnection = [&](int fd) {
+        connected = true;
+        ::close(fd);
+        loop.quit();
+    };
+    LocalSocket client(&loop);
+    ASSERT_TRUE(client.connectToPath(path));
+    Timer timeout(&loop);
+    timeout.setSingleShot(true);
+    timeout.onTimeout = [&] { loop.quit(); };
+    timeout.start(5s);
+    loop.run();
+    EXPECT_TRUE(connected);
+}

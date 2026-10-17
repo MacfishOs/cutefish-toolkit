@@ -79,8 +79,9 @@ public:
     LocalServer(const LocalServer&) = delete;
     LocalServer& operator=(const LocalServer&) = delete;
 
-    // Removes a socket file left at the path first; false with errorText()
-    // when it cannot listen there.
+    // Removes a socket file left at the path by a server that is gone
+    // first; false with errorText() when it cannot listen there, as while
+    // another server listens on it.
     bool listen(const std::string& path);
     // Stops listening and removes the socket file.
     void close();
