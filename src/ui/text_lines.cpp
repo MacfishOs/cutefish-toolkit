@@ -191,12 +191,32 @@ static std::vector<GlyphLine> glyphLines(textlayout::Paragraph* paragraph, const
     return lines;
 }
 
-double naturalWidth(textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances)
+struct LineGlyphs
+{
+    std::vector<GlyphLine> lines;
+};
+
+std::shared_ptr<const LineGlyphs> lineGlyphs(textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances)
+{
+    return std::make_shared<const LineGlyphs>(LineGlyphs{glyphLines(paragraph, roundAdvances)});
+}
+
+static double widestLine(const std::vector<GlyphLine>& lines)
 {
     double widest = 0;
-    for (const GlyphLine& line : glyphLines(paragraph, roundAdvances))
+    for (const GlyphLine& line : lines)
         widest = std::max(widest, line.width);
     return widest;
+}
+
+double naturalWidth(textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances)
+{
+    return widestLine(glyphLines(paragraph, roundAdvances));
+}
+
+double naturalWidth(const LineGlyphs& glyphs)
+{
+    return widestLine(glyphs.lines);
 }
 
 namespace {
@@ -795,7 +815,15 @@ void paintTextLines(SkCanvas* canvas, textlayout::Paragraph* paragraph, const st
                     PointF offset, double width, double align, const AdvanceRule& roundAdvances,
                     const std::function<SkColor(size_t utf8Offset)>& color, bool subpixel)
 {
-    const std::vector<GlyphLine> glyphs = glyphLines(paragraph, roundAdvances);
+    paintTextLines(canvas, LineGlyphs{glyphLines(paragraph, roundAdvances)}, lines, offset, width, align, color,
+                   subpixel);
+}
+
+void paintTextLines(SkCanvas* canvas, const LineGlyphs& lineGlyphs, const std::vector<TextLineBox>& lines,
+                    PointF offset, double width, double align, const std::function<SkColor(size_t utf8Offset)>& color,
+                    bool subpixel)
+{
+    const std::vector<GlyphLine>& glyphs = lineGlyphs.lines;
     const bool unhinted = drawsUnhinted(canvas);
     for (size_t l = 0; l < glyphs.size() && l < lines.size(); ++l) {
         const GlyphLine& line = glyphs[l];
@@ -903,10 +931,16 @@ private:
 TextGeometry textGeometry(textlayout::Paragraph* paragraph, const std::string& text, double width, double align,
                           const AdvanceRule& roundAdvances)
 {
+    return textGeometry(paragraph, LineGlyphs{glyphLines(paragraph, roundAdvances)}, text, width, align);
+}
+
+TextGeometry textGeometry(textlayout::Paragraph* paragraph, const LineGlyphs& lineGlyphs, const std::string& text,
+                          double width, double align)
+{
     TextGeometry geometry;
     std::vector<textlayout::LineMetrics> metrics;
     paragraph->getLineMetrics(metrics);
-    const std::vector<GlyphLine> glyphs = glyphLines(paragraph, roundAdvances);
+    const std::vector<GlyphLine>& glyphs = lineGlyphs.lines;
     Utf8Offsets starts(text);
     Utf8Offsets ends(text);
     for (size_t l = 0; l < metrics.size(); ++l) {

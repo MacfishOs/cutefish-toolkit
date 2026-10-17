@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -52,10 +53,17 @@ std::vector<TextLineBox> textLineBoxes(skia::textlayout::Paragraph* paragraph, c
                                        double pixelSize, double scale, bool hintedLayout);
 double textHeight(const std::vector<TextLineBox>& lines);
 
+// A paragraph's glyphs line by line at their truncated advances, as the
+// functions below measure and draw them, for a paragraph whose layout does
+// not change.
+struct LineGlyphs;
+std::shared_ptr<const LineGlyphs> lineGlyphs(skia::textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances);
+
 // The widest line's advance: the sum of each glyph's design advance
 // truncated to 26.6 fixed point, kerning included, and rounded to whole
 // pixels when metrics are hinted (TextContext::roundsMetrics).
 double naturalWidth(skia::textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances);
+double naturalWidth(const LineGlyphs& glyphs);
 // Each line's advance, as naturalWidth measures it.
 std::vector<double> lineWidths(skia::textlayout::Paragraph* paragraph, const AdvanceRule& roundAdvances);
 
@@ -84,6 +92,10 @@ std::vector<size_t> lineStarts(skia::textlayout::Paragraph* unbounded, const std
 void paintTextLines(SkCanvas* canvas, skia::textlayout::Paragraph* paragraph, const std::vector<TextLineBox>& lines,
                     PointF offset, double width, double align, const AdvanceRule& roundAdvances,
                     const std::function<SkColor(size_t utf8Offset)>& color, bool subpixel = true);
+// The same, with the glyphs made by lineGlyphs() for the paragraph.
+void paintTextLines(SkCanvas* canvas, const LineGlyphs& glyphs, const std::vector<TextLineBox>& lines, PointF offset,
+                    double width, double align, const std::function<SkColor(size_t utf8Offset)>& color,
+                    bool subpixel = true);
 
 // Paragraph::paint, its glyphs drawn as paintTextLines draws them on
 // translucent targets (per-channel coverage blended over the target).
@@ -118,6 +130,8 @@ struct TextGeometry
 // The paragraph's text is `text`, in UTF-8.
 TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const std::string& text, double width,
                           double align, const AdvanceRule& roundAdvances);
+TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const LineGlyphs& glyphs, const std::string& text,
+                          double width, double align);
 
 // The ink bounds of the paragraph's first line, from the origin of its
 // baseline: whole-pixel glyph boxes at the truncated advances.

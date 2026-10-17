@@ -77,6 +77,7 @@ struct TextArea::Private
     double layoutScale = 0;
     bool layoutHinted = true;
     std::vector<TextLineBox> lines;
+    std::shared_ptr<const LineGlyphs> glyphs;
     TextGeometry geometry;
 
     // Logical pixels the text is scrolled up by.
@@ -189,7 +190,8 @@ struct TextArea::Private
         const TextContext& context = Application::instance()->text();
         lines = textLineBoxes(paragraph.get(), context.typeface(fontWeight, fontFamily).get(), pixelSize(), scale,
                               hinted);
-        geometry = textGeometry(paragraph.get(), display, width, align, round);
+        glyphs = lineGlyphs(paragraph.get(), round);
+        geometry = textGeometry(paragraph.get(), *glyphs, display, width, align);
     }
 
     double textHeight() const { return ui::textHeight(lines); }
@@ -440,8 +442,7 @@ SizeF TextArea::sizeHint() const
     // T.TextArea: the content, the background's width and the placeholder,
     // each with the padding.
     d->layout(kUnboundedWidth, currentScale(this), isEnabled());
-    const bool round = Application::instance()->text().roundsMetrics(currentScale(this), d->hintedLayout());
-    double width = naturalWidth(d->paragraph.get(), round) + d->padding.horizontal();
+    double width = naturalWidth(*d->glyphs) + d->padding.horizontal();
     if (d->frame)
         width = std::max(width, kFrameWidth);
     double height = d->textHeight();
@@ -533,8 +534,7 @@ void TextArea::paint(Painter& painter)
         canvas->save();
         canvas->translate(SkScalar(offset.x * scale), SkScalar(offset.y * scale));
         canvas->scale(SkScalar(scale), SkScalar(scale));
-        paintTextLines(canvas, d->paragraph.get(), d->lines, origin, content.width, d->align,
-                       Application::instance()->text().roundsMetrics(scale, d->hintedLayout()),
+        paintTextLines(canvas, *d->glyphs, d->lines, origin, content.width, d->align,
                        [textColor](size_t) { return textColor.argb(); });
         canvas->restore();
     };
