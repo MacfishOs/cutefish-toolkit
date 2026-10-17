@@ -238,6 +238,8 @@ public:
     // being the name; windows of one id share it. Before show().
     void setRestoresSize(std::string windowId);
     const WindowStates& states() const { return m_states; }
+    // The user is dragging an edge of the window.
+    bool isInteractivelyResized() const { return m_interactiveResize; }
 
     double scale() const { return m_scale; }
     bool hasKeyboardFocus() const { return m_keyboardFocus; }
@@ -286,6 +288,8 @@ public:
 
     // After the compositor changed the states.
     std::function<void()> onStatesChanged;
+    // When a drag of the window's edge starts and when it ends.
+    std::function<void()> onInteractiveResizeChanged;
     // After isActive() changed, once the compositor's focus settled.
     std::function<void()> onActiveChanged;
     // Every press in the window, in its logical coordinates, before a view

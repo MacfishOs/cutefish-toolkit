@@ -60,13 +60,13 @@ void Window::handleConfigureBounds(int width, int height)
 
 void Window::handleInteractiveResize(bool active)
 {
-    if (active) {
-        m_interactiveResize = true;
+    const bool changed = active != m_interactiveResize;
+    m_interactiveResize = active;
+    if (active)
         m_resized = false;
-        return;
-    }
-    m_interactiveResize = false;
-    if (!m_resized || m_restoreId.empty())
+    if (changed && onInteractiveResizeChanged)
+        onInteractiveResizeChanged();
+    if (active || !m_resized || m_restoreId.empty())
         return;
 
     base::EventLoop& loop = Application::instance()->loop();
