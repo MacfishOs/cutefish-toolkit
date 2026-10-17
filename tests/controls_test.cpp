@@ -129,6 +129,33 @@ TEST(ControlsTest, SliderSnapsToSteps)
     EXPECT_EQ(control->value(), 10);
 }
 
+// A new range moves the handle of an unchanged value on screen.
+TEST(ControlsTest, SliderRepaintsForANewRange)
+{
+    Window window;
+    auto slider = std::make_unique<Slider>();
+    slider->setValue(0.5);
+    slider->setLayoutHints({.preferredWidth = 222});
+    Slider* control = host(window, std::move(slider));
+    uint64_t now = 1000000000;
+    for (int i = 0; i < 4; ++i)
+        TestInput::presentFrame(window, now += 16666667);
+    control->setRange(0, 100);
+    EXPECT_EQ(control->value(), 0.5);
+    Image shown;
+    for (int i = 0; i < 4; ++i)
+        shown = TestInput::presentFrame(window, now += 16666667);
+    const Image painted = window.grab();
+    ASSERT_EQ(shown.width(), painted.width());
+    ASSERT_EQ(shown.height(), painted.height());
+    int different = 0;
+    for (int y = 0; y < painted.height(); ++y) {
+        for (int x = 0; x < painted.width(); ++x)
+            different += shown.pixel(x, y).argb() != painted.pixel(x, y).argb();
+    }
+    EXPECT_EQ(different, 0);
+}
+
 TEST(ControlsTest, SliderSnapModes)
 {
     Window window;

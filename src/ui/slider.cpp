@@ -31,6 +31,8 @@ void Slider::setRange(double from, double to)
     m_from = from;
     m_to = to;
     setValue(m_value);
+    // The handle moves for the same value in another range.
+    requestPaint();
 }
 
 void Slider::setStepSize(double step)
