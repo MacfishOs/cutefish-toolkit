@@ -174,6 +174,38 @@ TEST(WindowTabBarTest, RenamesInPlace)
     EXPECT_EQ(renamed, "logs");
 }
 
+// A tab closing before the one being renamed or dragged, as a terminal tab
+// whose shell exits, leaves the rename and the drag with their own tab.
+TEST(WindowTabBarTest, RenameAndDragFollowTheirTabWhenOthersGo)
+{
+    Hosted hosted(660, 3);
+    int closed = -1;
+    hosted.bar->onCloseRequested = [&](int index) { closed = index; };
+    TestInput::setKeyboardFocus(hosted.window, true);
+    hosted.bar->startRename(1);
+    hosted.frames(1);
+    hosted.bar->removeTab(0);
+    hosted.frames(20);
+    // The other tab, made current, shows its close button.
+    TestInput::click(hosted.window, {330, 15});
+    EXPECT_EQ(hosted.bar->currentIndex(), 1);
+    hosted.frames(1);
+    TestInput::movePointer(hosted.window, {440 - 16, 15});
+    TestInput::click(hosted.window, {440 - 16, 15});
+    EXPECT_EQ(closed, 1);
+
+    Hosted dragged(660, 3);
+    std::pair<int, int> moved = {-1, -1};
+    dragged.bar->onMoveRequested = [&](int from, int to) { moved = {from, to}; };
+    TestInput::press(dragged.window, {550, 15});
+    TestInput::movePointer(dragged.window, {530, 15});
+    TestInput::movePointer(dragged.window, {520, 15});
+    dragged.bar->removeTab(0);
+    TestInput::release(dragged.window, {520, 15});
+    EXPECT_EQ(moved.first, 1);
+    EXPECT_EQ(dragged.bar->currentIndex(), 1);
+}
+
 TEST(WindowTabBarTest, CrowdedStripScrolls)
 {
     Hosted hosted(300, 5);

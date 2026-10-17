@@ -626,6 +626,13 @@ void WindowTabBar::insertTab(int index, std::string title)
         ++m_current;
     if (m_leaving >= index)
         ++m_leaving;
+    // A rename or a drag stays with its tab.
+    if (m_editing >= index)
+        ++m_editing;
+    if (m_dragIndex >= index) {
+        ++m_dragIndex;
+        m_dropIndex = std::clamp(m_dropIndex + 1, 0, count() - 1);
+    }
     raw->slot = slotFor(index);
     raw->lastSlot = raw->slot;
     // A tab dropped in from another window glides from where it was drawn.
@@ -650,9 +657,16 @@ void WindowTabBar::removeTab(int index)
         --m_leaving;
     if (m_editing == index)
         m_editing = -1;
+    else if (m_editing > index)
+        --m_editing;
     if (m_dragIndex == index) {
         m_dragIndex = -1;
         m_dropIndex = -1;
+    } else if (m_dragIndex > index) {
+        --m_dragIndex;
+        m_dropIndex = std::clamp(m_dropIndex - 1, 0, count() - 1);
+    } else if (m_dragIndex >= 0) {
+        m_dropIndex = std::clamp(m_dropIndex, 0, count() - 1);
     }
     if (m_current > index || (m_current == index && m_current >= count()))
         m_current = std::max(0, m_current - 1);
