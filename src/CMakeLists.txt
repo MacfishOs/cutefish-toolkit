@@ -143,6 +143,7 @@ add_library(cutefish-toolkit SHARED
     ui/check_box.cpp
     ui/clipboard.cpp
     ui/color_mixer.cpp
+    ui/color_profile.cpp
     ui/color_provider.cpp
     ui/combo_box.cpp
     ui/dialog_window.cpp

@@ -38,6 +38,7 @@ add_executable(cutefish-toolkit-tests
     bitmap_test.cpp
     bubble_shape_test.cpp
     clipboard_test.cpp
+    color_profile_test.cpp
     color_test.cpp
     controls_test.cpp
     drop_down_popup_test.cpp
@@ -74,7 +75,7 @@ add_executable(cutefish-toolkit-tests
 )
 
 # The image tests write their files with the codecs' own encoders.
-pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libwebp libtiff-4 libjxl)
+pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libpng libwebp libtiff-4 libjxl libheif)
 target_link_libraries(cutefish-toolkit-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::ImageTestEncoders)
 target_compile_definitions(cutefish-toolkit-tests
     PRIVATE CUTEFISH_TOOLKIT_PROTOCOL_DIR="${PROJECT_SOURCE_DIR}/protocols"

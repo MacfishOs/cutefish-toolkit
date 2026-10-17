@@ -17,6 +17,7 @@
 
 #include "base/file.h"
 #include "base/thread_pool.h"
+#include "ui/color_profile.h"
 #include "ui/frame_client.h"
 #include "ui/gif_decoder.h"
 #include "ui/image_decoder.h"
@@ -40,13 +41,16 @@ struct Frames
 
 } // namespace
 
-static sk_sp<SkImage> imageFrom(const uint32_t* pixels, int width, int height)
+static sk_sp<SkImage> imageFrom(const uint32_t* pixels, int width, int height,
+                                const SourceProfile* profile = nullptr)
 {
     const SkImageInfo info = SkImageInfo::MakeN32Premul(width, height);
     SkBitmap bitmap;
     if (!bitmap.tryAllocPixels(info))
         return nullptr;
     bitmap.writePixels(SkPixmap(info, pixels, size_t(width) * 4));
+    if (profile)
+        profile->toSrgb(static_cast<uint8_t*>(bitmap.getPixels()), width, height, bitmap.rowBytes(), true, true);
     bitmap.setImmutable();
     return bitmap.asImage();
 }
@@ -89,6 +93,8 @@ static Frames decodeWebpFrames(const std::string& data)
     WebPAnimDecoder* decoder = WebPAnimDecoderNew(&webp, &options);
     if (!decoder)
         return frames;
+    // The decoder composes each frame onto the last, so its canvas stays as decoded.
+    const std::unique_ptr<SourceProfile> profile = SourceProfile::fromWebp(data);
     WebPAnimInfo info;
     if (WebPAnimDecoderGetInfo(decoder, &info)) {
         frames.width = int(info.canvas_width);
@@ -104,7 +110,8 @@ static Frames decodeWebpFrames(const std::string& data)
                 break;
             if (!frames.images.empty() && (frames.images.size() + 1) * frameBytes > kFrameBudget)
                 break;
-            sk_sp<SkImage> image = imageFrom(reinterpret_cast<const uint32_t*>(pixels), frames.width, frames.height);
+            sk_sp<SkImage> image = imageFrom(reinterpret_cast<const uint32_t*>(pixels), frames.width, frames.height,
+                                             profile.get());
             if (!image)
                 break;
             frames.images.push_back(std::move(image));

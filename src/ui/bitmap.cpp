@@ -12,6 +12,7 @@
 #include "include/codec/SkPngDecoder.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPixmap.h"
@@ -140,8 +141,9 @@ Bitmap Bitmap::decode(std::string_view bytes)
     Bitmap bitmap(size.width(), size.height(), Format::Argb32Premultiplied);
     if (bitmap.isNull())
         return {};
+    // Converted from the file's colour profile, as decodeImage() does.
     const SkImageInfo info = SkImageInfo::Make(size.width(), size.height(), kBGRA_8888_SkColorType,
-                                               kPremul_SkAlphaType);
+                                               kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
     const SkCodec::Result result = codec->getPixels(info, bitmap.bits(), bitmap.stride());
     if (result != SkCodec::kSuccess && result != SkCodec::kIncompleteInput)
         return {};

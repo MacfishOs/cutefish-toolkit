@@ -108,6 +108,25 @@ JxlDecoderStatus JxlDecoderSetImageOutBuffer(JxlDecoder* dec, const JxlPixelForm
     return real ? real(dec, format, buffer, size) : JXL_DEC_ERROR;
 }
 
+JxlDecoderStatus JxlDecoderSetPreferredColorProfile(JxlDecoder* dec, const JxlColorEncoding* color_encoding)
+{
+    JXL_FUNCTION(decoderLibrary, JxlDecoderSetPreferredColorProfile);
+    return real ? real(dec, color_encoding) : JXL_DEC_ERROR;
+}
+
+JxlDecoderStatus JxlDecoderGetICCProfileSize(const JxlDecoder* dec, JxlColorProfileTarget target, size_t* size)
+{
+    JXL_FUNCTION(decoderLibrary, JxlDecoderGetICCProfileSize);
+    return real ? real(dec, target, size) : JXL_DEC_ERROR;
+}
+
+JxlDecoderStatus JxlDecoderGetColorAsICCProfile(const JxlDecoder* dec, JxlColorProfileTarget target,
+                                                uint8_t* icc_profile, size_t size)
+{
+    JXL_FUNCTION(decoderLibrary, JxlDecoderGetColorAsICCProfile);
+    return real ? real(dec, target, icc_profile, size) : JXL_DEC_ERROR;
+}
+
 void* JxlResizableParallelRunnerCreate(const JxlMemoryManager* memory_manager)
 {
     JXL_FUNCTION(threadsLibrary, JxlResizableParallelRunnerCreate);

@@ -24,6 +24,7 @@
 #include "include/codec/SkWbmpDecoder.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPixmap.h"
@@ -34,6 +35,7 @@
 #include "modules/svg/include/SkSVGSVG.h"
 
 #include "base/file.h"
+#include "ui/color_profile.h"
 #include "ui/icon_loader.h"
 #include "ui/image_formats.h"
 
@@ -129,7 +131,11 @@ static Source decodeWithSkia(sk_sp<SkData> data, int boxWidth, int boxHeight)
     SkBitmap bitmap;
     if (!bitmap.tryAllocPixels(info))
         return {};
-    const SkCodec::Result result = codec->getPixels(info, bitmap.getPixels(), bitmap.rowBytes());
+    // An sRGB destination makes the codec convert from the file's profile
+    // unless that is sRGB or missing; the pixels stay untagged, as
+    // everything drawn is.
+    const SkCodec::Result result = codec->getPixels(info.makeColorSpace(SkColorSpace::MakeSRGB()), bitmap.getPixels(),
+                                                    bitmap.rowBytes());
     if (result != SkCodec::kSuccess && result != SkCodec::kIncompleteInput && result != SkCodec::kErrorInInput)
         return {};
     bitmap.setImmutable();
@@ -150,6 +156,8 @@ static Source decodeWebp(const std::string& data)
     std::vector<uint8_t> pixels(size_t(width) * size_t(height) * 4);
     if (!WebPDecodeRGBAInto(bytes, data.size(), pixels.data(), pixels.size(), width * 4))
         return {};
+    if (const std::unique_ptr<SourceProfile> profile = SourceProfile::fromWebp(data))
+        profile->toSrgb(pixels.data(), width, height, size_t(width) * 4, false, false);
     Source source;
     source.width = width;
     source.height = height;
@@ -186,6 +194,13 @@ static Source decodeTiff(const std::string& path)
     source.width = int(width);
     source.height = int(height);
     const bool associated = alpha && extraTypes && extraTypes[0] == EXTRASAMPLE_ASSOCALPHA;
+    uint32_t iccSize = 0;
+    void* icc = nullptr;
+    if (TIFFGetField(tiff.get(), TIFFTAG_ICCPROFILE, &iccSize, &icc)) {
+        if (const std::unique_ptr<SourceProfile> profile = SourceProfile::fromIcc(icc, iccSize))
+            profile->toSrgb(reinterpret_cast<uint8_t*>(raster.data()), int(width), int(height), size_t(width) * 4,
+                            false, associated);
+    }
     SkBitmap bitmap;
     if (!bitmap.tryAllocPixels(SkImageInfo::MakeN32(int(width), int(height),
                                                     alpha ? kPremul_SkAlphaType : kOpaque_SkAlphaType)))
@@ -198,6 +213,30 @@ static Source decodeTiff(const std::string& path)
     bitmap.setImmutable();
     source.image = bitmap.asImage();
     return source;
+}
+
+static std::unique_ptr<SourceProfile> heifProfile(const heif_image_handle* handle)
+{
+    const heif_color_profile_type type = heif_image_handle_get_color_profile_type(handle);
+    if (type == heif_color_profile_type_prof || type == heif_color_profile_type_rICC) {
+        std::vector<uint8_t> icc(heif_image_handle_get_raw_color_profile_size(handle));
+        if (icc.empty() || heif_image_handle_get_raw_color_profile(handle, icc.data()).code != heif_error_Ok)
+            return nullptr;
+        return SourceProfile::fromIcc(icc.data(), icc.size());
+    }
+    heif_color_profile_nclx* rawNclx = nullptr;
+    if (heif_image_handle_get_nclx_color_profile(handle, &rawNclx).code != heif_error_Ok || !rawNclx)
+        return nullptr;
+    std::unique_ptr<heif_color_profile_nclx, decltype(&heif_nclx_color_profile_free)> nclx(
+            rawNclx, heif_nclx_color_profile_free);
+    if (nclx->color_primaries == heif_color_primaries_ITU_R_BT_709_5
+        || nclx->color_primaries == heif_color_primaries_unspecified)
+        return nullptr;
+    const float primaries[8] = {nclx->color_primary_red_x,   nclx->color_primary_red_y,
+                                nclx->color_primary_green_x, nclx->color_primary_green_y,
+                                nclx->color_primary_blue_x,  nclx->color_primary_blue_y,
+                                nclx->color_primary_white_x, nclx->color_primary_white_y};
+    return SourceProfile::fromCicp(nclx->transfer_characteristics, primaries);
 }
 
 static Source decodeHeif(const std::string& data)
@@ -227,13 +266,16 @@ static Source decodeHeif(const std::string& data)
     const int width = heif_image_get_width(image.get(), heif_channel_interleaved);
     const int height = heif_image_get_height(image.get(), heif_channel_interleaved);
     int stride = 0;
-    const uint8_t* pixels = heif_image_get_plane_readonly(image.get(), heif_channel_interleaved, &stride);
+    uint8_t* pixels = heif_image_get_plane(image.get(), heif_channel_interleaved, &stride);
     if (!pixels || width <= 0 || height <= 0)
         return {};
+    const std::unique_ptr<SourceProfile> profile = heifProfile(handle.get());
     Source source;
     source.width = width;
     source.height = height;
     if (alpha) {
+        if (profile)
+            profile->toSrgb(pixels, width, height, size_t(stride), false, false);
         source.image = imageFromRgba(pixels, width, height, size_t(stride), true);
     } else {
         std::vector<uint8_t> rgba(size_t(width) * size_t(height) * 4);
@@ -247,6 +289,8 @@ static Source decodeHeif(const std::string& data)
                 out[3] = 255;
             }
         }
+        if (profile)
+            profile->toSrgb(rgba.data(), width, height, size_t(width) * 4, false, false);
         source.image = imageFromRgba(rgba.data(), width, height, size_t(width) * 4, false);
     }
     return source;
@@ -258,7 +302,8 @@ static Source decodeJxl(const std::string& data)
     std::unique_ptr<void, decltype(&JxlResizableParallelRunnerDestroy)> runner(
             JxlResizableParallelRunnerCreate(nullptr), JxlResizableParallelRunnerDestroy);
     if (!decoder || !runner
-        || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS
+        || JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE)
+                   != JXL_DEC_SUCCESS
         || JxlDecoderSetParallelRunner(decoder.get(), JxlResizableParallelRunner, runner.get()) != JXL_DEC_SUCCESS
         || JxlDecoderSetUnpremultiplyAlpha(decoder.get(), JXL_TRUE) != JXL_DEC_SUCCESS)
         return {};
@@ -269,6 +314,7 @@ static Source decodeJxl(const std::string& data)
     int width = 0;
     int height = 0;
     bool alpha = false;
+    std::unique_ptr<SourceProfile> profile;
     while (true) {
         const JxlDecoderStatus status = JxlDecoderProcessInput(decoder.get());
         if (status == JXL_DEC_BASIC_INFO) {
@@ -284,6 +330,25 @@ static Source decodeJxl(const std::string& data)
                 return {};
             JxlResizableParallelRunnerSetThreads(runner.get(),
                                                  JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
+        } else if (status == JXL_DEC_COLOR_ENCODING) {
+            // Taken only by images in the codec's own colour space; others come
+            // in their file's colours, which the target profile then names.
+            JxlColorEncoding srgb = {};
+            srgb.color_space = JXL_COLOR_SPACE_RGB;
+            srgb.white_point = JXL_WHITE_POINT_D65;
+            srgb.primaries = JXL_PRIMARIES_SRGB;
+            srgb.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+            srgb.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+            JxlDecoderSetPreferredColorProfile(decoder.get(), &srgb);
+            size_t iccSize = 0;
+            if (JxlDecoderGetICCProfileSize(decoder.get(), JXL_COLOR_PROFILE_TARGET_DATA, &iccSize)
+                == JXL_DEC_SUCCESS) {
+                std::vector<uint8_t> icc(iccSize);
+                if (JxlDecoderGetColorAsICCProfile(decoder.get(), JXL_COLOR_PROFILE_TARGET_DATA, icc.data(),
+                                                   icc.size())
+                    == JXL_DEC_SUCCESS)
+                    profile = SourceProfile::fromIcc(icc.data(), icc.size());
+            }
         } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t needed = 0;
             if (JxlDecoderImageOutBufferSize(decoder.get(), &format, &needed) != JXL_DEC_SUCCESS
@@ -301,6 +366,8 @@ static Source decodeJxl(const std::string& data)
     }
     if (pixels.empty())
         return {};
+    if (profile)
+        profile->toSrgb(pixels.data(), width, height, size_t(width) * 4, false, false);
     Source source;
     source.width = width;
     source.height = height;
