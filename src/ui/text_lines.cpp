@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <list>
 #include <optional>
@@ -206,7 +207,8 @@ struct Cluster
 {
     size_t start = 0;
     double advance = 0;
-    SkFont font;
+    // Its run's, in the glyph lines the clusters were made from.
+    const SkFont* font = nullptr;
     SkGlyphID lastGlyph = 0;
     double lastAdvance = 0;
     bool hasGlyph = false;
@@ -230,10 +232,10 @@ static bool isSeparator(const std::string& text, size_t offset)
                 || static_cast<unsigned char>(text[offset + 2]) == 0xA9);
 }
 
-static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const std::string& text, const AdvanceRule& round)
+static std::vector<Cluster> clustersOf(const std::vector<GlyphLine>& lines, const std::string& text)
 {
     std::vector<Cluster> clusters;
-    for (const GlyphLine& line : glyphLines(paragraph, round)) {
+    for (const GlyphLine& line : lines) {
         for (size_t r = 0; r < line.runs.size(); ++r) {
             const GlyphRun& run = line.runs[r];
             for (size_t i = 0; i < run.glyphs.size(); ++i) {
@@ -242,7 +244,7 @@ static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const s
                     clusters.push_back({run.clusters[i]});
                 Cluster& cluster = clusters.back();
                 cluster.advance += advance;
-                cluster.font = run.font;
+                cluster.font = &run.font;
                 cluster.lastGlyph = run.glyphs[i];
                 cluster.lastAdvance = advance;
                 cluster.hasGlyph = true;
@@ -250,12 +252,20 @@ static std::vector<Cluster> clustersOf(textlayout::Paragraph* paragraph, const s
         }
     }
     // Separators end lines whether or not they have glyphs of their own.
+    std::vector<Cluster> separators;
     for (size_t i = 0; i < text.size(); ++i) {
         if (isSeparator(text, i))
-            clusters.push_back({i});
+            separators.push_back({i});
     }
-    std::stable_sort(clusters.begin(), clusters.end(),
-                     [](const Cluster& a, const Cluster& b) { return a.start < b.start; });
+    const auto byStart = [](const Cluster& a, const Cluster& b) { return a.start < b.start; };
+    // Left-to-right text comes in order already; ties keep glyphs first.
+    if (!std::is_sorted(clusters.begin(), clusters.end(), byStart))
+        std::stable_sort(clusters.begin(), clusters.end(), byStart);
+    std::vector<Cluster> ordered;
+    ordered.reserve(clusters.size() + separators.size());
+    std::merge(clusters.begin(), clusters.end(), separators.begin(), separators.end(), std::back_inserter(ordered),
+               byStart);
+    clusters = std::move(ordered);
     std::vector<Cluster> merged;
     for (Cluster& cluster : clusters) {
         if (!merged.empty() && merged.back().start == cluster.start) {
@@ -317,7 +327,7 @@ static std::pair<size_t, double> layoutLine(const std::vector<Cluster>& clusters
         if (index < 0 || !clusters[size_t(index)].hasGlyph)
             return 0.0;
         const Cluster& cluster = clusters[size_t(index)];
-        return std::min(ui::rightBearing(cluster.font, cluster.lastGlyph, cluster.lastAdvance), 0.0);
+        return std::min(ui::rightBearing(*cluster.font, cluster.lastGlyph, cluster.lastAdvance), 0.0);
     };
     const auto negativeBearing = [&rightBearing] {
         return rightBearing == kBearingNotCalculated ? 0.0 : -rightBearing;
@@ -405,7 +415,8 @@ std::vector<size_t> lineStarts(textlayout::Paragraph* unbounded, const std::stri
                                  const AdvanceRule& roundAdvances)
 {
     std::vector<size_t> starts = {0};
-    const std::vector<Cluster> clusters = clustersOf(unbounded, text, roundAdvances);
+    const std::vector<GlyphLine> glyphs = glyphLines(unbounded, roundAdvances);
+    const std::vector<Cluster> clusters = clustersOf(glyphs, text);
     const bool manualWrap = wrap == LineWrap::None;
     size_t from = 0;
     while (from < clusters.size()) {
