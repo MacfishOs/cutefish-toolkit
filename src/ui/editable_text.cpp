@@ -43,6 +43,17 @@ static int32_t codePointAt(const std::string& text, size_t position)
     return value;
 }
 
+static size_t utf16Length(std::string_view text)
+{
+    size_t units = 0;
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        if ((byte & 0xc0) != 0x80)
+            units += byte >= 0xf0 ? 2 : 1;
+    }
+    return units;
+}
+
 EditableText::EditableText()
 {
     updateBoundaries();
@@ -84,9 +95,9 @@ void EditableText::selectAll()
     select(0, m_text.size());
 }
 
-void EditableText::insert(std::string_view text, bool typing)
+void EditableText::insert(std::string_view text, bool typing, size_t maximumLength)
 {
-    replace(selectionStart(), selectionEnd(), text, typing ? Edit::Typing : Edit::Other);
+    replace(selectionStart(), selectionEnd(), text, typing ? Edit::Typing : Edit::Other, maximumLength);
 }
 
 void EditableText::erase(size_t start, size_t end)
@@ -191,12 +202,46 @@ bool EditableText::isSpaceAt(size_t position) const
     return character >= 0 && Application::instance()->text().unicode()->isWhitespace(character);
 }
 
-void EditableText::replace(size_t start, size_t end, std::string_view text, Edit edit)
+void EditableText::replace(size_t start, size_t end, std::string_view text, Edit edit, size_t maximumLength)
 {
+    if (maximumLength)
+        text = text.substr(0, fittingLength(text, start, end, maximumLength));
+    if (start == end && text.empty())
+        return;
     m_text.replace(start, end - start, text);
     m_cursor = m_anchor = start + text.size();
     updateBoundaries();
     record(edit);
+}
+
+size_t EditableText::fittingLength(std::string_view text, size_t start, size_t end, size_t maximumLength) const
+{
+    const size_t kept = utf16Length(m_text) - utf16Length(std::string_view(m_text).substr(start, end - start));
+    const size_t room = kept < maximumLength ? maximumLength - kept : 0;
+    size_t units = 0;
+    size_t fits = 0;
+    while (fits < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[fits]);
+        const size_t length = lead >= 0xf0 ? 2 : 1;
+        if (units + length > room)
+            break;
+        units += length;
+        ++fits;
+        while (fits < text.size() && (static_cast<unsigned char>(text[fits]) & 0xc0) == 0x80)
+            ++fits;
+    }
+    if (fits == text.size() || fits == 0)
+        return fits;
+
+    // Back to the start of the grapheme the cut went through.
+    std::string copy(text);
+    skia_private::TArray<SkUnicode::CodeUnitFlags, true> flags;
+    if (!Application::instance()->text().unicode()->computeCodeUnitFlags(copy.data(), int(copy.size()), false,
+                                                                       &flags))
+        return fits;
+    while (fits > 0 && !(flags[int(fits)] & SkUnicode::kGraphemeStart))
+        --fits;
+    return fits;
 }
 
 void EditableText::updateBoundaries()

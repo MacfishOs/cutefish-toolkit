@@ -36,7 +36,9 @@ public:
     void selectAll();
 
     // Replaces the selection, which may be empty. Typing in a row undoes as one.
-    void insert(std::string_view text, bool typing = false);
+    // With a maximum length in UTF-16 units, the inserted text is cut back
+    // by graphemes to fit; nothing replacing nothing records nothing.
+    void insert(std::string_view text, bool typing = false, size_t maximumLength = 0);
     void erase(size_t start, size_t end);
     // Delete the selection, or the grapheme or word next to the cursor.
     void deleteBackward(bool word);
@@ -71,7 +73,10 @@ private:
         Other,
     };
 
-    void replace(size_t start, size_t end, std::string_view text, Edit edit);
+    void replace(size_t start, size_t end, std::string_view text, Edit edit, size_t maximumLength = 0);
+    // How much of the text, cut on a grapheme boundary, replaces the range
+    // without the whole going over the maximum length.
+    size_t fittingLength(std::string_view text, size_t start, size_t end, size_t maximumLength) const;
     void updateBoundaries();
     bool isSpaceAt(size_t position) const;
     void record(Edit edit);

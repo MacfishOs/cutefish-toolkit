@@ -80,10 +80,9 @@ struct TextField::Private
     EchoMode echo = EchoMode::Normal;
     bool readOnly = false;
     size_t maximumLength = 0;
-    // The text as the last edit or move left it, for a refused edit to return to.
-    std::string savedText;
-    size_t savedAnchor = 0;
-    size_t savedCursor = 0;
+    // With a validator, the editor as the last edit or move left it, with
+    // its history, for a refused edit to return to.
+    EditableText savedEdit;
     std::function<bool(const std::string&)> validator;
     double fontSize = 0;
     int weight = 400;
@@ -316,9 +315,6 @@ TextField::TextField(std::string text)
 {
     d->self = std::make_shared<TextField*>(this);
     d->edit.setText(std::move(text));
-    d->savedText = d->edit.text();
-    d->savedAnchor = d->edit.anchor();
-    d->savedCursor = d->edit.cursor();
 }
 
 TextField::~TextField()
@@ -352,6 +348,8 @@ void TextField::setMaximumLength(size_t length)
 void TextField::setValidator(std::function<bool(const std::string& text)> validator)
 {
     d->validator = std::move(validator);
+    if (d->validator)
+        d->savedEdit = d->edit;
 }
 
 void TextField::setFontSize(double size)
@@ -581,7 +579,7 @@ void TextField::paste()
         // One line: line breaks become spaces.
         std::replace(text.begin(), text.end(), '\n', ' ');
         std::erase(text, '\r');
-        (*field)->d->edit.insert(text);
+        (*field)->d->edit.insert(text, false, (*field)->d->maximumLength);
         (*field)->edited();
     });
 }
@@ -803,7 +801,7 @@ void TextField::pointerRelease(const PointerEvent& event)
             std::replace(text.begin(), text.end(), '\n', ' ');
             std::erase(text, '\r');
             (*field)->d->edit.setCursor((*field)->d->edit.cursor());
-            (*field)->d->edit.insert(text);
+            (*field)->d->edit.insert(text, false, (*field)->d->maximumLength);
             (*field)->edited();
         }, ClipboardMode::Selection);
     }
@@ -925,7 +923,7 @@ bool TextField::keyPress(const KeyEvent& event)
 
     if (!event.text.empty() && !command) {
         if (!d->readOnly) {
-            edit.insert(event.text, true);
+            edit.insert(event.text, true, d->maximumLength);
             edited();
         }
         return true;
@@ -982,7 +980,7 @@ void TextField::textInput(const TextInputEvent& event)
         edit.erase(start, cursor + event.deleteAfter);
     }
     if (!event.commit.empty())
-        edit.insert(event.commit, true);
+        edit.insert(event.commit, true, d->maximumLength);
     d->preedit = event.preedit;
     d->preeditCursor = event.preeditCursorBegin;
     edited();
@@ -1020,28 +1018,10 @@ void TextField::showContextMenu(PointF position)
     menu.popup(window(), mapToWindow(position));
 }
 
-static size_t utf16Length(const std::string& text)
-{
-    size_t units = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        if ((c & 0xC0) != 0x80)
-            units += c >= 0xF0 ? 2 : 1;
-    }
-    return units;
-}
-
 bool TextField::edited()
 {
-    EditableText& edit = d->edit;
-    // The maximum length: what was inserted is cut back to fit.
-    while (d->maximumLength && utf16Length(edit.text()) > d->maximumLength && edit.cursor() > 0) {
-        const size_t cursor = edit.cursor();
-        edit.erase(edit.previousGrapheme(cursor), cursor);
-    }
-    if (d->validator && !d->validator(edit.text())) {
-        edit.setText(d->savedText);
-        edit.select(d->savedAnchor, d->savedCursor);
+    if (d->validator && !d->validator(d->edit.text())) {
+        d->edit = d->savedEdit;
         moved();
         return false;
     }
@@ -1056,9 +1036,8 @@ bool TextField::edited()
 
 void TextField::moved()
 {
-    d->savedText = d->edit.text();
-    d->savedAnchor = d->edit.anchor();
-    d->savedCursor = d->edit.cursor();
+    if (d->validator)
+        d->savedEdit = d->edit;
     d->dirty = true;
     d->caretVisible = true;
     auto& loop = Application::instance()->loop();

@@ -250,6 +250,44 @@ TEST(TextFieldTest, ReturnSurvivesTheFieldClosingOnAccept)
     EXPECT_FALSE(finishedAfterwards);
 }
 
+// What the maximum length cuts off and what the validator refuses leave
+// the edits before them to undo.
+TEST(TextFieldTest, UndoesPastLengthCutsAndRefusedEdits)
+{
+    Fixture f;
+    f.field->setMaximumLength(3);
+    TestInput::typeText(f.window, "abcd");
+    EXPECT_EQ(f.field->text(), "abc");
+    f.key(key::letter('z'), ControlModifier);
+    EXPECT_EQ(f.field->text(), "");
+    f.key(key::letter('z'), ControlModifier | ShiftModifier);
+    EXPECT_EQ(f.field->text(), "abc");
+
+    // An emoji is two units and goes in whole or not at all; a joined
+    // family is cut back to no part of it.
+    f.field->setText("ab");
+    Clipboard::setText("\U0001F600");
+    f.key(key::letter('v'), ControlModifier);
+    EXPECT_EQ(f.field->text(), "ab");
+    f.field->setText("a");
+    f.key(key::letter('v'), ControlModifier);
+    EXPECT_EQ(f.field->text(), "a\U0001F600");
+    f.field->setText("");
+    Clipboard::setText(kFamily);
+    f.key(key::letter('v'), ControlModifier);
+    EXPECT_EQ(f.field->text(), "");
+
+    f.field->setMaximumLength(0);
+    f.field->setValidator([](const std::string& text) {
+        return text.find_first_not_of("0123456789") == std::string::npos;
+    });
+    TestInput::typeText(f.window, "12");
+    TestInput::typeText(f.window, "a");
+    EXPECT_EQ(f.field->text(), "12");
+    f.key(key::letter('z'), ControlModifier);
+    EXPECT_EQ(f.field->text(), "");
+}
+
 // The clear button shows with text, clears it on a click, and the text
 // margins follow it: the glyph, the gap and the inset.
 TEST(TextFieldTest, SearchFieldClears)
