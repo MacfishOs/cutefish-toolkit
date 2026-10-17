@@ -444,6 +444,11 @@ sk_sp<SkImage> IconLoader::cached(const std::string& key)
 
 void IconLoader::store(const std::string& key, sk_sp<SkImage> image)
 {
+    if (const auto it = m_index.find(key); it != m_index.end()) {
+        it->second->second = std::move(image);
+        m_images.splice(m_images.end(), m_images, it->second);
+        return;
+    }
     m_images.emplace_back(key, std::move(image));
     m_index[key] = std::prev(m_images.end());
     while (m_images.size() > kCacheLimit) {
