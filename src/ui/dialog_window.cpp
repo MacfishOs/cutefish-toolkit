@@ -358,6 +358,7 @@ public:
 
     SizeF sizeHint() const override { return m_content->sizeHint(); }
     double heightForWidth(double width) const override { return m_content->heightForWidth(width); }
+    bool acceptsPointer() const override { return true; }
 
 protected:
     void layout() override
@@ -365,6 +366,13 @@ protected:
         const RectF bounds = localRect();
         m_content->setGeometry(bounds);
         m_close->setGeometry({bounds.width - kButtonMargin - kButton, kButtonMargin, kButton, kButton});
+    }
+
+    // The empty parts of the window move it.
+    void pointerPress(const PointerEvent& event) override
+    {
+        if (event.button == MouseButton::Left && window())
+            window()->startMove();
     }
 
 private:
