@@ -50,6 +50,7 @@ add_executable(cutefish-toolkit-tests
     image_view_test.cpp
     input_test.cpp
     label_test.cpp
+    layout_cost_test.cpp
     layout_test.cpp
     line_breaks_test.cpp
     menu_test.cpp
