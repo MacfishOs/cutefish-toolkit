@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +21,8 @@ public:
     EditableText();
 
     const std::string& text() const { return m_text; }
+    // Counts the changes of the text.
+    uint64_t revision() const { return m_revision; }
     // Clears the selection and the undo history.
     void setText(std::string text);
 
@@ -82,6 +85,7 @@ private:
     void record(Edit edit);
 
     std::string m_text;
+    uint64_t m_revision = 0;
     size_t m_cursor = 0;
     size_t m_anchor = 0;
     // One flag per byte and one past the end.

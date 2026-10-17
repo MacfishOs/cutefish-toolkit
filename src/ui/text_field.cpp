@@ -80,6 +80,8 @@ struct TextField::Private
     EchoMode echo = EchoMode::Normal;
     bool readOnly = false;
     size_t maximumLength = 0;
+    // The text revision as the last edit or move left it, to tell a change.
+    uint64_t savedRevision = 0;
     // With a validator, the editor as the last edit or move left it, with
     // its history, for a refused edit to return to.
     EditableText savedEdit;
@@ -315,6 +317,7 @@ TextField::TextField(std::string text)
 {
     d->self = std::make_shared<TextField*>(this);
     d->edit.setText(std::move(text));
+    d->savedRevision = d->edit.revision();
 }
 
 TextField::~TextField()
@@ -1020,12 +1023,16 @@ void TextField::showContextMenu(PointF position)
 
 bool TextField::edited()
 {
-    if (d->validator && !d->validator(d->edit.text())) {
+    const bool changed = d->edit.revision() != d->savedRevision;
+    if (changed && d->validator && !d->validator(d->edit.text())) {
         d->edit = d->savedEdit;
         moved();
         return false;
     }
     moved();
+    // A key that deletes nothing, or the input method's composing alone.
+    if (!changed)
+        return true;
     textChanged();
     if (onTextChanged)
         onTextChanged();
@@ -1036,6 +1043,7 @@ bool TextField::edited()
 
 void TextField::moved()
 {
+    d->savedRevision = d->edit.revision();
     if (d->validator)
         d->savedEdit = d->edit;
     d->dirty = true;

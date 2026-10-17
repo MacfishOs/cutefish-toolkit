@@ -42,6 +42,8 @@ static constexpr size_t kSurroundingLimit = 4000;
 struct TextArea::Private
 {
     EditableText edit;
+    // The text revision onTextChanged last told of.
+    uint64_t reportedRevision = 0;
     std::string placeholder;
     bool readOnly = false;
     WrapMode wrap = WrapMode::WordWrap;
@@ -264,6 +266,7 @@ TextArea::TextArea(std::string text)
 {
     d->self = std::make_shared<TextArea*>(this);
     d->edit.setText(std::move(text));
+    d->reportedRevision = d->edit.revision();
     d->placeholderLabel = addChild<Label>();
     d->placeholderLabel->setVisible(false);
 }
@@ -947,6 +950,10 @@ void TextArea::edited()
     d->goalX = -1;
     requestLayout();
     moved();
+    // A key that deletes nothing, or the input method's composing alone.
+    if (d->edit.revision() == d->reportedRevision)
+        return;
+    d->reportedRevision = d->edit.revision();
     if (onTextChanged)
         onTextChanged();
 }

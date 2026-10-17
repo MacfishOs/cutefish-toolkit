@@ -116,6 +116,21 @@ TEST(TextAreaTest, InputMethodsComposeInPlace)
     EXPECT_TRUE(hosted.area->preedit().empty());
 }
 
+// Keys that delete nothing and composing alone change no text, and say so.
+TEST(TextAreaTest, ReportsOnlyEditsThatChangeTheText)
+{
+    Hosted hosted;
+    int changes = 0;
+    hosted.area->onTextChanged = [&changes] { ++changes; };
+    TestInput::typeKey(hosted.window, key::BackSpace);
+    TestInput::typeKey(hosted.window, key::Delete);
+    TestInput::inputMethod(hosted.window, {.preedit = "xy", .preeditCursorBegin = 2});
+    EXPECT_EQ(changes, 0);
+    TestInput::inputMethod(hosted.window, {.commit = "XY"});
+    EXPECT_EQ(hosted.area->text(), "XY");
+    EXPECT_EQ(changes, 1);
+}
+
 TEST(TextAreaTest, MiddleClickPastesThePrimarySelectionWhereItLands)
 {
     Hosted hosted(1.0);

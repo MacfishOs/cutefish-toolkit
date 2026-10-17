@@ -288,6 +288,34 @@ TEST(TextFieldTest, UndoesPastLengthCutsAndRefusedEdits)
     EXPECT_EQ(f.field->text(), "");
 }
 
+// Keys that delete nothing and composing alone change no text, and say so.
+TEST(TextFieldTest, ReportsOnlyEditsThatChangeTheText)
+{
+    Fixture f("ab");
+    int changes = 0;
+    int edits = 0;
+    f.field->onTextChanged = [&changes] { ++changes; };
+    f.field->onTextEdited = [&edits] { ++edits; };
+    f.key(key::Home);
+    f.key(key::BackSpace);
+    f.key(key::BackSpace, ControlModifier);
+    f.key(key::End);
+    f.key(key::Delete);
+    TextInputEvent compose;
+    compose.preedit = "ni";
+    TestInput::inputMethod(f.window, compose);
+    EXPECT_EQ(f.field->preedit(), "ni");
+    EXPECT_EQ(changes, 0);
+    EXPECT_EQ(edits, 0);
+
+    TextInputEvent commit;
+    commit.commit = "x";
+    TestInput::inputMethod(f.window, commit);
+    EXPECT_EQ(f.field->text(), "abx");
+    EXPECT_EQ(changes, 1);
+    EXPECT_EQ(edits, 1);
+}
+
 // The clear button shows with text, clears it on a click, and the text
 // margins follow it: the glyph, the gap and the inset.
 TEST(TextFieldTest, SearchFieldClears)

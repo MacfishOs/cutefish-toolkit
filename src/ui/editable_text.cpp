@@ -63,6 +63,7 @@ EditableText::EditableText()
 void EditableText::setText(std::string text)
 {
     m_text = std::move(text);
+    ++m_revision;
     m_cursor = m_anchor = m_text.size();
     updateBoundaries();
     m_history.assign(1, {m_text, m_cursor, m_anchor});
@@ -209,6 +210,7 @@ void EditableText::replace(size_t start, size_t end, std::string_view text, Edit
     if (start == end && text.empty())
         return;
     m_text.replace(start, end - start, text);
+    ++m_revision;
     m_cursor = m_anchor = start + text.size();
     updateBoundaries();
     record(edit);
@@ -295,6 +297,7 @@ void EditableText::undo()
     // Before the edit undone; its cursor is where that edit left it.
     const State& state = m_history[--m_undoIndex];
     m_text = state.text;
+    ++m_revision;
     m_cursor = state.cursor;
     m_anchor = state.anchor;
     updateBoundaries();
@@ -307,6 +310,7 @@ void EditableText::redo()
         return;
     const State& state = m_history[++m_undoIndex];
     m_text = state.text;
+    ++m_revision;
     m_cursor = state.cursor;
     m_anchor = state.anchor;
     updateBoundaries();
