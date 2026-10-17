@@ -85,8 +85,9 @@ private:
 
     std::vector<Cell> cells() const;
     // Columns and rows for the size inside the padding; negative lengths
-    // measure preferred.
-    Geometry solve(const std::vector<Cell>& cells, double width, double height) const;
+    // measure preferred. Without `place`, only the extents and the column
+    // widths are filled in.
+    Geometry solve(const std::vector<Cell>& cells, double width, double height, bool place) const;
     // Forgets the extents of an earlier measurement generation.
     void checkMeasurements() const;
 

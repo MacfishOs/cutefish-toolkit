@@ -345,7 +345,7 @@ std::vector<CellLayout::Cell> CellLayout::cells() const
     return cells;
 }
 
-CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double width, double height) const
+CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double width, double height, bool place) const
 {
     Geometry geometry;
     int rows = 0;
@@ -370,20 +370,25 @@ CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double wi
                         geometry.widths);
 
     std::vector<Box> rowBoxes(static_cast<size_t>(rows));
-    geometry.itemWidths.resize(cells.size());
-    geometry.itemHeights.resize(cells.size());
+    if (place) {
+        geometry.itemWidths.resize(cells.size());
+        geometry.itemHeights.resize(cells.size());
+    }
     for (size_t i = 0; i < cells.size(); ++i) {
         const Cell& cell = cells[i];
         const double width = itemWidth(cell.view, cell.nested, itemBoxes[i], geometry.widths[size_t(cell.column)]);
         const Box box = itemBox(cell.view, cell.nested, false, width);
         rowBoxes[size_t(cell.row)].combine(box);
-        geometry.itemWidths[i] = width;
-        geometry.itemHeights[i] = fills(cell.view, cell.nested, false) ? box.maximum : box.preferred;
+        if (place) {
+            geometry.itemWidths[i] = width;
+            geometry.itemHeights[i] = fills(cell.view, cell.nested, false) ? box.maximum : box.preferred;
+        }
     }
     const Box vertical = totalBox(rowBoxes, m_rowSpacing);
     geometry.vertical = {vertical.minimum + m_padding.vertical(), vertical.preferred + m_padding.vertical(),
                          vertical.maximum + m_padding.vertical()};
-    calculateGeometries(rowBoxes, m_rowSpacing, height < 0 ? vertical.preferred : height, geometry.y, geometry.heights);
+    if (place)
+        calculateGeometries(rowBoxes, m_rowSpacing, height < 0 ? vertical.preferred : height, geometry.y, geometry.heights);
     return geometry;
 }
 
@@ -409,7 +414,7 @@ CellLayout::Extent CellLayout::horizontalExtent() const
         return *m_horizontalExtent;
     }
     // The preferred width gives both extents at once.
-    const Geometry geometry = solve(items, -1, -1);
+    const Geometry geometry = solve(items, -1, -1, false);
     m_horizontalExtent = geometry.horizontal;
     if (std::none_of(m_verticalExtents.begin(), m_verticalExtents.end(),
                      [](const auto& measured) { return measured.first < 0; }))
@@ -428,7 +433,7 @@ CellLayout::Extent CellLayout::verticalExtent(double width) const
     const std::vector<Cell> items = cells();
     Extent extent{m_padding.vertical(), m_padding.vertical(), m_padding.vertical()};
     if (!items.empty())
-        extent = solve(items, width < 0 ? -1 : std::max(0.0, width - m_padding.horizontal()), -1).vertical;
+        extent = solve(items, width < 0 ? -1 : std::max(0.0, width - m_padding.horizontal()), -1, false).vertical;
     m_verticalExtents.emplace_back(width, extent);
     return extent;
 }
@@ -451,7 +456,7 @@ void CellLayout::layout()
         return;
     const RectF bounds = localRect();
     const Geometry geometry = solve(items, std::max(0.0, bounds.width - m_padding.horizontal()),
-                                    std::max(0.0, bounds.height - m_padding.vertical()));
+                                    std::max(0.0, bounds.height - m_padding.vertical()), true);
 
     for (size_t i = 0; i < items.size(); ++i) {
         const Cell& cell = items[i];
