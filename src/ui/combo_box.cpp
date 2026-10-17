@@ -116,6 +116,9 @@ ComboBox::~ComboBox() = default;
 
 void ComboBox::setItems(std::vector<std::string> items)
 {
+    // An open list shows the old items, and its rows choose by their index.
+    if (isMenuOpen() && items != m_items)
+        m_menu->close();
     m_items = std::move(items);
     m_current = m_items.empty() ? -1 : std::clamp(m_current, 0, int(m_items.size()) - 1);
     m_label->setText(currentText());

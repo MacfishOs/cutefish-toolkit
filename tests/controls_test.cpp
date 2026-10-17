@@ -12,6 +12,7 @@
 #include "ui/combo_box.h"
 #include "ui/header_button.h"
 #include "ui/icon.h"
+#include "ui/image.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/layout.h"
@@ -231,6 +232,25 @@ TEST(ControlsTest, ComboBoxMenuChecksTheCurrentItem)
     TestInput::typeKey(window, key::Return);
     EXPECT_EQ(box->currentText(), "Large");
     EXPECT_EQ(activated, 2);
+}
+
+// New items close an open list, whose rows would choose the old ones.
+TEST(ControlsTest, ComboBoxClosesItsListForNewItems)
+{
+    Window window;
+    ComboBox* box = host(window, std::make_unique<ComboBox>(std::vector<std::string>{"One", "Two", "Three"}));
+    std::vector<int> activated;
+    box->onActivated = [&activated](int index) { activated.push_back(index); };
+    TestInput::click(window, {20, 15});
+    ASSERT_TRUE(box->isMenuOpen());
+    box->setItems({"One", "Two", "Three"});
+    EXPECT_TRUE(box->isMenuOpen());
+    box->setItems({"Only"});
+    EXPECT_FALSE(box->isMenuOpen());
+    TestInput::typeKey(window, key::End);
+    TestInput::typeKey(window, key::Return);
+    for (const int index : activated)
+        EXPECT_LT(index, int(box->items().size()));
 }
 
 // At its size hint the box leaves its longest item the width it is drawn at,
