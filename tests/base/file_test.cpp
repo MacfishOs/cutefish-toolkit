@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fcntl.h>
+#include <malloc.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -138,6 +139,24 @@ TEST_F(FileTest, ReportsAQueueOverflow)
     EXPECT_GT(changes, 0);
     // A file watch takes the overflow as a change.
     EXPECT_EQ(fileChanges, 1);
+}
+
+// Watches made and dropped again and again, as by windows that each watch a
+// folder while they are open, leave nothing behind. Measured on the heap; a
+// sanitizer's allocator reports nothing to compare.
+TEST_F(FileTest, WatchingAgainAndAgainDoesNotGrow)
+{
+    const auto cycle = [this] {
+        FileWatch watch = FileWatch::directory(m_directory, [](const std::string&) {}, &m_loop);
+        ASSERT_TRUE(watch.isActive());
+    };
+    for (int i = 0; i < 20; ++i)
+        cycle();
+    const size_t before = mallinfo2().uordblks;
+    for (int i = 0; i < 1000; ++i)
+        cycle();
+    const size_t after = mallinfo2().uordblks;
+    EXPECT_LT(after, before + 16 * 1024);
 }
 
 TEST(PathsTest, StandardDirectories)

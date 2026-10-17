@@ -175,25 +175,28 @@ void FileWatch::reset()
 
 std::shared_ptr<FileWatch::Inotify> FileWatch::inotify(EventLoop* loop)
 {
-    // The instance shared per loop, on the loop's thread.
-    static thread_local std::map<EventLoop*, std::weak_ptr<Inotify>> s_instances;
+    // The instance shared per loop, on the loop's thread. It stays with the
+    // loop: closing an inotify descriptor waits for the kernel to settle,
+    // which takes milliseconds.
+    static thread_local std::map<EventLoop*, std::shared_ptr<Inotify>> s_instances;
 
     if (!loop)
         loop = EventLoop::current();
     if (!loop)
         return nullptr;
-    if (auto existing = s_instances[loop].lock())
-        return existing;
-    auto created = std::make_shared<Inotify>(*loop);
-    s_instances[loop] = created;
-    loop->addDestroyHook([loop, weak = std::weak_ptr<Inotify>(created)] {
-        if (auto inotify = weak.lock()) {
-            loop->unwatch(inotify->watch);
-            inotify->loop = nullptr;
-        }
-        s_instances.erase(loop);
+    auto& instance = s_instances[loop];
+    if (instance)
+        return instance;
+    instance = std::make_shared<Inotify>(*loop);
+    loop->addDestroyHook([loop] {
+        const auto it = s_instances.find(loop);
+        if (it == s_instances.end())
+            return;
+        loop->unwatch(it->second->watch);
+        it->second->loop = nullptr;
+        s_instances.erase(it);
     });
-    return created;
+    return instance;
 }
 
 FileWatch FileWatch::file(const std::string& path, std::function<void()> changed, EventLoop* loop)
