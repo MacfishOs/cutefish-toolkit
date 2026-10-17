@@ -389,7 +389,8 @@ private:
     void scheduleFrame();
     // A layout pass for the views marked as needing one, which may be none.
     void scheduleLayout();
-    bool renderFrame(uint64_t frameTimeNs);
+    // `prepared`: prepareFrame() already ran at this frame time.
+    bool renderFrame(uint64_t frameTimeNs, bool prepared = false);
     std::vector<Rect> paintFrame(SkCanvas* canvas, int bufferAge);
     // Device pixels the view and its children cover, untransformed below the
     // view itself; `painted` asks how they were last painted, not will be.

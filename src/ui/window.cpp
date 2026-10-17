@@ -1494,10 +1494,11 @@ void Window::render()
     renderFrame(frameTime(monotonicNs()));
 }
 
-bool Window::renderFrame(uint64_t frameTimeNs)
+bool Window::renderFrame(uint64_t frameTimeNs, bool prepared)
 {
     m_rendering = true;
-    prepareFrame(frameTimeNs);
+    if (!prepared)
+        prepareFrame(frameTimeNs);
     // Whatever asked for a paint until here is drawn by this frame.
     m_needsFrame = false;
     const Color background = m_backgroundColor.value_or(Theme::current().background);

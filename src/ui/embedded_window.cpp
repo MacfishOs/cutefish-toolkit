@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <utility>
 #include <xkbcommon/xkbcommon.h>
 
 #include "include/core/SkColorSpace.h"
@@ -363,12 +364,28 @@ bool EmbeddedWindow::needsRender() const
     return m_configured && m_contentView && (m_needsFrame || m_layoutNeeded || hasTickingClients());
 }
 
+void EmbeddedWindow::beginFrame(uint64_t frameTimeNs)
+{
+    if (!m_configured || !m_contentView)
+        return;
+    m_begunFrameNs = frameTimeNs ? frameTimeNs : monotonicNs();
+    prepareFrame(m_begunFrameNs);
+}
+
+bool EmbeddedWindow::renderFrameAt(uint64_t frameTimeNs)
+{
+    const uint64_t begun = std::exchange(m_begunFrameNs, 0);
+    if (begun && (!frameTimeNs || frameTimeNs == begun))
+        return renderFrame(begun, true);
+    return renderFrame(frameTimeNs ? frameTimeNs : monotonicNs());
+}
+
 const EmbeddedWindow::Frame& EmbeddedWindow::render(uint64_t frameTimeNs)
 {
     EmbeddedPlatformWindow* embedded = platform();
     embedded->clearRenderRequest();
     m_frame.damage.clear();
-    if (!m_configured || !m_contentView || !renderFrame(frameTimeNs ? frameTimeNs : monotonicNs()))
+    if (!m_configured || !m_contentView || !renderFrameAt(frameTimeNs))
         return m_frame;
     m_frame.pixels = embedded->pixels();
     m_frame.width = embedded->width();
@@ -391,7 +408,7 @@ const EmbeddedWindow::Frame* EmbeddedWindow::render(EmbeddedGpu& gpu, const GpuT
                                                    texture.keepsLastFrame};
     embedded->setGpuTarget(&target);
     embedded->clearRenderRequest();
-    const bool rendered = renderFrame(frameTimeNs ? frameTimeNs : monotonicNs());
+    const bool rendered = renderFrameAt(frameTimeNs);
     embedded->setGpuTarget(nullptr);
     if (!rendered)
         return nullptr;

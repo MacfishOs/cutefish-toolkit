@@ -230,6 +230,42 @@ TEST(EmbeddedTest, AnimationsFollowTheHostsFrames)
     EXPECT_FALSE(window.needsRender());
 }
 
+TEST(EmbeddedTest, BeginningAFrameRunsItsAnimationsBeforeTheHostSizesIt)
+{
+    EmbeddedWindow window;
+    window.setContentView(std::make_unique<Free>());
+    window.setSize({10, 10});
+    window.render(at(0ms));
+
+    Animation animation(&window);
+    animation.setDuration(200ms);
+    animation.setEasing(Animation::Easing::Linear);
+    int updates = 0;
+    animation.onUpdate = [&](double v) {
+        ++updates;
+        window.resize({10, 10 + 20 * v});
+    };
+    animation.start();
+    window.render(at(100ms));
+    ASSERT_EQ(updates, 1);
+
+    // The animation grows the window before the host reads its size, and
+    // the render of that frame only paints it.
+    window.beginFrame(at(200ms));
+    EXPECT_EQ(updates, 2);
+    EXPECT_EQ(window.pixelHeight(), 20);
+    const EmbeddedWindow::Frame& frame = window.render(at(200ms));
+    EXPECT_EQ(updates, 2);
+    EXPECT_EQ(frame.height, 20);
+
+    // A render at another time than the begun frame runs its own.
+    window.beginFrame(at(250ms));
+    EXPECT_EQ(updates, 3);
+    window.render(at(300ms));
+    EXPECT_EQ(updates, 4);
+    EXPECT_EQ(window.render(at(300ms)).height, 30);
+}
+
 TEST(EmbeddedTest, PointerAndCursorShape)
 {
     EmbeddedWindow window;

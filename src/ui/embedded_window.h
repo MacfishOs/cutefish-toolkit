@@ -101,6 +101,11 @@ public:
     // call into the toolkit, the input calls included.
     std::function<void()> onRenderRequested;
 
+    // Ticks animations at the frame time and lays out, which may resize the
+    // window: a host sizes the next render's texture by pixelWidth() and
+    // pixelHeight() after it. That render, at the same frame time, only
+    // paints.
+    void beginFrame(uint64_t frameTimeNs = 0);
     // Lays out, ticks animations at the frame time and repaints what changed,
     // into memory the window owns. The frame time is nanoseconds on
     // CLOCK_MONOTONIC (now when 0); animations step by the times given.
@@ -177,8 +182,12 @@ private:
     void connectPlatform();
     // Damage and the next request, after either render.
     void finishFrame();
+    // At beginFrame()'s frame time when it ran for this one.
+    bool renderFrameAt(uint64_t frameTimeNs);
 
     Frame m_frame;
+    // The frame time beginFrame() prepared, until a render draws it.
+    uint64_t m_begunFrameNs = 0;
     CursorShape m_reportedShape = CursorShape::Default;
     RectF m_popupGeometry;
 };
