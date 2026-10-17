@@ -63,6 +63,28 @@ TEST_F(FileTest, WritesAtomicallyAndKeepsTheMode)
     EXPECT_FALSE(file::read(m_directory + "/missing"));
 }
 
+// As a configuration file kept in another directory under a link.
+TEST_F(FileTest, WritesAtomicallyThroughSymbolicLinks)
+{
+    std::filesystem::create_directory(m_directory + "/real");
+    const std::string target = m_directory + "/real/file.txt";
+    const std::string link = m_directory + "/link.txt";
+    ASSERT_TRUE(file::writeAtomically(target, "first"));
+    std::filesystem::create_symlink("real/file.txt", link);
+    std::filesystem::create_symlink("link.txt", m_directory + "/chain.txt");
+
+    ASSERT_TRUE(file::writeAtomically(m_directory + "/chain.txt", "second"));
+    EXPECT_TRUE(std::filesystem::is_symlink(m_directory + "/chain.txt"));
+    EXPECT_TRUE(std::filesystem::is_symlink(link));
+    EXPECT_EQ(file::read(target), "second");
+
+    // A dangling link gets its target created.
+    std::filesystem::create_symlink("real/new.txt", m_directory + "/dangling.txt");
+    ASSERT_TRUE(file::writeAtomically(m_directory + "/dangling.txt", "third"));
+    EXPECT_TRUE(std::filesystem::is_symlink(m_directory + "/dangling.txt"));
+    EXPECT_EQ(file::read(m_directory + "/real/new.txt"), "third");
+}
+
 TEST_F(FileTest, WatchesAFileThroughReplacementAndRemoval)
 {
     const std::string path = m_directory + "/watched.conf";

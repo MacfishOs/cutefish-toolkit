@@ -81,27 +81,44 @@ ssize_t writeWithoutSigpipe(int fd, const void* data, size_t size)
     return n;
 }
 
+// The file a chain of links ends at: a rename over the link itself would
+// replace the link.
+static std::string linkTarget(const std::string& path)
+{
+    std::filesystem::path resolved(path);
+    std::error_code error;
+    // As the kernel's limit on links followed in one lookup.
+    for (int hop = 0; hop < 40 && std::filesystem::is_symlink(resolved, error); ++hop) {
+        const std::filesystem::path target = std::filesystem::read_symlink(resolved, error);
+        if (error)
+            break;
+        resolved = target.is_absolute() ? target : resolved.parent_path() / target;
+    }
+    return resolved.string();
+}
+
 bool writeAtomically(const std::string& path, std::string_view contents)
 {
-    const std::filesystem::path target(path);
+    const std::string file = linkTarget(path);
+    const std::filesystem::path target(file);
     std::error_code error;
     if (target.has_parent_path())
         std::filesystem::create_directories(target.parent_path(), error);
 
-    std::string temporary = path + ".XXXXXX";
+    std::string temporary = file + ".XXXXXX";
     const int fd = mkostemp(temporary.data(), O_CLOEXEC);
     if (fd < 0)
         return false;
 
     struct stat existing{};
-    if (stat(path.c_str(), &existing) == 0)
+    if (stat(file.c_str(), &existing) == 0)
         fchmod(fd, existing.st_mode & 07777);
     else
         fchmod(fd, 0666 & ~currentUmask());
 
     const bool written = writeAll(fd, contents) && fdatasync(fd) == 0;
     close(fd);
-    if (!written || rename(temporary.c_str(), path.c_str()) != 0) {
+    if (!written || rename(temporary.c_str(), file.c_str()) != 0) {
         unlink(temporary.c_str());
         return false;
     }

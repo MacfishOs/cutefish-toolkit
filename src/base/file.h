@@ -15,7 +15,8 @@ std::optional<std::string> read(const std::string& path);
 
 // Writes a temporary file next to the target and renames it over the
 // target, so a reader sees the old or the new contents, never a part.
-// Missing directories are created; an existing file's mode is kept.
+// Missing directories are created; an existing file's mode is kept. A
+// symbolic link stays, and the file it leads to is written.
 bool writeAtomically(const std::string& path, std::string_view contents);
 
 // write(2) to a pipe or socket whose reader may have gone: EPIPE instead of
