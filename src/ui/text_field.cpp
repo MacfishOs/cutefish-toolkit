@@ -908,12 +908,17 @@ bool TextField::keyPress(const KeyEvent& event)
         edited();
         return true;
     case key::Return:
-    case key::KeypadEnter:
+    case key::KeypadEnter: {
+        const std::weak_ptr<TextField*> self = d->self;
         if (onAccepted)
             onAccepted();
+        // A dialog may close, and destroy the field, on Return.
+        if (self.expired())
+            return true;
         if (onEditingFinished)
             onEditingFinished();
         return true;
+    }
     default:
         break;
     }

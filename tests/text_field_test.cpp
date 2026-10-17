@@ -234,6 +234,22 @@ TEST(TextFieldTest, LimitsValidatesAndReportsEdits)
     EXPECT_EQ(finished, 1);
 }
 
+TEST(TextFieldTest, ReturnSurvivesTheFieldClosingOnAccept)
+{
+    Fixture f;
+    bool deleted = false;
+    bool finishedAfterwards = false;
+    f.field->onAccepted = [&f, &deleted] {
+        f.field->parent()->takeChild(f.field);
+        deleted = true;
+    };
+    // Losing the focus on the way out finishes the editing once, before the field goes.
+    f.field->onEditingFinished = [&deleted, &finishedAfterwards] { finishedAfterwards = deleted; };
+    f.key(key::Return);
+    EXPECT_TRUE(deleted);
+    EXPECT_FALSE(finishedAfterwards);
+}
+
 // The clear button shows with text, clears it on a click, and the text
 // margins follow it: the glyph, the gap and the inset.
 TEST(TextFieldTest, SearchFieldClears)
