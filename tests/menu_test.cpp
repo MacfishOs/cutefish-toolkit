@@ -66,6 +66,22 @@ TEST(MenuTest, KeyboardSkipsDisabledRowsAndSeparators)
     EXPECT_EQ(f.closed, 1);
 }
 
+// Keys after the choice, before the closed popup goes, choose nothing more.
+TEST(MenuTest, KeysAfterChoosingReachNoClosedMenu)
+{
+    Fixture f;
+    f.menu.popup(&f.window, {20, 20});
+    ASSERT_TRUE(f.menu.isOpen());
+    f.menu.window()->grab();
+    TestInput::setKeyboardFocus(f.window, true);
+    TestInput::typeKey(f.window, key::Down);
+    TestInput::typeKey(f.window, key::Return);
+    EXPECT_FALSE(f.menu.isOpen());
+    TestInput::typeKey(f.window, key::Down);
+    TestInput::typeKey(f.window, key::Return);
+    EXPECT_EQ(f.chosen, (std::vector<std::string>{"Open"}));
+}
+
 // Measured before it opens, the menu is the size it opens at, at whole and
 // fractional scales, with hinted and unhinted text alike.
 TEST(MenuTest, ImplicitSizeIsTheOpenedSize)

@@ -530,8 +530,14 @@ bool Window::blockedByModal() const
 
 void Window::hide()
 {
-    if (m_hidden || !m_platform->isEmbedded())
+    if (m_hidden)
         return;
+    if (!m_platform->isEmbedded()) {
+        // Keys a closed popup would still take until it goes.
+        if (m_parent)
+            std::erase(m_parent->m_grabbingPopups, this);
+        return;
+    }
     m_hidden = true;
     hideToolTip();
     // Its popups go first, as xdg_popups are dismissed innermost first.

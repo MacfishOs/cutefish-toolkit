@@ -198,7 +198,8 @@ public:
     void show();
     // Off screen at once, though the window lives on until destroyed: a
     // popup closing from inside its own input handling. show() maps it
-    // again. Embedded only; on Wayland the surface goes with the window.
+    // again. Embedded only; on Wayland the surface goes with the window,
+    // and a popup only gives the keys back to its parent.
     void hide();
     bool isHidden() const { return m_hidden; }
     void startMove();
