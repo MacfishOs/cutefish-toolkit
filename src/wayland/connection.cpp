@@ -866,6 +866,8 @@ void Connection::forget(ShellSurface* shell)
     std::erase_if(m_touchFocus, [shell](const auto& point) { return point.second == shell; });
     if (m_keyboard)
         m_keyboard->forget(shell);
+    if (m_dataDevice)
+        m_dataDevice->forget(shell);
     if (m_textInput)
         m_textInput->forget(shell);
 }

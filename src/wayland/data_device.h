@@ -44,6 +44,8 @@ public:
     bool startDrag(ShellSurface* origin, DragSource source, ShellSurface* attached, double scale);
     // The source of the drag this client runs, for its own targets.
     const DragSource* localSource() const { return m_dragSource ? &m_drag : nullptr; }
+    // A window going away is no drop target any more.
+    void forget(ShellSurface* shell);
 
 protected:
     void* createSource(const std::vector<std::string>& mimeTypes) override;

@@ -288,6 +288,12 @@ void DataDevice::updateTarget(uint32_t action)
     m_connection.flush();
 }
 
+void DataDevice::forget(ShellSurface* shell)
+{
+    if (m_dropShell == shell)
+        m_dropShell = nullptr;
+}
+
 void DataDevice::endTarget()
 {
     m_dropOffer.reset();

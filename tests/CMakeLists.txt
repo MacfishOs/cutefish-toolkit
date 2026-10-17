@@ -119,6 +119,7 @@ foreach(xml
 endforeach()
 
 add_executable(cutefish-toolkit-wayland-tests
+    wayland/data_device_test.cpp
     wayland/output_test.cpp
     wayland/selection_test.cpp
     ${TEST_PROTOCOL_SOURCES}
