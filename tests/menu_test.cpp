@@ -135,6 +135,54 @@ TEST(MenuTest, DropDownScrollsToItsCheckedRow)
     EXPECT_EQ(chosen.back(), "Zulu 30");
 }
 
+// A drop-down's arrows, Home, End and typing pass over separators and
+// disabled rows, as a desktop menu's arrows do.
+TEST(MenuTest, DropDownKeysSkipSeparatorsAndDisabledRows)
+{
+    Window window;
+    window.setScreenSize({1280, 800});
+    window.setContentView(std::make_unique<View>());
+    window.resize({400, 300});
+    window.show();
+    Menu menu;
+    menu.setDropDown(true);
+    std::vector<std::string> chosen;
+    const auto add = [&menu, &chosen](const std::string& text, bool enabled) {
+        const size_t index = menu.addItem(text, [&chosen, text] { chosen.push_back(text); });
+        menu.setItemEnabled(index, enabled);
+    };
+    add("Alpha", true);
+    menu.addSeparator();
+    add("Beta", false);
+    add("Gamma", true);
+    add("Bravo", true);
+    add("Delta", false);
+
+    const auto open = [&menu, &window] {
+        menu.popup(&window, {10, 10});
+        Window* popup = menu.window();
+        popup->grab();
+        TestInput::setKeyboardFocus(*popup, true);
+        return popup;
+    };
+    Window* popup = open();
+    TestInput::typeKey(*popup, key::Down);
+    TestInput::typeKey(*popup, key::Down);
+    TestInput::typeKey(*popup, key::Return);
+    ASSERT_EQ(chosen, (std::vector<std::string>{"Gamma"}));
+
+    popup = open();
+    TestInput::typeKey(*popup, key::End);
+    TestInput::typeKey(*popup, key::Return);
+    EXPECT_EQ(chosen.back(), "Bravo");
+
+    popup = open();
+    TestInput::typeKey(*popup, key::letter('b'), NoModifier, "b");
+    TestInput::typeKey(*popup, key::Return);
+    EXPECT_EQ(chosen.back(), "Bravo");
+    EXPECT_EQ(chosen.size(), 3u);
+}
+
 TEST(MenuTest, ClickChoosesTheRowUnderThePointer)
 {
     Fixture f;

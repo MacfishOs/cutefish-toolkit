@@ -492,10 +492,10 @@ private:
             moveHighlight(-pageStep());
             return true;
         case key::Home:
-            setHighlight(0);
+            setHighlight(selectableFrom(0, 1));
             return true;
         case key::End:
-            setHighlight(int(m_rows.size()) - 1);
+            setHighlight(selectableFrom(int(m_rows.size()) - 1, -1));
             return true;
         case key::Return:
         case key::KeypadEnter:
@@ -536,25 +536,40 @@ private:
         }
     }
 
+    // The first enabled row from a row on in a direction, or -1.
+    int selectableFrom(int row, int direction) const
+    {
+        for (; row >= 0 && row < int(m_rows.size()); row += direction) {
+            if (selectable(row))
+                return row;
+        }
+        return -1;
+    }
+
     void setHighlight(int row)
     {
-        if (m_rows.empty())
+        if (row < 0)
             return;
-        row = std::clamp(row, 0, int(m_rows.size()) - 1);
         m_keyboard = true;
         setCurrent(row);
         ensureVisible(row);
     }
 
     // Keys move on from the lit row, or from the chosen one while the
-    // pointer has lit none.
+    // pointer has lit none, past separators and disabled rows.
     void moveHighlight(int step)
     {
+        if (m_rows.empty())
+            return;
+        const int direction = step > 0 ? 1 : -1;
         const int from = m_current >= 0 ? m_current : checkedRow();
-        if (from < 0)
-            setHighlight(step > 0 ? 0 : int(m_rows.size()) - 1);
-        else
-            setHighlight(from + step);
+        if (from < 0) {
+            setHighlight(selectableFrom(step > 0 ? 0 : int(m_rows.size()) - 1, direction));
+            return;
+        }
+        const int target = std::clamp(from + step, 0, int(m_rows.size()) - 1);
+        const int row = selectableFrom(target, direction);
+        setHighlight(row >= 0 ? row : selectableFrom(target, -direction));
     }
 
     int pageStep() const
@@ -592,7 +607,7 @@ private:
         const int count = int(m_rows.size());
         for (int i = 0; i < count; ++i) {
             const int row = (first + i) % count;
-            if (m_rows[size_t(row)].label && lowered(m_menu->m_items[m_rows[size_t(row)].index].text).starts_with(prefix)) {
+            if (selectable(row) && lowered(m_menu->m_items[m_rows[size_t(row)].index].text).starts_with(prefix)) {
                 setHighlight(row);
                 return;
             }
