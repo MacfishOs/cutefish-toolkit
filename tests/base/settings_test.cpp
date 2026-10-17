@@ -211,3 +211,11 @@ TEST_F(SettingsTest, NothingChangedWritesNothing)
     }
     EXPECT_FALSE(std::filesystem::exists(path("untouched.conf")));
 }
+
+TEST_F(SettingsTest, ContinuesValuesAcrossWindowsLineBreaks)
+{
+    ASSERT_TRUE(file::writeAtomically(path("crlf.conf"), "[Group]\r\nlong=first \\\r\nsecond\r\nnext=x\r\n"));
+    const Settings settings(path("crlf.conf"));
+    EXPECT_EQ(settings.stringValue("Group/long"), "first second");
+    EXPECT_EQ(settings.stringValue("Group/next"), "x");
+}

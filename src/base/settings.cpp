@@ -478,9 +478,10 @@ static void parseFile(std::string_view contents, std::map<std::string, std::stri
         std::string line(contents.substr(position, end - position));
         position = end + 1;
         // A value continues on the next line after an escaped line break.
-        while (!line.empty() && line.back() != '\r') {
+        while (!line.empty()) {
+            const size_t end = line.size() - (line.back() == '\r' ? 1 : 0);
             size_t backslashes = 0;
-            while (backslashes < line.size() && line[line.size() - 1 - backslashes] == '\\')
+            while (backslashes < end && line[end - 1 - backslashes] == '\\')
                 ++backslashes;
             if (backslashes % 2 == 0 || position >= contents.size())
                 break;
