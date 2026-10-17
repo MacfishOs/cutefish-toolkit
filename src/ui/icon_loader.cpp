@@ -809,6 +809,10 @@ std::string IconLoader::lookup(const std::string& name, const std::string& reque
 
 std::string IconLoader::themeIconPath(const std::string& name, int size, double scale)
 {
+    // A desktop entry's Icon may name a file by its absolute path.
+    if (name.starts_with('/'))
+        return std::filesystem::is_regular_file(name) ? name : std::string();
+
     const int iconScale = int(std::ceil(scale));
     const std::string key = name + "@" + std::to_string(size) + "x" + std::to_string(iconScale) + "/"
             + Theme::current().iconTheme;

@@ -828,6 +828,18 @@ TEST(EmbeddedHostTest, ThemeIconMissesKeepTheIconCache)
     EXPECT_NE(themeIconPath("utilities-terminal", 24, 1.5).find("/apps@2x/scalable/"), std::string::npos);
 }
 
+TEST(EmbeddedHostTest, ThemeIconsTakeAnAbsoluteFile)
+{
+    const std::string path = themeIconPath("utilities-terminal", 48, 2);
+    if (path.empty())
+        GTEST_SKIP() << "no utilities-terminal in the theme";
+    EXPECT_EQ(themeIconPath(path, 48, 2), path);
+    EXPECT_EQ(themeIconPath(path + ".missing", 48, 2), "");
+    const Bitmap bitmap = themeIconBitmap(path, 48, 2);
+    ASSERT_FALSE(bitmap.isNull());
+    EXPECT_EQ(bitmap.width(), 96);
+}
+
 TEST(EmbeddedHostTest, PopupAtAsksAboutToShowOnce)
 {
     Host host;
