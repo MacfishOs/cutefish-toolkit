@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/prctl.h>
+#include <sys/resource.h>
+
 #include <string>
 #include <vector>
 
@@ -157,8 +160,22 @@ TEST_F(LoggingTest, LineFormat)
     EXPECT_EQ(logging::formatLine(LogCategory::defaultCategory(), LogLevel::Critical, "y"), "critical: y");
 }
 
+static void disableCoreDumps()
+{
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+
+    // A piped core pattern still runs its handler, which records the crash, under a zero limit.
+    prctl(PR_SET_DUMPABLE, 0);
+}
+
 TEST(LoggingDeathTest, FatalAborts)
 {
     const LogCategory category("test.fatal", LogLevel::Critical);
-    EXPECT_DEATH(CF_FATAL(category) << "boom", "test.fatal: fatal: boom");
+    EXPECT_DEATH(
+        {
+            disableCoreDumps();
+            CF_FATAL(category) << "boom";
+        },
+        "test.fatal: fatal: boom");
 }
