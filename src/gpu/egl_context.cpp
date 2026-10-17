@@ -8,6 +8,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <malloc.h>
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
+#include <unistd.h>
 #include <vector>
 #include <wayland-egl.h>
 
@@ -16,9 +20,13 @@
 #include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "include/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.h"
 
+#include "base/event_loop.h"
 #include "gpu/program_cache.h"
 
 namespace cutefish::ui::gpu {
+
+// How long after the last frame a window counts as idle.
+static constexpr auto kIdleDelay = std::chrono::seconds(5);
 
 // One config with alpha serves every window: popups are translucent around
 // their rounded body, and opaque windows say so with their opaque region.
@@ -137,6 +145,10 @@ bool EglContext::initialize(wl_display* display)
 
 EglContext::~EglContext()
 {
+    if (m_idleWatch)
+        m_idleLoop->unwatch(m_idleWatch);
+    if (m_idleFd >= 0)
+        close(m_idleFd);
     if (m_initializer.joinable())
         m_initializer.join();
     if (m_skiaContext) {
@@ -190,8 +202,43 @@ int EglContext::bufferAge(EGLSurface surface) const
     return age;
 }
 
+void EglContext::armIdleTimer()
+{
+    if (!m_idleLoop) {
+        m_idleLoop = base::EventLoop::current();
+        if (!m_idleLoop)
+            return;
+        m_idleFd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+        if (m_idleFd < 0)
+            return;
+        m_idleWatch = m_idleLoop->watch(m_idleFd, EPOLLIN, [this](uint32_t) {
+            uint64_t expirations;
+            if (read(m_idleFd, &expirations, sizeof(expirations)) <= 0)
+                return;
+            m_idleArmed = false;
+            if (m_frames != m_framesWhenArmed) {
+                armIdleTimer();
+                return;
+            }
+            // Drawing frees most of what it allocates, and the allocator
+            // keeps those pages until it is asked.
+            malloc_trim(0);
+        });
+    }
+    if (!m_idleWatch)
+        return;
+    itimerspec spec{};
+    spec.it_value.tv_sec = kIdleDelay.count();
+    timerfd_settime(m_idleFd, 0, &spec, nullptr);
+    m_idleArmed = true;
+    m_framesWhenArmed = m_frames;
+}
+
 bool EglContext::swapBuffers(EGLSurface surface, const std::vector<Rect>& damage, int height)
 {
+    ++m_frames;
+    if (!m_idleArmed)
+        armIdleTimer();
     if (!m_swapBuffersWithDamage || damage.empty())
         return eglSwapBuffers(m_display, surface);
     // EGL counts rows from the bottom.

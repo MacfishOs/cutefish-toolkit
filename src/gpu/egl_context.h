@@ -17,6 +17,10 @@ class GrDirectContext;
 struct wl_display;
 struct wl_egl_window;
 
+namespace cutefish::base {
+class EventLoop;
+}
+
 namespace cutefish::ui::gpu {
 
 class ProgramCache;
@@ -77,6 +81,7 @@ private:
             finishInitialization();
     }
     void finishInitialization() const;
+    void armIdleTimer();
 
     EGLDisplay m_display = EGL_NO_DISPLAY;
     EGLConfig m_config = nullptr;
@@ -88,6 +93,15 @@ private:
     sk_sp<GrDirectContext> m_skiaContext;
     mutable std::thread m_initializer;
     bool m_initialized = false;
+    // Armed by the first frame after a quiet spell, and checked when it
+    // fires: a timer moved on every frame would cost a clock read in each
+    // loop iteration.
+    base::EventLoop* m_idleLoop = nullptr;
+    int m_idleFd = -1;
+    int m_idleWatch = 0;
+    uint64_t m_frames = 0;
+    uint64_t m_framesWhenArmed = 0;
+    bool m_idleArmed = false;
 };
 
 } // namespace cutefish::ui::gpu
