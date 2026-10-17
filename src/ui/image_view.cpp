@@ -146,9 +146,14 @@ static Cache& cache()
     return cache;
 }
 
+static size_t bytesOf(const SkImage* image)
+{
+    return image ? size_t(image->width()) * size_t(image->height()) * 4 : 0;
+}
+
 static size_t bytesOf(const ImageView::Picture& picture)
 {
-    return picture.image ? size_t(picture.image->width()) * size_t(picture.image->height()) * 4 : 0;
+    return bytesOf(picture.image.get()) + bytesOf(picture.layer.layer.get()) + bytesOf(picture.layer.mask.get());
 }
 
 static std::shared_ptr<const ImageView::Picture> cached(const std::string& key)
