@@ -825,9 +825,22 @@ void paintTextLines(SkCanvas* canvas, const LineGlyphs& lineGlyphs, const std::v
 {
     const std::vector<GlyphLine>& glyphs = lineGlyphs.lines;
     const bool unhinted = drawsUnhinted(canvas);
+    // The clip's rows in logical pixels: lines whose glyphs cannot reach it
+    // are skipped, with two line heights of room for ink past the box.
+    double clipTop = std::numeric_limits<double>::lowest();
+    double clipBottom = std::numeric_limits<double>::max();
+    const SkMatrix& total = canvas->getTotalMatrix();
+    if (total.isScaleTranslate() && total.getScaleY() > 0) {
+        const SkIRect clip = canvas->getDeviceClipBounds();
+        clipTop = (clip.top() - total.getTranslateY()) / total.getScaleY();
+        clipBottom = (clip.bottom() - total.getTranslateY()) / total.getScaleY();
+    }
     for (size_t l = 0; l < glyphs.size() && l < lines.size(); ++l) {
         const GlyphLine& line = glyphs[l];
         if (line.runs.empty())
+            continue;
+        const double room = 2 * lines[l].height;
+        if (offset.y + lines[l].top + lines[l].height + room < clipTop || offset.y + lines[l].top - room > clipBottom)
             continue;
         // Aligned by the line's advance, without the overhang.
         double pen = line.runs.front().x.front() + (width - line.advance) * align;
