@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
+#include <list>
 #include <optional>
+#include <unordered_map>
 #include <variant>
 
 #include "include/core/SkBlender.h"
@@ -15,6 +18,7 @@
 #include "include/core/SkData.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkM44.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
@@ -532,6 +536,103 @@ static sk_sp<SkTextBlob> hinted(const sk_sp<SkTextBlob>& blob, bool unhinted, Sk
     return made ? made : blob;
 }
 
+namespace {
+
+struct CoverageRun
+{
+    SkFont font;
+    std::vector<SkGlyphID> glyphs;
+    std::vector<SkPoint> positions;
+};
+
+// What a coverage image was rasterised from: its glyphs, the matrix of the
+// canvas they were drawn on and where, its size and the pixel geometry.
+struct CoverageEntry
+{
+    uint64_t hash;
+    std::vector<CoverageRun> runs;
+    SkM44 matrix;
+    SkPoint origin;
+    SkISize size;
+    SkPixelGeometry geometry;
+    sk_sp<SkImage> image;
+};
+
+} // namespace
+
+// Coverage of recently drawn runs, most recent first: text painted again as
+// it was is blended from the image it had, which on the GPU is also the
+// texture it had, instead of being rasterised and uploaded again.
+static constexpr size_t kCoverageCacheBytes = 4 << 20;
+static constexpr size_t kCoverageCacheEntries = 512;
+static std::list<CoverageEntry> s_coverage;
+static std::unordered_map<uint64_t, std::list<CoverageEntry>::iterator> s_coverageIndex;
+static size_t s_coverageBytes = 0;
+
+static uint64_t hashBytes(uint64_t hash, const void* data, size_t size)
+{
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= bytes[i];
+        hash *= 0x100000001b3ull;
+    }
+    return hash;
+}
+
+template<typename T>
+static uint64_t hashValue(uint64_t hash, const T& value)
+{
+    return hashBytes(hash, &value, sizeof(value));
+}
+
+static uint64_t coverageHash(const std::vector<CoverageRun>& runs, const SkM44& matrix, SkPoint origin,
+                             SkISize size, SkPixelGeometry geometry)
+{
+    uint64_t hash = 0xcbf29ce484222325ull;
+    for (const CoverageRun& run : runs) {
+        hash = hashValue(hash, run.font.getTypeface() ? run.font.getTypeface()->uniqueID() : 0);
+        hash = hashValue(hash, run.font.getSize());
+        hash = hashValue(hash, run.glyphs.size());
+        hash = hashBytes(hash, run.glyphs.data(), run.glyphs.size() * sizeof(SkGlyphID));
+        hash = hashBytes(hash, run.positions.data(), run.positions.size() * sizeof(SkPoint));
+    }
+    SkScalar values[16];
+    matrix.getColMajor(values);
+    hash = hashBytes(hash, values, sizeof(values));
+    hash = hashValue(hash, origin.x());
+    hash = hashValue(hash, origin.y());
+    hash = hashValue(hash, size.width());
+    hash = hashValue(hash, size.height());
+    return hashValue(hash, int(geometry));
+}
+
+static bool sameRuns(const std::vector<CoverageRun>& a, const std::vector<CoverageRun>& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (!(a[i].font == b[i].font) || a[i].glyphs != b[i].glyphs || a[i].positions.size() != b[i].positions.size()
+            || std::memcmp(a[i].positions.data(), b[i].positions.data(), a[i].positions.size() * sizeof(SkPoint)))
+            return false;
+    }
+    return true;
+}
+
+static void evictCoverage()
+{
+    const CoverageEntry& oldest = s_coverage.back();
+    s_coverageBytes -= oldest.image->imageInfo().computeMinByteSize();
+    s_coverageIndex.erase(oldest.hash);
+    s_coverage.pop_back();
+}
+
+void clearSubpixelCoverage()
+{
+    s_coverageIndex.clear();
+    s_coverage.clear();
+    s_coverageBytes = 0;
+}
+
 // The run's per-channel coverage, white subpixel text on opaque black with
 // the fontconfig's pixel geometry and Skia's linear masks, then blended into
 // the canvas at whole device pixels.
@@ -540,24 +641,79 @@ static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob,
     const SkMatrix matrix = canvas->getTotalMatrix();
     SkRect bounds = blob->bounds().makeOffset(origin.x(), origin.y());
     bounds = matrix.mapRect(bounds);
-    SkIRect device = bounds.roundOut().makeOutset(1, 1);
+    const SkIRect whole = bounds.roundOut().makeOutset(1, 1);
+    SkIRect device = whole;
     if (!device.intersect(canvas->getDeviceClipBounds()))
         return;
-    const SkImageInfo info = SkImageInfo::MakeN32(device.width(), device.height(), kOpaque_SkAlphaType);
-    const SkSurfaceProps properties(0, Application::instance()->text().pixelGeometry(), 0, 1);
-    // On the CPU on both paths: Ganesh's LCD masks differ from the raster
-    // backend's, which is the pixel reference.
-    const sk_sp<SkSurface> surface = SkSurfaces::Raster(info, &properties);
-    if (!surface)
-        return;
-    SkCanvas* coverage = surface->getCanvas();
-    coverage->clear(SK_ColorBLACK);
-    coverage->translate(SkScalar(-device.x()), SkScalar(-device.y()));
-    coverage->concat(matrix);
-    SkPaint white;
-    white.setAntiAlias(true);
-    white.setColor(SK_ColorWHITE);
-    coverage->drawTextBlob(blob, origin.x(), origin.y(), white);
+    const SkPixelGeometry geometry = Application::instance()->text().pixelGeometry();
+
+    // Only runs the clip leaves whole: where the image starts decides how
+    // the glyph positions round.
+    std::vector<CoverageRun> runs;
+    SkTextBlob::Iter iterator(*blob);
+    SkTextBlob::Iter::ExperimentalRun run;
+    bool cacheable = device == whole && int64_t(whole.width()) * whole.height() <= int64_t(kCoverageCacheBytes / 16);
+    while (cacheable && iterator.experimentalNext(&run)) {
+        if (!run.positions) {
+            cacheable = false;
+            break;
+        }
+        runs.push_back({run.font, std::vector<SkGlyphID>(run.glyphs, run.glyphs + run.count),
+                        std::vector<SkPoint>(run.positions, run.positions + run.count)});
+    }
+    // As translate() and concat() would make it on the coverage canvas.
+    SkM44 coverageMatrix;
+    if (device.x() || device.y())
+        coverageMatrix.preTranslate(SkScalar(-device.x()), SkScalar(-device.y()));
+    if (!matrix.isIdentity())
+        coverageMatrix.preConcat(SkM44(matrix));
+
+    sk_sp<SkImage> image;
+    uint64_t hash = 0;
+    if (cacheable) {
+        hash = coverageHash(runs, coverageMatrix, origin, device.size(), geometry);
+        const auto found = s_coverageIndex.find(hash);
+        if (found != s_coverageIndex.end()) {
+            CoverageEntry& entry = *found->second;
+            if (entry.matrix == coverageMatrix && entry.origin == origin && entry.size == device.size()
+                && entry.geometry == geometry && sameRuns(entry.runs, runs)) {
+                s_coverage.splice(s_coverage.begin(), s_coverage, found->second);
+                image = entry.image;
+            }
+        }
+    }
+
+    if (!image) {
+        const SkImageInfo info = SkImageInfo::MakeN32(device.width(), device.height(), kOpaque_SkAlphaType);
+        const SkSurfaceProps properties(0, geometry, 0, 1);
+        // On the CPU on both paths: Ganesh's LCD masks differ from the raster
+        // backend's, which is the pixel reference.
+        const sk_sp<SkSurface> surface = SkSurfaces::Raster(info, &properties);
+        if (!surface)
+            return;
+        SkCanvas* coverage = surface->getCanvas();
+        coverage->clear(SK_ColorBLACK);
+        coverage->setMatrix(coverageMatrix);
+        SkPaint white;
+        white.setAntiAlias(true);
+        white.setColor(SK_ColorWHITE);
+        coverage->drawTextBlob(blob, origin.x(), origin.y(), white);
+        image = surface->makeImageSnapshot();
+        if (cacheable && image) {
+            const auto found = s_coverageIndex.find(hash);
+            if (found != s_coverageIndex.end()) {
+                s_coverageBytes -= found->second->image->imageInfo().computeMinByteSize();
+                s_coverage.erase(found->second);
+                s_coverageIndex.erase(found);
+            }
+            s_coverage.push_front({hash, std::move(runs), coverageMatrix, origin, device.size(), geometry, image});
+            s_coverageIndex[hash] = s_coverage.begin();
+            s_coverageBytes += image->imageInfo().computeMinByteSize();
+            while (s_coverage.size() > 1
+                   && (s_coverageBytes > kCoverageCacheBytes || s_coverage.size() > kCoverageCacheEntries))
+                evictCoverage();
+        }
+    }
 
     sk_sp<SkBlender> blender;
     SkPaint paint;
@@ -566,8 +722,7 @@ static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob,
         return;
     canvas->save();
     canvas->resetMatrix();
-    canvas->drawImage(surface->makeImageSnapshot(), SkScalar(device.x()), SkScalar(device.y()), SkSamplingOptions(),
-                      &paint);
+    canvas->drawImage(image, SkScalar(device.x()), SkScalar(device.y()), SkSamplingOptions(), &paint);
     canvas->restore();
 }
 

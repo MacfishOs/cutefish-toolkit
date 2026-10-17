@@ -28,6 +28,7 @@
 #include "ui/painter.h"
 #include "ui/platform_window.h"
 #include "ui/text_context.h"
+#include "ui/text_lines.h"
 #include "ui/theme.h"
 #include "ui/trusted_connection.h"
 #include "ui/view.h"
@@ -680,6 +681,7 @@ void Window::handleScaleChanged(double scale)
     if (scale == m_scale)
         return;
     m_scale = scale;
+    clearSubpixelCoverage();
     // Text is shaped at the device size.
     requestLayout();
     damageAll();

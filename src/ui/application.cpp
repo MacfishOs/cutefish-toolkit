@@ -15,6 +15,7 @@
 #include "ui/appearance.h"
 #include "ui/platform_window.h"
 #include "ui/text_context.h"
+#include "ui/text_lines.h"
 #include "ui/window.h"
 #include "wayland/connection.h"
 
@@ -74,6 +75,7 @@ Application::~Application()
         m_loop->dropPosted();
     m_appearance.reset();
     m_sessionBus = nullptr;
+    clearSubpixelCoverage();
     m_text.reset();
     m_gpu.reset();
     m_connection.reset();
@@ -121,6 +123,7 @@ void Application::setApplicationId(std::string applicationId)
 
 void Application::themeChanged()
 {
+    clearSubpixelCoverage();
     for (Window* window : m_windows)
         window->handleThemeChanged();
 }

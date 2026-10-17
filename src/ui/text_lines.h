@@ -89,6 +89,10 @@ void paintTextLines(SkCanvas* canvas, skia::textlayout::Paragraph* paragraph, co
 // translucent targets (per-channel coverage blended over the target).
 void paintParagraph(SkCanvas* canvas, skia::textlayout::Paragraph* paragraph, double x, double y);
 
+// Forgets the coverage kept for subpixel text over translucent targets, as
+// after a change of theme, font or scale.
+void clearSubpixelCoverage();
+
 // Where a paragraph's text went, for carets, selections and hit tests:
 // every line's UTF-8 range and the x of each cluster as drawn.
 struct TextGeometry
