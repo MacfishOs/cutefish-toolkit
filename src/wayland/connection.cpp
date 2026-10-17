@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
 #include <sys/epoll.h>
+#include <utility>
 #include <wayland-client.h>
 
 #include <cursor-shape-v1-client-protocol.h>
@@ -234,7 +235,9 @@ struct ConnectionListeners
             }
             wl_pointer_release(self->m_pointer);
             self->m_pointer = nullptr;
-            self->m_pointerFocus = nullptr;
+            // The compositor need not send a leave for a pointer the seat lost.
+            if (ShellSurface* focus = std::exchange(self->m_pointerFocus, nullptr))
+                focus->delegate()->pointerLeave();
         }
 
         const bool hasTouch = capabilities & WL_SEAT_CAPABILITY_TOUCH;
@@ -244,7 +247,7 @@ struct ConnectionListeners
         } else if (!hasTouch && self->m_touch) {
             wl_touch_release(self->m_touch);
             self->m_touch = nullptr;
-            self->m_touchFocus.clear();
+            touchCancel(self, nullptr);
         }
 
         const bool hasKeyboard = capabilities & WL_SEAT_CAPABILITY_KEYBOARD;
@@ -253,9 +256,12 @@ struct ConnectionListeners
             self->m_keyboard->onKeyPressSerial = [self](uint32_t serial) {
                 self->m_inputSerial = serial;
             };
-        }
-        else if (!hasKeyboard)
+        } else if (!hasKeyboard && self->m_keyboard) {
+            ShellSurface* focus = self->m_keyboard->focus();
             self->m_keyboard.reset();
+            if (focus)
+                focus->delegate()->keyboardLeave();
+        }
     }
 
     static void seatName(void*, wl_seat*, const char*)

@@ -93,7 +93,7 @@ add_executable(cutefish-toolkit-embedded-tests
     embedded/embedded_host_test.cpp
 )
 
-target_link_libraries(cutefish-toolkit-embedded-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::Xkbcommon
+target_link_libraries(cutefish-toolkit-embedded-tests PRIVATE cutefish-toolkit GTest::gtest
     PkgConfig::Egl PkgConfig::GlesV2)
 
 gtest_discover_tests(cutefish-toolkit-embedded-tests)
@@ -123,6 +123,7 @@ endforeach()
 add_executable(cutefish-toolkit-wayland-tests
     wayland/data_device_test.cpp
     wayland/output_test.cpp
+    wayland/seat_test.cpp
     wayland/selection_test.cpp
     ${TEST_PROTOCOL_SOURCES}
 )
