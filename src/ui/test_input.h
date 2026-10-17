@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -60,6 +61,8 @@ public:
     static View* toolTip(Window& window);
     // How often the window asked the window system to move it.
     static int moveRequests(Window& window);
+    // The views watching damage in the window, as a header backdrop does.
+    static size_t damageWatches(Window& window);
     // Headless windows report glass as available, or not (the default).
     static void setGlassAvailable(bool available);
     // The glass the window asked for, or none.

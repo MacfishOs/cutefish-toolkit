@@ -17,6 +17,7 @@
 #include "ui/painter.h"
 #include "ui/scroll_view.h"
 #include "ui/switch.h"
+#include "ui/test_input.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 
@@ -195,4 +196,21 @@ TEST(HeaderBackdropTest, FrameCost)
     printf("header backdrop at 1.5: page %.2f ms, with the bar %.2f ms still, %.2f ms content changing, "
            "%.2f ms scrolling\n",
            without, still, changing, scrolling);
+}
+
+// A bar taken out of its window and then destroyed, as a page switch drops
+// it, stops watching the window's damage.
+TEST(HeaderBackdropTest, ForgetsItsWindowWhenTakenOut)
+{
+    Page page;
+    page.view->setScrollPosition({0, page.underTheBar()});
+    page.window.grab();
+    View* root = page.window.contentView();
+    for (int i = 0; i < 5; ++i) {
+        HeaderBackdrop* bar = root->addChild<HeaderBackdrop>(page.view);
+        bar->setGeometry({0, 0, 900, 52});
+        page.window.grab();
+        root->takeChild(bar).reset();
+    }
+    EXPECT_EQ(TestInput::damageWatches(page.window), 1u);
 }

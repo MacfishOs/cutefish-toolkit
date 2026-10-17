@@ -92,6 +92,15 @@ struct BlurCache
 };
 
 static std::unordered_map<const HeaderBackdrop*, BlurCache> s_blurs;
+// The window each backdrop's damage watch is in: a backdrop taken out of its
+// window before it goes no longer finds the window through its parents.
+static std::unordered_map<const HeaderBackdrop*, Window*> s_watchedWindows;
+
+static bool isOpen(const Window* window)
+{
+    const std::vector<Window*>& windows = Application::instance()->windows();
+    return std::find(windows.begin(), windows.end(), window) != windows.end();
+}
 
 static sk_sp<SkRuntimeEffect> makeEffect(const char* code)
 {
@@ -178,8 +187,11 @@ HeaderBackdrop::HeaderBackdrop(ScrollView* view, Edge edge)
 HeaderBackdrop::~HeaderBackdrop()
 {
     s_blurs.erase(this);
-    if (Window* window = this->window())
-        window->unwatchDamage(this);
+    if (const auto it = s_watchedWindows.find(this); it != s_watchedWindows.end()) {
+        if (isOpen(it->second))
+            it->second->unwatchDamage(this);
+        s_watchedWindows.erase(it);
+    }
 }
 
 void HeaderBackdrop::setSeparatorVisible(bool visible)
@@ -258,6 +270,10 @@ void HeaderBackdrop::paint(Painter& painter)
                                                      int(std::floor(sourceOrigin.y * scale)) - 1,
                                                      int(std::ceil((sourceOrigin.x + width) * scale)) + 1,
                                                      int(std::ceil((sourceOrigin.y + height) * scale)) + 1);
+        Window*& watched = s_watchedWindows[this];
+        if (watched && watched != window && isOpen(watched))
+            watched->unwatchDamage(this);
+        watched = window;
         changes = window->watchDamage(this, content, sourceRect);
         cached = &s_blurs[this];
         const bool current = cached->context == context && cached->changes == changes && cached->scale == scale

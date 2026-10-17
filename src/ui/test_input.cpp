@@ -11,6 +11,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
 
+#include "ui/layer.h"
 #include "ui/painter.h"
 #include "ui/platform_window.h"
 #include "ui/view.h"
@@ -177,6 +178,11 @@ View* TestInput::toolTip(Window& window)
 int TestInput::moveRequests(Window& window)
 {
     return window.m_platform->moveRequests();
+}
+
+size_t TestInput::damageWatches(Window& window)
+{
+    return window.m_frameDamage->watches.size();
 }
 
 void TestInput::setGlassAvailable(bool available)
