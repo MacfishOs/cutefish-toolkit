@@ -93,7 +93,7 @@ add_executable(cutefish-toolkit-embedded-tests
     embedded/embedded_host_test.cpp
 )
 
-target_link_libraries(cutefish-toolkit-embedded-tests PRIVATE cutefish-toolkit GTest::gtest
+target_link_libraries(cutefish-toolkit-embedded-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::Xkbcommon
     PkgConfig::Egl PkgConfig::GlesV2)
 
 gtest_discover_tests(cutefish-toolkit-embedded-tests)
@@ -129,6 +129,6 @@ add_executable(cutefish-toolkit-wayland-tests
 )
 target_include_directories(cutefish-toolkit-wayland-tests PRIVATE ${TEST_PROTOCOL_DIR})
 target_link_libraries(cutefish-toolkit-wayland-tests PRIVATE cutefish-toolkit GTest::gtest_main
-    PkgConfig::WaylandServer PkgConfig::WaylandClient Threads::Threads)
+    PkgConfig::WaylandServer PkgConfig::WaylandClient PkgConfig::Xkbcommon Threads::Threads)
 
 gtest_discover_tests(cutefish-toolkit-wayland-tests)

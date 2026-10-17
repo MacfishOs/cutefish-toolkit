@@ -3,11 +3,15 @@
 
 #include <gtest/gtest.h>
 
+#include <linux/input-event-codes.h>
 #include <sys/eventfd.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
@@ -18,6 +22,7 @@
 
 #include <wayland-client.h>
 #include <wayland-server.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include "fractional-scale-v1-server-protocol.h"
 #include "viewporter-server-protocol.h"
@@ -212,6 +217,12 @@ void settle(FakeCompositor& compositor, wl_display* display)
 }
 
 
+static void runFor(base::EventLoop& loop, std::chrono::milliseconds duration)
+{
+    loop.startTimer(duration, false, [&loop] { loop.quit(); });
+    loop.run();
+}
+
 } // namespace
 
 // A seat that loses its pointer, keyboard or touch ends their focus on the window.
@@ -255,4 +266,61 @@ TEST(SeatTest, LosingADeviceEndsItsFocus)
     EXPECT_EQ(target.pointerLeft, 1);
     EXPECT_EQ(target.keyboardLeft, 1);
     EXPECT_EQ(target.touchesCancelled, 1);
+}
+
+// A repeat rate of zero stops the repeat of a key held down.
+TEST(SeatTest, ZeroRepeatRateStopsTheRepeat)
+{
+    xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    ASSERT_TRUE(context);
+    xkb_keymap* keymap = xkb_keymap_new_from_names(context, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    ASSERT_TRUE(keymap);
+    char* text = xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
+    const std::string keymapText = text;
+    free(text);
+    xkb_keymap_unref(keymap);
+    xkb_context_unref(context);
+
+    FakeCompositor compositor;
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+
+    InputTarget target;
+    auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+    compositor.post([](FakeCompositor& self) {
+        wl_seat_send_capabilities(self.last(wl_seat_interface), WL_SEAT_CAPABILITY_KEYBOARD);
+    });
+    connection->flush();
+    settle(compositor, connection->display());
+
+    compositor.post([keymapText](FakeCompositor& self) {
+        wl_resource* surface = self.last(wl_surface_interface);
+        wl_resource* keyboard = self.last(wl_keyboard_interface);
+        if (!surface || !keyboard)
+            return;
+        const int fd = memfd_create("keymap", MFD_CLOEXEC);
+        (void)!write(fd, keymapText.c_str(), keymapText.size() + 1);
+        wl_keyboard_send_keymap(keyboard, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fd, uint32_t(keymapText.size() + 1));
+        close(fd);
+        wl_keyboard_send_repeat_info(keyboard, 25, 50);
+        wl_array keys;
+        wl_array_init(&keys);
+        wl_keyboard_send_enter(keyboard, 1, surface, &keys);
+        wl_array_release(&keys);
+    });
+    settle(compositor, connection->display());
+    // The keymap compiles on another thread.
+    runFor(loop, std::chrono::milliseconds(300));
+    ASSERT_EQ(target.keyboardEntered, 1);
+
+    compositor.post([](FakeCompositor& self) {
+        wl_resource* keyboard = self.last(wl_keyboard_interface);
+        wl_keyboard_send_key(keyboard, 2, 0, KEY_A, WL_KEYBOARD_KEY_STATE_PRESSED);
+        wl_keyboard_send_repeat_info(keyboard, 0, 50);
+    });
+    settle(compositor, connection->display());
+    ASSERT_EQ(target.keysPressed, 1);
+    runFor(loop, std::chrono::milliseconds(200));
+    EXPECT_EQ(target.keysPressed, 1);
 }

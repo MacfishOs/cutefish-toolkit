@@ -76,6 +76,9 @@ struct KeyboardListeners
         auto* self = static_cast<Keyboard*>(data);
         self->m_repeatRate = rate;
         self->m_repeatDelay = delay;
+        // A rate of zero turns repeating off, also for a key held now.
+        if (rate <= 0)
+            self->stopRepeat();
     }
 
     static constexpr wl_keyboard_listener listener = {
