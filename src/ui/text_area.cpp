@@ -910,7 +910,9 @@ void TextArea::edited()
 
 void TextArea::moved()
 {
-    d->dirty = true;
+    // The preedit shows at the cursor; the text alone does not move with it.
+    if (!d->preedit.empty())
+        d->dirty = true;
     d->caretVisible = true;
     auto& loop = Application::instance()->loop();
     if (d->blinkTimer)
