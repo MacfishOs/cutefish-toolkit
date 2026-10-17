@@ -498,6 +498,7 @@ Connection::Connection(sd_bus* bus, EventLoop& loop)
     m_timerWatch = m_loop.watch(m_timerFd, EPOLLIN, [this](uint32_t) {
         uint64_t expirations;
         [[maybe_unused]] const auto r = ::read(m_timerFd, &expirations, sizeof(expirations));
+        m_armedTimeout = UINT64_MAX;
         process();
     });
     // Messages read during a blocking call wait in the queue, and writes may
@@ -522,7 +523,16 @@ void Connection::process()
 
 void Connection::prepare()
 {
-    process();
+    // Messages read during a blocking call make the timeout 0; anything else
+    // to read or write wakes the loop through the socket.
+    uint64_t timeout = UINT64_MAX;
+    if (sd_bus_get_timeout(m_bus, &timeout) < 0)
+        timeout = UINT64_MAX;
+    if (timeout == 0) {
+        process();
+        if (sd_bus_get_timeout(m_bus, &timeout) < 0)
+            timeout = UINT64_MAX;
+    }
 
     const int events = sd_bus_get_events(m_bus);
     if (events >= 0) {
@@ -534,9 +544,11 @@ void Connection::prepare()
     }
 
     // Absolute on CLOCK_MONOTONIC; it ends method calls that get no reply.
+    if (timeout == m_armedTimeout)
+        return;
+    m_armedTimeout = timeout;
     itimerspec spec{};
-    uint64_t timeout = 0;
-    if (sd_bus_get_timeout(m_bus, &timeout) >= 0 && timeout != UINT64_MAX) {
+    if (timeout != UINT64_MAX) {
         timeout = std::max<uint64_t>(timeout, 1);
         spec.it_value.tv_sec = time_t(timeout / 1000000);
         spec.it_value.tv_nsec = long(timeout % 1000000) * 1000;

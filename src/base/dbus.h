@@ -288,6 +288,7 @@ private:
     int m_timerFd = -1;
     int m_timerWatch = 0;
     uint32_t m_events = 0;
+    uint64_t m_armedTimeout = UINT64_MAX;
 };
 
 // A remote object's interface.
