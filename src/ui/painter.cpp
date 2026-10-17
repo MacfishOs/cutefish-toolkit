@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <list>
 #include <utility>
 
 #include "include/core/SkBlurTypes.h"
@@ -337,15 +339,71 @@ void Painter::drawImage(const SkImage* image, const RectF& rect)
     m_canvas->drawImageRect(image, toSkRect(device), sampling, &paint);
 }
 
+// Copies of the Image pixels drawn lately, by where the pixels were: one
+// drawn every frame is copied, and uploaded to the GPU, once while its
+// pixels stay the same.
+static constexpr size_t kImageCopiesBytes = size_t(8) * 1024 * 1024;
+static constexpr size_t kImageCopies = 16;
+
+namespace {
+
+struct ImageCopy
+{
+    const uint32_t* source;
+    sk_sp<SkImage> image;
+};
+
+} // namespace
+
+static sk_sp<SkImage> imageCopy(const Image& image)
+{
+    // 0xAARRGGBB words are BGRA bytes on a little-endian machine.
+    const size_t rowBytes = size_t(image.width()) * 4;
+    const SkPixmap pixels(SkImageInfo::Make(image.width(), image.height(), kBGRA_8888_SkColorType,
+                                            kUnpremul_SkAlphaType),
+                          image.bits(), rowBytes);
+    const size_t bytes = rowBytes * size_t(image.height());
+    if (bytes > kImageCopiesBytes)
+        return SkImages::RasterFromPixmapCopy(pixels);
+
+    // Most recently drawn first.
+    thread_local std::list<ImageCopy> copies;
+    for (auto it = copies.begin(); it != copies.end(); ++it) {
+        SkPixmap kept;
+        if (it->source != image.bits() || it->image->width() != image.width()
+            || it->image->height() != image.height() || !it->image->peekPixels(&kept))
+            continue;
+        bool same = true;
+        for (int y = 0; y < image.height() && same; ++y)
+            same = std::memcmp(kept.addr32(0, y), pixels.addr32(0, y), rowBytes) == 0;
+        if (!same) {
+            copies.erase(it);
+            break;
+        }
+        copies.splice(copies.begin(), copies, it);
+        return copies.front().image;
+    }
+    sk_sp<SkImage> copy = SkImages::RasterFromPixmapCopy(pixels);
+    if (!copy)
+        return nullptr;
+    copies.push_front({image.bits(), copy});
+    size_t kept = 0;
+    size_t count = 0;
+    for (auto it = copies.begin(); it != copies.end();) {
+        kept += size_t(it->image->width()) * size_t(it->image->height()) * 4;
+        if (++count > kImageCopies || kept > kImageCopiesBytes)
+            it = copies.erase(it);
+        else
+            ++it;
+    }
+    return copy;
+}
+
 void Painter::drawImage(const Image& image, const RectF& rect)
 {
     if (image.isNull())
         return;
-    // 0xAARRGGBB words are BGRA bytes on a little-endian machine.
-    const SkImageInfo info = SkImageInfo::Make(image.width(), image.height(), kBGRA_8888_SkColorType,
-                                               kUnpremul_SkAlphaType);
-    const sk_sp<SkImage> pixels = SkImages::RasterFromPixmapCopy(
-        SkPixmap(info, image.bits(), size_t(image.width()) * 4));
+    const sk_sp<SkImage> pixels = imageCopy(image);
     drawImage(pixels.get(), rect);
 }
 
