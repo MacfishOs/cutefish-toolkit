@@ -72,6 +72,8 @@ public:
     // The size a window shown maximized returns to; before show().
     virtual void setRestoreSize(int, int) {}
     virtual void show(int width, int height) = 0;
+    // A popup: placed again at the size, see Window::setPopupPlacement().
+    virtual void setPopupPlacement(const PopupPlacement&, int /*width*/, int /*height*/) {}
     // Embedded only: off screen until destroyed.
     virtual void hide() {}
     virtual void startMove() = 0;

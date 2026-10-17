@@ -50,7 +50,7 @@ public:
         shown.push_back(popup);
         open.push_back(popup);
     }
-    void popupResized(EmbeddedWindow* popup) override { resized.push_back(popup); }
+    void popupRepositioned(EmbeddedWindow* popup) override { repositioned.push_back(popup); }
     void popupHidden(EmbeddedWindow* popup) override
     {
         hidden.push_back(popup);
@@ -71,7 +71,7 @@ public:
 
     std::vector<EmbeddedWindow*> shown;
     std::vector<EmbeddedWindow*> open;
-    std::vector<EmbeddedWindow*> resized;
+    std::vector<EmbeddedWindow*> repositioned;
     std::vector<EmbeddedWindow*> hidden;
     std::vector<EmbeddedWindow*> activated;
     std::vector<std::optional<TextInputState>> textInput;
@@ -456,15 +456,26 @@ TEST(EmbeddedHostTest, PopupsGoWithTheirWindow)
     bare->show();
     ASSERT_EQ(host.open.size(), 2u);
     bare->resize({60, 20});
-    ASSERT_EQ(host.resized.size(), 1u);
+    ASSERT_EQ(host.repositioned.size(), 1u);
+    // Moved, it is placed again where the new placement says.
+    placement.anchorRect = {30, 40, 1, 1};
+    bare->setPopupPlacement(placement);
+    ASSERT_EQ(host.repositioned.size(), 2u);
+    EXPECT_EQ(host.repositioned[1], host.open[1]);
+    EXPECT_EQ(host.open[1]->popupPlacement().anchorRect, (RectF{30, 40, 1, 1}));
     window->closePopups();
     EXPECT_TRUE(host.open.empty());
     EXPECT_TRUE(bare->isHidden());
-    // Shown again, it maps again at its size.
+    // Moved while hidden, the host hears of it only when it maps again, at
+    // its size and the last placement.
+    placement.anchorRect = {50, 10, 1, 1};
+    bare->setPopupPlacement(placement);
+    EXPECT_EQ(host.repositioned.size(), 2u);
     bare->show();
     EXPECT_FALSE(bare->isHidden());
     ASSERT_EQ(host.open.size(), 1u);
     EXPECT_EQ(host.open[0]->size(), (SizeF{60, 20}));
+    EXPECT_EQ(host.open[0]->popupPlacement().anchorRect, (RectF{50, 10, 1, 1}));
     bare->hide();
     EXPECT_TRUE(host.open.empty());
     bare.reset();
@@ -866,13 +877,13 @@ TEST(EmbeddedHostTest, OpenMenusTakeChangedRows)
     // Nothing changed: nothing happens.
     menu.itemsChanged();
     runLoop(10ms);
-    EXPECT_TRUE(host.resized.empty());
+    EXPECT_TRUE(host.repositioned.empty());
 
     menu.addItem("Two", [&chosen] { chosen = "two"; });
     menu.setItemText(0, "First");
     menu.itemsChanged();
     runLoop(10ms);
-    ASSERT_EQ(host.resized.size(), 1u);
+    ASSERT_EQ(host.repositioned.size(), 1u);
     EXPECT_EQ(popup->size().height, 3 * 30 + 2 + 2 * 5);
     // The submenu's row is still there: kept, and it has the keys.
     EXPECT_TRUE(more->isOpen());

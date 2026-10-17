@@ -60,6 +60,7 @@ public:
     void setTransientParent(PlatformWindow* parent, bool modal) override;
     void setRestoreSize(int width, int height) override;
     void show(int width, int height) override;
+    void setPopupPlacement(const PopupPlacement& placement, int width, int height) override;
     void startMove() override;
     void setCursorShape(CursorShape shape) override;
     void setBlur(const RectF& rect, double radius) override;

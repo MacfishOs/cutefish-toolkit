@@ -184,14 +184,9 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate)
         cutefish_window_hints_v1_set_server_resize(connection.windowHints(), m_surface, 1);
 }
 
-ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurface* parent,
-                           const PopupPlacement& placement, int width, int height, bool grab)
-    : m_connection(connection)
-    , m_delegate(delegate)
-    , m_parent(parent)
+static xdg_positioner* createPositioner(Connection& connection, const PopupPlacement& placement,
+                                        int width, int height)
 {
-    createSurface();
-
     xdg_positioner* positioner = xdg_wm_base_create_positioner(connection.wmBase());
     xdg_positioner_set_size(positioner, std::max(1, width), std::max(1, height));
     const RectF& rect = placement.anchorRect;
@@ -217,7 +212,18 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurf
         adjustment |= XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_X
                 | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_Y;
     xdg_positioner_set_constraint_adjustment(positioner, adjustment);
+    return positioner;
+}
 
+ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurface* parent,
+                           const PopupPlacement& placement, int width, int height, bool grab)
+    : m_connection(connection)
+    , m_delegate(delegate)
+    , m_parent(parent)
+{
+    createSurface();
+
+    xdg_positioner* positioner = createPositioner(connection, placement, width, height);
     m_xdgPopup = xdg_surface_get_popup(m_xdgSurface, parent->m_xdgSurface, positioner);
     xdg_positioner_destroy(positioner);
     xdg_popup_add_listener(m_xdgPopup, &ShellSurfaceListeners::xdgPopup, this);
@@ -530,6 +536,15 @@ void ShellSurface::setRestoreId(const std::string& id)
 void ShellSurface::map()
 {
     wl_surface_commit(m_surface);
+}
+
+void ShellSurface::reposition(const PopupPlacement& placement, int width, int height)
+{
+    if (!m_xdgPopup || xdg_popup_get_version(m_xdgPopup) < XDG_POPUP_REPOSITION_SINCE_VERSION)
+        return;
+    xdg_positioner* positioner = createPositioner(m_connection, placement, width, height);
+    xdg_popup_reposition(m_xdgPopup, positioner, 0);
+    xdg_positioner_destroy(positioner);
 }
 
 void ShellSurface::prepareCommit(int width, int height, bool opaque)

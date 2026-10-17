@@ -69,10 +69,16 @@ void EmbeddedPlatformWindow::hide()
         s_host->popupHidden(owner);
 }
 
-void EmbeddedPlatformWindow::popupResized()
+void EmbeddedPlatformWindow::setPopupPlacement(const PopupPlacement& placement, int, int)
+{
+    m_placement = placement;
+    popupRepositioned();
+}
+
+void EmbeddedPlatformWindow::popupRepositioned()
 {
     if (m_popupShown && s_host && owner)
-        s_host->popupResized(owner);
+        s_host->popupRepositioned(owner);
 }
 
 void EmbeddedPlatformWindow::activate()

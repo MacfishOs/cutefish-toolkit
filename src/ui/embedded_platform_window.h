@@ -46,6 +46,7 @@ public:
     void setBlurShape(const Path& path) override;
     void setTextInput(const TextInputState* state) override;
     void show(int width, int height) override;
+    void setPopupPlacement(const PopupPlacement& placement, int width, int height) override;
     void hide() override;
     bool startDrag(DragSource source) override;
     void setCursorShape(CursorShape shape) override;
@@ -85,7 +86,7 @@ public:
     const RectF& blurRect() const { return m_blurRect; }
     double blurRadius() const { return m_blurRadius; }
     const Path& blurShape() const { return m_blurShape; }
-    void popupResized();
+    void popupRepositioned();
 
 private:
     bool m_popup = false;

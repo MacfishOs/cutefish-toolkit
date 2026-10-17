@@ -160,6 +160,13 @@ void WaylandWindow::show(int width, int height)
     m_shell->map();
 }
 
+void WaylandWindow::setPopupPlacement(const PopupPlacement& placement, int width, int height)
+{
+    m_placement = placement;
+    if (m_shell)
+        m_shell->reposition(placement, width, height);
+}
+
 void WaylandWindow::setBlur(const RectF& rect, double radius)
 {
     m_blurRect = rect;

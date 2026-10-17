@@ -129,6 +129,9 @@ public:
 
     // The initial commit, without a buffer; the compositor answers with a configure.
     void map();
+    // A popup: placed again, as xdg_popup.reposition; the compositor answers
+    // with a configure. Ignored by a compositor without it.
+    void reposition(const PopupPlacement& placement, int width, int height);
 
     // The rounded body the compositor blurs behind, outlines and shadows; an
     // empty rect turns it off. Applies with the next commit.

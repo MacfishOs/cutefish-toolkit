@@ -307,7 +307,13 @@ void Window::resize(SizeF size)
     requestLayout();
     // An embedded popup's host places it again.
     if (m_shown && m_parent && m_platform->isEmbedded() && !(m_size == previous))
-        static_cast<EmbeddedPlatformWindow*>(m_platform.get())->popupResized();
+        static_cast<EmbeddedPlatformWindow*>(m_platform.get())->popupRepositioned();
+}
+
+void Window::setPopupPlacement(const PopupPlacement& placement)
+{
+    if (m_parent)
+        m_platform->setPopupPlacement(placement, int(m_size.width), int(m_size.height));
 }
 
 void Window::setFitsContentHeight(bool fits)

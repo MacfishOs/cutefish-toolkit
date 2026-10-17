@@ -138,6 +138,9 @@ public:
     void setMaximumSize(SizeF size);
     // The size the window asks for when the compositor leaves it the choice.
     void resize(SizeF size);
+    // A popup: placed again by `placement` at its size now, shown or not, as
+    // xdg_popup.reposition. Resize first to move and resize it at once.
+    void setPopupPlacement(const PopupPlacement& placement);
     // Keeps the window exactly as tall as its content at its width, measured
     // at the window's scale, since text is taller at some scales.
     void setFitsContentHeight(bool fits);

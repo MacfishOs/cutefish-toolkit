@@ -33,8 +33,9 @@ public:
     // root. Keys stay with the root window, which passes them to its
     // innermost grabbing popup itself.
     virtual void popupShown(EmbeddedWindow*) {}
-    // A shown popup's size changed: place it again.
-    virtual void popupResized(EmbeddedWindow*) {}
+    // A shown popup's size or popupPlacement() changed, as
+    // xdg_popup.reposition: place it again.
+    virtual void popupRepositioned(EmbeddedWindow*) {}
     // Off screen now, hidden or being destroyed: neither render it nor send
     // it input any more.
     virtual void popupHidden(EmbeddedWindow*) {}
