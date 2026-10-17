@@ -61,6 +61,32 @@ TEST(WindowTest, UnconstrainedConfigureWithoutSizeRestoresTheNormalSize)
     }
 }
 
+// The headless platform answers maximize and full screen with a configure
+// leaving the size to the window: the state holds, and the size comes back.
+TEST(WindowTest, HeadlessMaximizeKeepsTheStateAndTheSize)
+{
+    Window window;
+    window.setContentView(std::make_unique<View>());
+    window.resize({400, 300});
+    window.show();
+    window.grab();
+
+    window.setMaximized(true);
+    window.grab();
+    EXPECT_TRUE(window.states().maximized);
+    window.setFullScreen(true);
+    EXPECT_TRUE(window.states().maximized);
+    EXPECT_TRUE(window.states().fullScreen);
+    window.setFullScreen(false);
+    EXPECT_TRUE(window.states().maximized);
+    EXPECT_FALSE(window.states().fullScreen);
+    window.setMaximized(false);
+    window.grab();
+    EXPECT_FALSE(window.states().maximized);
+    EXPECT_EQ(window.size().width, 400);
+    EXPECT_EQ(window.size().height, 300);
+}
+
 // FishUI puts the buttons' row in a RowLayout cell after the content and
 // before an end margin item: the row starts on a whole logical pixel, a half
 // rounding up, while the buttons keep the fractional top margin.
