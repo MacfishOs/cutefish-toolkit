@@ -30,6 +30,9 @@
 
 namespace cutefish::ui {
 
+// Character fallbacks remembered before the cache starts over.
+static constexpr size_t kMaximumFallbacks = 65536;
+
 // "zh_CN.UTF-8" becomes "zh-CN"; "C" and "POSIX" name no language.
 namespace {
 
@@ -282,6 +285,8 @@ protected:
             return found->second;
         sk_sp<SkTypeface> typeface = m_fonts->matchFamilyStyleCharacter(family, style, bcp47, bcp47Count,
                                                                         character);
+        if (m_fallbacks.size() >= kMaximumFallbacks)
+            m_fallbacks.clear();
         m_fallbacks.emplace(std::move(key), typeface);
         return typeface;
     }

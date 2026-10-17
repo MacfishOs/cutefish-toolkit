@@ -16,6 +16,10 @@
 
 namespace cutefish::ui {
 
+// Characters remembered before the cache starts over: text shown over a long
+// session, such as a terminal's, may go through any number of them.
+static constexpr size_t kMaximumFound = 65536;
+
 static std::string folded(std::string text)
 {
     for (char& c : text)
@@ -78,6 +82,8 @@ sk_sp<SkTypeface> FontFallback::typefaceFor(char32_t character)
         return it->second;
     if (!m_sorted)
         sort();
+    if (m_found.size() >= kMaximumFound)
+        m_found.clear();
     sk_sp<SkFontMgr> manager = Application::instance()->text().fontCollection()->getFallbackManager();
     sk_sp<SkTypeface> found;
     for (size_t i = 0; i < m_families.size() && manager; ++i) {

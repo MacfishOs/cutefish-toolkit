@@ -35,6 +35,9 @@
 
 namespace cutefish::ui {
 
+// Characters a font set remembers the fallback of before it starts over.
+static constexpr size_t kMaximumFallbacks = 65536;
+
 static double pixelSizeForPoints(double points)
 {
     const double size = std::floor(points * 96.0 / 72.0 * 100 + 0.5) / 100;
@@ -108,6 +111,8 @@ static const sk_sp<SkTypeface>& typefaceFor(FontSet& set, char32_t c)
     sk_sp<SkTypeface> fallback = set.fallback->typefaceFor(c);
     if (!fallback)
         fallback = set.primary;
+    if (set.fallbacks.size() >= kMaximumFallbacks)
+        set.fallbacks.clear();
     return set.fallbacks.emplace(c, std::move(fallback)).first->second;
 }
 

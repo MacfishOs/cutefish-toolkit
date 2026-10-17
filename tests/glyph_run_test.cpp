@@ -360,6 +360,19 @@ TEST(GlyphRunTest, CachedFullScreenFrame)
     EXPECT_EQ(renderer.cachedClusters(), 94u);
 }
 
+// Output that makes a new cluster every time, such as random combining
+// sequences, keeps the cache bounded, and what is drawn stays the same.
+TEST(GlyphRunTest, ClusterCacheStaysBounded)
+{
+    GlyphRenderer renderer({"DejaVu Sans Mono", 11, false, false}, 1);
+    const std::u32string accented = U"e\u0301";
+    const double advance = renderer.advance(accented);
+    for (char32_t base = 0x4E00; base < 0x4E00 + 20000; ++base)
+        renderer.advance(std::u32string{base, 0x0301});
+    EXPECT_LE(renderer.cachedClusters(), 8192u);
+    EXPECT_EQ(renderer.advance(accented), advance);
+}
+
 // Faces opened before fallback faces are added keep their font bytes: each
 // new fallback face grows the face list, and the first face's FreeType face
 // reads its font from memory that must not move (the terminal's `cat` of box

@@ -44,6 +44,10 @@ namespace cutefish::ui {
 
 // FreeType's oblique shear, 0x0366A in 16.16.
 static constexpr float kObliqueSkew = -float(0x0366A) / 65536.0f;
+// Shaped clusters and character faces kept before each cache starts over: a
+// terminal's output can make new clusters without end.
+static constexpr size_t kMaximumCachedSingles = 65536;
+static constexpr size_t kMaximumCachedClusters = 8192;
 
 // The pixel size for a point size at 96 logical DPI: rounded to two
 // decimals, then to whole pixels.
@@ -405,6 +409,8 @@ int GlyphRendererPrivate::faceForCharacter(char32_t character)
         return -1;
     if (const auto it = characterFaces.find(character); it != characterFaces.end())
         return it->second;
+    if (characterFaces.size() >= kMaximumCachedSingles)
+        characterFaces.clear();
     if (presentsAsEmoji(character)) {
         const int emoji = emojiFace(character);
         if (emoji >= 0) {
@@ -543,12 +549,16 @@ const GlyphRendererPrivate::Shaped& GlyphRendererPrivate::shape(std::u32string_v
         const auto it = singles.find(cluster.front());
         if (it != singles.end())
             return it->second;
+        if (singles.size() >= kMaximumCachedSingles)
+            singles.clear();
         return singles.emplace(cluster.front(), shapeCluster(cluster)).first->second;
     }
     std::u32string key(cluster);
     const auto it = clusters.find(key);
     if (it != clusters.end())
         return it->second;
+    if (clusters.size() >= kMaximumCachedClusters)
+        clusters.clear();
     return clusters.emplace(std::move(key), shapeCluster(cluster)).first->second;
 }
 
@@ -783,6 +793,7 @@ void GlyphRenderer::clearCache()
 {
     d->singles.clear();
     d->clusters.clear();
+    d->characterFaces.clear();
     d->atlasGlyphs.clear();
     d->atlas.reset();
     d->atlasImage.reset();
