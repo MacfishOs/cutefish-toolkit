@@ -71,13 +71,20 @@ private:
     };
 
     // A theme base's GTK icon-theme.cache: the directories holding a name, in
-    // the cache's order.
+    // the cache's order, with the suffixes the files there have.
     class GtkCache
     {
     public:
+        struct Image
+        {
+            std::string directory;
+            bool png = false;
+            bool svg = false;
+        };
+
         explicit GtkCache(const std::string& base);
         bool isValid() const { return m_valid; }
-        std::vector<std::string> lookup(const std::string& name);
+        std::vector<Image> lookup(const std::string& name);
 
     private:
         uint16_t read16(size_t offset);

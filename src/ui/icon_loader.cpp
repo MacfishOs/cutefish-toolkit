@@ -497,9 +497,9 @@ uint32_t IconLoader::GtkCache::read32(size_t offset)
             | uint32_t(m_data[offset]) << 24;
 }
 
-std::vector<std::string> IconLoader::GtkCache::lookup(const std::string& name)
+std::vector<IconLoader::GtkCache::Image> IconLoader::GtkCache::lookup(const std::string& name)
 {
-    std::vector<std::string> directories;
+    std::vector<Image> directories;
     if (!m_valid || name.empty())
         return directories;
     // GTK's icon_name_hash, on signed chars.
@@ -529,12 +529,15 @@ std::vector<std::string> IconLoader::GtkCache::lookup(const std::string& name)
         }
         for (uint32_t j = 0; j < length && m_valid; ++j) {
             const uint32_t index = read16(images + 4 + 8 * j);
+            // GTK's HAS_SUFFIX_SVG and HAS_SUFFIX_PNG.
+            const uint16_t flags = read16(images + 4 + 8 * j + 2);
             const uint32_t offset = read32(list + 4 + index * 4);
             if (!m_valid || index >= count || offset >= m_data.size()) {
                 m_valid = false;
                 return {};
             }
-            directories.emplace_back(reinterpret_cast<const char*>(m_data.data() + offset));
+            directories.push_back({reinterpret_cast<const char*>(m_data.data() + offset), (flags & 4) != 0,
+                                   (flags & 2) != 0});
         }
         return directories;
     }
@@ -664,29 +667,32 @@ std::string IconLoader::lookup(const std::string& name, const std::string& reque
         IconTheme& iconTheme = theme(themeName);
         for (size_t i = 0; i < iconTheme.bases.size(); ++i) {
             const std::string& root = iconTheme.bases[i];
-            // The cache's directories for the name, in its order, saves the stats.
-            std::vector<const Directory*> directories;
+            // The cache's directories for the name, in its order, and the
+            // suffixes it records save the stats.
             GtkCache& cache = *iconTheme.caches[i];
-            const std::vector<std::string> cached = cache.lookup(name);
+            const std::vector<GtkCache::Image> cached = cache.lookup(name);
             if (cache.isValid()) {
-                for (const std::string& path : cached) {
+                for (const GtkCache::Image& image : cached) {
                     const auto found = std::find_if(iconTheme.directories.begin(), iconTheme.directories.end(),
-                                                    [&path](const Directory& d) { return d.path == path; });
-                    if (found != iconTheme.directories.end())
-                        directories.push_back(&*found);
+                                                    [&image](const Directory& d) { return d.path == image.directory; });
+                    if (found == iconTheme.directories.end() || (shortened && !found->generic))
+                        continue;
+                    const std::string base = root + "/" + found->path + "/" + name;
+                    if (image.png)
+                        entries.insert(entries.begin(), {&*found, base + ".png"});
+                    else if (image.svg)
+                        entries.push_back({&*found, base + ".svg"});
                 }
-            } else {
-                for (const Directory& directory : iconTheme.directories)
-                    directories.push_back(&directory);
+                continue;
             }
-            for (const Directory* directory : directories) {
-                if (shortened && !directory->generic)
+            for (const Directory& directory : iconTheme.directories) {
+                if (shortened && !directory.generic)
                     continue;
-                const std::string base = root + "/" + directory->path + "/" + name;
+                const std::string base = root + "/" + directory.path + "/" + name;
                 if (std::filesystem::exists(base + ".png"))
-                    entries.insert(entries.begin(), {directory, base + ".png"});
+                    entries.insert(entries.begin(), {&directory, base + ".png"});
                 else if (std::filesystem::exists(base + ".svg"))
-                    entries.push_back({directory, base + ".svg"});
+                    entries.push_back({&directory, base + ".svg"});
             }
         }
         if (!entries.empty())
