@@ -31,6 +31,8 @@ public:
     virtual ~SubsurfaceClient() = default;
     // On the UI thread, right before the window commits a frame.
     virtual void parentCommitting() = 0;
+    // On the UI thread, right after the window committed it.
+    virtual void parentCommitted() = 0;
     // The window's surface is going.
     virtual void parentGone() = 0;
 };

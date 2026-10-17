@@ -322,12 +322,14 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
     const std::vector<Rect> damage = paint(m_surface->getCanvas(), bufferAge);
     gpu.skiaContext()->flushAndSubmit(m_surface.get());
 
-    // Subsurface positions, and buffers a synchronised one owes this size,
-    // land with this commit.
+    // Subsurface positions, and the buffers of their new sizes, land with
+    // this commit.
     for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
         client->parentCommitting();
     m_shell->prepareCommit(int(size.width), int(size.height), opaque);
     gpu.swapBuffers(m_eglSurface, damage, height);
+    for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
+        client->parentCommitted();
     return true;
 }
 

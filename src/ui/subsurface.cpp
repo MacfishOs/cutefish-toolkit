@@ -30,6 +30,7 @@ namespace cutefish::ui {
 struct SubsurfacePrivate final : wayland::SubsurfaceClient
 {
     void parentCommitting() override;
+    void parentCommitted() override;
     void parentGone() override;
     // The device size the geometry takes at the window's scale.
     base::Size targetSize() const;
@@ -63,6 +64,7 @@ struct SubsurfacePrivate final : wayland::SubsurfaceClient
     // UI thread state.
     RectF geometry;
     PointF placedPosition = {-1e9, -1e9};
+    // Synchronised for the window's commit under way.
     bool synchronized = false;
 
     // Shared with the drawing thread.
@@ -70,13 +72,16 @@ struct SubsurfacePrivate final : wayland::SubsurfaceClient
     std::condition_variable swapped;
     base::Size wanted;
     SizeF wantedLogical;
+    // Counts the sizes handed over, and the last one swapped at.
+    uint64_t wantedSerial = 0;
+    uint64_t swappedSerial = 0;
     bool opaque = true;
-    base::Size swappedSize;
 
     // Drawing thread state.
     base::Size eglSize;
     base::Size frameSize;
     SizeF frameLogical;
+    uint64_t frameSerial = 0;
     SizeF committedLogical;
     bool committedOpaque = false;
 };
@@ -104,18 +109,39 @@ void SubsurfacePrivate::parentCommitting()
         placedPosition = {geometry.x, geometry.y};
     }
 
-    // A scale change moves the device size too.
+    // Sizes reach the drawing thread only here, so a buffer of a new size
+    // shows with the window's commit of that size, never before it. A scale
+    // change moves the device size too.
     const base::Size target = targetSize();
+    const SizeF logical = {geometry.width, geometry.height};
     std::unique_lock lock(mutex);
+    if (target == wanted && logical == wantedLogical)
+        return;
+    // The first size has no picture to keep in step with.
+    const bool waits = q->onResize && !target.isEmpty() && swappedSerial > 0;
+    if (waits && !synchronized) {
+        wl_subsurface_set_sync(subsurface);
+        synchronized = true;
+    }
     wanted = target;
-    wantedLogical = {geometry.width, geometry.height};
-    if (!synchronized || !q->onResize || target.isEmpty() || swappedSize == target)
+    wantedLogical = logical;
+    const uint64_t serial = ++wantedSerial;
+    if (!waits)
         return;
     lock.unlock();
     q->onResize(target);
     lock.lock();
     swapped.wait_for(lock, std::chrono::milliseconds(q->resizeTimeoutMs),
-                     [&] { return swappedSize == target; });
+                     [&] { return swappedSerial >= serial; });
+}
+
+void SubsurfacePrivate::parentCommitted()
+{
+    // The commit took the buffer; the next ones show as they are swapped.
+    if (!synchronized)
+        return;
+    wl_subsurface_set_desync(subsurface);
+    synchronized = false;
 }
 
 void SubsurfacePrivate::parentGone()
@@ -210,12 +236,7 @@ void Subsurface::setGeometry(const RectF& rect)
     if (rect == d->geometry)
         return;
     d->geometry = rect;
-    {
-        std::lock_guard lock(d->mutex);
-        d->wanted = d->targetSize();
-        d->wantedLogical = {rect.width, rect.height};
-    }
-    // The position is the window's state.
+    // Position and size land with the window's next commit.
     if (d->window)
         d->window->scheduleFrame();
 }
@@ -229,26 +250,6 @@ void Subsurface::setOpaque(bool opaque)
 {
     std::lock_guard lock(d->mutex);
     d->opaque = opaque;
-}
-
-void Subsurface::setSynchronized(bool synchronized)
-{
-    if (synchronized == d->synchronized)
-        return;
-    d->synchronized = synchronized;
-    if (!d->subsurface)
-        return;
-    if (synchronized)
-        wl_subsurface_set_sync(d->subsurface);
-    else
-        wl_subsurface_set_desync(d->subsurface);
-    if (d->window)
-        d->window->scheduleFrame();
-}
-
-bool Subsurface::isSynchronized() const
-{
-    return d->synchronized;
 }
 
 void* Subsurface::getProcAddress(const char* name)
@@ -310,6 +311,7 @@ base::Size Subsurface::beginFrame()
         std::lock_guard lock(d->mutex);
         d->frameSize = d->wanted;
         d->frameLogical = d->wantedLogical;
+        d->frameSerial = d->wantedSerial;
     }
     const base::Size size = d->frameSize;
     if (size.isEmpty())
@@ -368,7 +370,7 @@ bool Subsurface::endFrame()
     const bool done = eglSwapBuffers(d->eglDisplay, d->eglSurface);
     {
         std::lock_guard lock(d->mutex);
-        d->swappedSize = d->frameSize;
+        d->swappedSerial = d->frameSerial;
     }
     d->swapped.notify_all();
     return done;

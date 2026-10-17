@@ -24,8 +24,6 @@ TEST(SubsurfaceTest, HeadlessWindowsHaveNone)
     Subsurface subsurface(&window);
     EXPECT_FALSE(subsurface.isValid());
     subsurface.setGeometry({0, 0, 200, 100});
-    subsurface.setSynchronized(true);
-    EXPECT_TRUE(subsurface.isSynchronized());
     EXPECT_EQ(subsurface.geometry(), (RectF{0, 0, 200, 100}));
     EXPECT_TRUE(subsurface.beginFrame().isEmpty());
     EXPECT_FALSE(subsurface.endFrame());

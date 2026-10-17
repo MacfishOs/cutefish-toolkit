@@ -43,24 +43,20 @@ public:
 
     bool isValid() const;
 
-    // UI thread. The position lands with the window's next frame, the size
-    // with the next buffer drawn after it.
+    // UI thread. Both land with the window's next frame.
     void setGeometry(const RectF& rect);
     RectF geometry() const;
     // An opaque surface (the default) lets the compositor skip what is
     // under it. Applies with the next buffer.
     void setOpaque(bool opaque);
-    // Synchronised, the buffers wait for the window's next commit, so both
-    // land together, as for a resize; desynchronised (the default), each
-    // buffer shows once swapped.
-    void setSynchronized(bool synchronized);
-    bool isSynchronized() const;
 
-    // While synchronised, a window frame that changes the subsurface's device
-    // size first calls this on the UI thread, then waits up to
-    // `resizeTimeoutMs` for the drawing thread to swap a buffer of that size,
-    // so the window and the subsurface change size in the same commit. The
-    // drawing thread must not wait for the UI thread meanwhile.
+    // Buffers show as soon as they are swapped, except across a size change:
+    // the window frame that changes the subsurface's size first calls this
+    // on the UI thread, then waits up to `resizeTimeoutMs` for the drawing
+    // thread to swap a buffer of that size, so the window and the subsurface
+    // change size in the same commit. The drawing thread must not wait for
+    // the UI thread meanwhile. Without it, a new size shows with the first
+    // buffer drawn after that frame.
     std::function<void(base::Size deviceSize)> onResize;
     int resizeTimeoutMs = 100;
 
