@@ -69,13 +69,18 @@ struct TextArea::Private
     // The display without wrapping, which the lines are measured on.
     std::unique_ptr<textlayout::Paragraph> unwrapped;
     std::vector<size_t> unwrappedFromDisplay;
-    std::unique_ptr<textlayout::Paragraph> paragraph;
+    // What is drawn: the unwrapped paragraph when no line wraps.
+    std::unique_ptr<textlayout::Paragraph> wrapped;
+    textlayout::Paragraph* paragraph = nullptr;
     bool dirty = true;
     bool paragraphEnabled = true;
     uint64_t paragraphTheme = 0;
     double layoutWidth = -1;
     double layoutScale = 0;
     bool layoutHinted = true;
+    SizeF unbounded;
+    double unboundedScale = 0;
+    bool unboundedHinted = true;
     std::vector<TextLineBox> lines;
     std::shared_ptr<const LineGlyphs> glyphs;
     TextGeometry geometry;
@@ -132,38 +137,70 @@ struct TextArea::Private
         return (*self)->textLayoutMode().hinted;
     }
 
+    std::unique_ptr<textlayout::Paragraph> make(bool enabled) const
+    {
+        const TextContext& context = Application::instance()->text();
+        const Theme& theme = Theme::current();
+        const textlayout::TextStyle style =
+            context.style(fontSize, fontWeight, enabled ? theme.text : theme.disabledText, fontFamily);
+        textlayout::ParagraphStyle paragraphStyle;
+        paragraphStyle.setTextStyle(style);
+        paragraphStyle.setApplyRoundingHack(false);
+        auto builder = textlayout::ParagraphBuilder::make(paragraphStyle, context.fontCollection(), context.unicode());
+        builder->pushStyle(style);
+        // An empty last line still takes a line.
+        builder->addText(display.data(), display.size());
+        builder->pop();
+        std::unique_ptr<textlayout::Paragraph> built = builder->Build();
+        built->layout(SkScalar(kUnboundedWidth));
+        return built;
+    }
+
+    // The text without wrapping, shaped once per change.
+    void shape(bool enabled)
+    {
+        if (unwrapped && !dirty && paragraphEnabled == enabled && paragraphTheme == Theme::generation())
+            return;
+        buildDisplay();
+        unwrapped = make(enabled);
+        unwrappedFromDisplay = fromDisplay;
+        wrapped.reset();
+        paragraph = nullptr;
+        dirty = false;
+        paragraphEnabled = enabled;
+        paragraphTheme = Theme::generation();
+        layoutWidth = -1;
+        layoutScale = 0;
+        unboundedScale = 0;
+    }
+
+    // The size of the text laid out at an unbounded width, without changing
+    // the layout at the area's width.
+    SizeF unboundedSize(double scale, bool enabled)
+    {
+        shape(enabled);
+        const bool hinted = hintedLayout();
+        if (unboundedScale == scale && unboundedHinted == hinted)
+            return unbounded;
+        const bool round = Application::instance()->text().roundsMetrics(scale, hinted);
+        const double width = naturalWidth(unwrapped.get(), round);
+        // A line near the unbounded width may wrap even there, by its overhang or spaces.
+        if (wrap != WrapMode::NoWrap && width > kUnboundedWidth / 2) {
+            layout(kUnboundedWidth, scale, enabled);
+            return {naturalWidth(*glyphs), textHeight()};
+        }
+        const TextContext& context = Application::instance()->text();
+        const std::vector<TextLineBox> boxes =
+            textLineBoxes(unwrapped.get(), context.typeface(fontWeight, fontFamily).get(), pixelSize(), scale, hinted);
+        unbounded = {width, ui::textHeight(boxes)};
+        unboundedScale = scale;
+        unboundedHinted = hinted;
+        return unbounded;
+    }
+
     void layout(double width, double scale, bool enabled)
     {
-        const bool rebuild = !unwrapped || dirty || paragraphEnabled != enabled
-                             || paragraphTheme != Theme::generation();
-        const auto make = [this, enabled] {
-            const TextContext& context = Application::instance()->text();
-            const Theme& theme = Theme::current();
-            const textlayout::TextStyle style =
-                context.style(fontSize, fontWeight, enabled ? theme.text : theme.disabledText, fontFamily);
-            textlayout::ParagraphStyle paragraphStyle;
-            paragraphStyle.setTextStyle(style);
-            paragraphStyle.setApplyRoundingHack(false);
-            auto builder =
-                textlayout::ParagraphBuilder::make(paragraphStyle, context.fontCollection(), context.unicode());
-            builder->pushStyle(style);
-            // An empty last line still takes a line.
-            builder->addText(display.data(), display.size());
-            builder->pop();
-            std::unique_ptr<textlayout::Paragraph> built = builder->Build();
-            built->layout(SkScalar(kUnboundedWidth));
-            return built;
-        };
-        if (rebuild) {
-            buildDisplay();
-            unwrapped = make();
-            unwrappedFromDisplay = fromDisplay;
-            dirty = false;
-            paragraphEnabled = enabled;
-            paragraphTheme = Theme::generation();
-            layoutWidth = -1;
-            layoutScale = 0;
-        }
+        shape(enabled);
         const bool hinted = hintedLayout();
         const bool round = Application::instance()->text().roundsMetrics(scale, hinted);
         if (layoutWidth == width && layoutScale == scale && layoutHinted == hinted)
@@ -183,15 +220,21 @@ struct TextArea::Private
             }
         }
         buildDisplay(breaks);
-        paragraph = make();
+        if (breaks.empty()) {
+            wrapped.reset();
+            paragraph = unwrapped.get();
+        } else {
+            wrapped = make(enabled);
+            paragraph = wrapped.get();
+        }
         layoutWidth = width;
         layoutScale = scale;
         layoutHinted = hinted;
         const TextContext& context = Application::instance()->text();
-        lines = textLineBoxes(paragraph.get(), context.typeface(fontWeight, fontFamily).get(), pixelSize(), scale,
+        lines = textLineBoxes(paragraph, context.typeface(fontWeight, fontFamily).get(), pixelSize(), scale,
                               hinted);
-        glyphs = lineGlyphs(paragraph.get(), round);
-        geometry = textGeometry(paragraph.get(), *glyphs, display, width, align);
+        glyphs = lineGlyphs(paragraph, round);
+        geometry = textGeometry(paragraph, *glyphs, display, width, align);
     }
 
     double textHeight() const { return ui::textHeight(lines); }
@@ -441,11 +484,11 @@ SizeF TextArea::sizeHint() const
 {
     // T.TextArea: the content, the background's width and the placeholder,
     // each with the padding.
-    d->layout(kUnboundedWidth, currentScale(this), isEnabled());
-    double width = naturalWidth(*d->glyphs) + d->padding.horizontal();
+    const SizeF text = d->unboundedSize(currentScale(this), isEnabled());
+    double width = text.width + d->padding.horizontal();
     if (d->frame)
         width = std::max(width, kFrameWidth);
-    double height = d->textHeight();
+    double height = text.height;
     if (!d->placeholder.empty()) {
         const SizeF placeholder = d->placeholderLabel->sizeHint();
         width = std::max(width, placeholder.width + d->padding.horizontal());
