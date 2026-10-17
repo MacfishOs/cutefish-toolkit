@@ -207,16 +207,17 @@ static const CellLayout* nestedLayout(const View* view)
     return layout && layout->padding() == Margins{} ? layout : nullptr;
 }
 
-// A nested layout fills unless told otherwise.
-static bool fills(const View* view, bool horizontal)
+// A nested layout fills unless told otherwise; `layout` is the view's
+// nestedLayout().
+static bool fills(const View* view, const CellLayout* layout, bool horizontal)
 {
     const LayoutHints& hints = view->layoutHints();
-    return (horizontal ? hints.fillWidth : hints.fillHeight) || nestedLayout(view);
+    return (horizontal ? hints.fillWidth : hints.fillHeight) || layout;
 }
 
 // The item's box on one axis, its margins included; `constraint` is the
-// width a height is measured for.
-static Box itemBox(const View* view, bool horizontal, double constraint)
+// width a height is measured for, `layout` the view's nestedLayout().
+static Box itemBox(const View* view, const CellLayout* layout, bool horizontal, double constraint)
 {
     const LayoutHints& hints = view->layoutHints();
     double minimum = horizontal ? hints.minimumWidth : hints.minimumHeight;
@@ -237,7 +238,6 @@ static Box itemBox(const View* view, bool horizontal, double constraint)
 
     // A nested layout's implicit minimum and maximum are what its children
     // take.
-    const CellLayout* layout = nestedLayout(view);
     CellLayout::Extent extent;
     if (layout) {
         extent = horizontal ? layout->horizontalExtent()
@@ -265,7 +265,7 @@ static Box itemBox(const View* view, bool horizontal, double constraint)
     preferred = std::clamp(preferred, minimum, maximum);
 
     Box box{minimum + margins, preferred + margins, maximum + margins};
-    if (!fills(view, horizontal)) {
+    if (!fills(view, layout, horizontal)) {
         box.minimum = box.preferred;
         box.maximum = box.preferred;
     }
@@ -275,12 +275,11 @@ static Box itemBox(const View* view, bool horizontal, double constraint)
     return box;
 }
 
-// The width an item takes in its cell, its margins included: a filling item
-// takes the cell up to its maximum.
-static double itemWidth(const View* view, double cellWidth)
+// The width an item of this horizontal box takes in its cell, its margins
+// included: a filling item takes the cell up to its maximum.
+static double itemWidth(const View* view, const CellLayout* layout, const Box& box, double cellWidth)
 {
-    const Box box = itemBox(view, true, -1);
-    return std::min(fills(view, true) ? box.maximum : box.preferred, cellWidth);
+    return std::min(fills(view, layout, true) ? box.maximum : box.preferred, cellWidth);
 }
 
 CellLayout::CellLayout(Flow flow, int columns)
@@ -323,20 +322,22 @@ void CellLayout::setColumnCount(int columns)
 std::vector<CellLayout::Cell> CellLayout::cells() const
 {
     std::vector<Cell> cells;
+    cells.reserve(children().size());
     int index = 0;
     for (const auto& child : children()) {
         if (!child->isVisible())
             continue;
+        const CellLayout* nested = nestedLayout(child.get());
         switch (m_flow) {
         case Flow::Row:
-            cells.push_back({child.get(), 0, index});
+            cells.push_back({child.get(), 0, index, nested});
             break;
         case Flow::Column:
-            cells.push_back({child.get(), index, 0});
+            cells.push_back({child.get(), index, 0, nested});
             break;
         case Flow::Grid:
             cells.push_back({child.get(), m_columns > 0 ? index / m_columns : 0,
-                             m_columns > 0 ? index % m_columns : index});
+                             m_columns > 0 ? index % m_columns : index, nested});
             break;
         }
         ++index;
@@ -355,9 +356,13 @@ CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double wi
     }
 
     // Columns first; heights are measured at the column widths.
+    std::vector<Box> itemBoxes;
+    itemBoxes.reserve(cells.size());
     std::vector<Box> columnBoxes(static_cast<size_t>(columns));
-    for (const Cell& cell : cells)
-        columnBoxes[size_t(cell.column)].combine(itemBox(cell.view, true, -1));
+    for (const Cell& cell : cells) {
+        itemBoxes.push_back(itemBox(cell.view, cell.nested, true, -1));
+        columnBoxes[size_t(cell.column)].combine(itemBoxes.back());
+    }
     const Box horizontal = totalBox(columnBoxes, m_columnSpacing);
     geometry.horizontal = {horizontal.minimum + m_padding.horizontal(), horizontal.preferred + m_padding.horizontal(),
                            horizontal.maximum + m_padding.horizontal()};
@@ -365,8 +370,16 @@ CellLayout::Geometry CellLayout::solve(const std::vector<Cell>& cells, double wi
                         geometry.widths);
 
     std::vector<Box> rowBoxes(static_cast<size_t>(rows));
-    for (const Cell& cell : cells)
-        rowBoxes[size_t(cell.row)].combine(itemBox(cell.view, false, itemWidth(cell.view, geometry.widths[size_t(cell.column)])));
+    geometry.itemWidths.resize(cells.size());
+    geometry.itemHeights.resize(cells.size());
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const Cell& cell = cells[i];
+        const double width = itemWidth(cell.view, cell.nested, itemBoxes[i], geometry.widths[size_t(cell.column)]);
+        const Box box = itemBox(cell.view, cell.nested, false, width);
+        rowBoxes[size_t(cell.row)].combine(box);
+        geometry.itemWidths[i] = width;
+        geometry.itemHeights[i] = fills(cell.view, cell.nested, false) ? box.maximum : box.preferred;
+    }
     const Box vertical = totalBox(rowBoxes, m_rowSpacing);
     geometry.vertical = {vertical.minimum + m_padding.vertical(), vertical.preferred + m_padding.vertical(),
                          vertical.maximum + m_padding.vertical()};
@@ -440,7 +453,8 @@ void CellLayout::layout()
     const Geometry geometry = solve(items, std::max(0.0, bounds.width - m_padding.horizontal()),
                                     std::max(0.0, bounds.height - m_padding.vertical()));
 
-    for (const Cell& cell : items) {
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Cell& cell = items[i];
         View* view = cell.view;
         const LayoutHints& hints = view->layoutHints();
         const double cellX = geometry.x[size_t(cell.column)];
@@ -450,10 +464,8 @@ void CellLayout::layout()
 
         // A filling item takes its cell up to its maximum, another its
         // preferred size.
-        const double width = itemWidth(view, cellWidth);
-        const Box vertical = itemBox(view, false, width);
-        double height = fills(view, false) ? vertical.maximum : vertical.preferred;
-        height = std::min(height, cellHeight);
+        const double width = geometry.itemWidths[i];
+        const double height = std::min(geometry.itemHeights[i], cellHeight);
 
         double x = cellX;
         double y = cellY;

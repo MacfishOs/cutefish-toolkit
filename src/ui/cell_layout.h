@@ -67,6 +67,8 @@ private:
         View* view;
         int row;
         int column;
+        // The view as a nested layout, if it is one.
+        const CellLayout* nested;
     };
     struct Geometry
     {
@@ -76,6 +78,9 @@ private:
         std::vector<double> heights;
         Extent horizontal;
         Extent vertical;
+        // Per cell: the width and height its item takes, margins included.
+        std::vector<double> itemWidths;
+        std::vector<double> itemHeights;
     };
 
     std::vector<Cell> cells() const;
