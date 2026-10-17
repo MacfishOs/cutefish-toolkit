@@ -42,6 +42,25 @@ TEST(WindowTest, HeaderDoubleClickTogglesMaximized)
     EXPECT_FALSE(window.states().maximized);
 }
 
+// A configure leaving the size to the window, once it is neither maximized,
+// full screen nor tiled, brings back the size it had before.
+TEST(WindowTest, UnconstrainedConfigureWithoutSizeRestoresTheNormalSize)
+{
+    for (const WindowStates constrained : {WindowStates{.maximized = true}, WindowStates{.fullScreen = true},
+                                           WindowStates{.tiled = true}}) {
+        Window window;
+        window.setContentView(std::make_unique<View>());
+        window.resize({400, 300});
+        window.show();
+        TestInput::configure(window, 0, 0, {});
+        TestInput::configure(window, 1280, 760, constrained);
+        EXPECT_EQ(window.size().width, 1280);
+        TestInput::configure(window, 0, 0, {});
+        EXPECT_EQ(window.size().width, 400);
+        EXPECT_EQ(window.size().height, 300);
+    }
+}
+
 // FishUI puts the buttons' row in a RowLayout cell after the content and
 // before an end margin item: the row starts on a whole logical pixel, a half
 // rounding up, while the buttons keep the fractional top margin.

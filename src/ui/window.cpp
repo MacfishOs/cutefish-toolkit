@@ -642,6 +642,15 @@ std::string Window::layoutDump() const
 
 void Window::handleConfigure(int width, int height, const WindowStates& states)
 {
+    const bool constrained = states.maximized || states.fullScreen || states.tiled;
+    const bool wasConstrained = m_states.maximized || m_states.fullScreen || m_states.tiled;
+    if (constrained && !wasConstrained)
+        m_normalSize = m_size;
+    if ((width <= 0 || height <= 0) && !constrained && wasConstrained && m_normalSize.width > 0
+        && m_normalSize.height > 0) {
+        width = int(m_normalSize.width);
+        height = int(m_normalSize.height);
+    }
     if (width > 0 && height > 0 && (width != m_size.width || height != m_size.height)) {
         m_size = {double(width), double(height)};
         m_layoutNeeded = true;

@@ -433,6 +433,9 @@ private:
     // The work area, which a restored size stays inside.
     SizeF m_bounds;
     bool m_boundsApplied = false;
+    // The size before the window went maximized, full screen or tiled, for a
+    // configure that leaves the size to the window on the way back.
+    SizeF m_normalSize;
     bool m_interactiveResize = false;
     bool m_resized = false;
     int m_saveTimer = 0;
