@@ -707,6 +707,8 @@ void TextField::paint(Painter& painter)
     canvas->restore();
 
     const Window* window = this->window();
+    if (focused && window && window->hasKeyboardFocus() && !d->blinkTimer)
+        startBlinking();
     if (focused && window && window->hasKeyboardFocus() && d->caretVisible) {
         SkPaint paint;
         paint.setColor(d->textColor.value_or(theme.text).argb());
@@ -1058,15 +1060,28 @@ void TextField::moved()
     if (d->blinkTimer)
         loop.stopTimer(d->blinkTimer);
     d->blinkTimer = 0;
-    if (hasFocus()) {
-        const auto interval = std::chrono::microseconds(int64_t(d->cursorFlashTime) * 1000 / 2 * 95 / 100);
-        d->blinkTimer = loop.startTimer(interval, true, [this] {
-            d->caretVisible = !d->caretVisible;
-            requestPaint();
-        });
-    }
+    if (hasFocus())
+        startBlinking();
     requestPaint();
     updateTextInput();
+}
+
+void TextField::startBlinking()
+{
+    const auto interval = std::chrono::microseconds(int64_t(d->cursorFlashTime) * 1000 / 2 * 95 / 100);
+    d->blinkTimer = Application::instance()->loop().startTimer(interval, true, [this] {
+        // Without the keyboard no caret is drawn; the next paint with it
+        // starts blinking again.
+        const Window* window = this->window();
+        if (!window || !window->hasKeyboardFocus()) {
+            Application::instance()->loop().stopTimer(d->blinkTimer);
+            d->blinkTimer = 0;
+            d->caretVisible = true;
+            return;
+        }
+        d->caretVisible = !d->caretVisible;
+        requestPaint();
+    });
 }
 
 } // namespace cutefish::ui

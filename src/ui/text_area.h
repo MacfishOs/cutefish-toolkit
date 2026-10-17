@@ -110,6 +110,7 @@ private:
     void showContextMenu(PointF position);
     void edited();
     void moved();
+    void startBlinking();
 
     std::unique_ptr<Private> d;
 };

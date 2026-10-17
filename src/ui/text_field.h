@@ -139,6 +139,7 @@ private:
     // After the user's edit; false when it was refused and undone.
     bool edited();
     void moved();
+    void startBlinking();
 
     std::unique_ptr<Private> d;
 };

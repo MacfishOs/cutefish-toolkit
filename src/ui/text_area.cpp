@@ -564,6 +564,8 @@ void TextArea::paint(Painter& painter)
     }
 
     const Window* window = this->window();
+    if (focused && window && window->hasKeyboardFocus() && !d->readOnly && !d->blinkTimer)
+        startBlinking();
     if (focused && window && window->hasKeyboardFocus() && d->caretVisible && !d->readOnly) {
         const TextLineBox& box = d->lineBox(caretLine);
         const SkPoint top = device(d->geometry.x(caret), box.top);
@@ -914,14 +916,27 @@ void TextArea::moved()
     if (d->blinkTimer)
         loop.stopTimer(d->blinkTimer);
     d->blinkTimer = 0;
-    if (hasFocus() && !d->readOnly) {
-        d->blinkTimer = loop.startTimer(kBlinkInterval, true, [this] {
-            d->caretVisible = !d->caretVisible;
-            requestPaint();
-        });
-    }
+    if (hasFocus() && !d->readOnly)
+        startBlinking();
     requestPaint();
     updateTextInput();
+}
+
+void TextArea::startBlinking()
+{
+    d->blinkTimer = Application::instance()->loop().startTimer(kBlinkInterval, true, [this] {
+        // Without the keyboard no caret is drawn; the next paint with it
+        // starts blinking again.
+        const Window* window = this->window();
+        if (!window || !window->hasKeyboardFocus()) {
+            Application::instance()->loop().stopTimer(d->blinkTimer);
+            d->blinkTimer = 0;
+            d->caretVisible = true;
+            return;
+        }
+        d->caretVisible = !d->caretVisible;
+        requestPaint();
+    });
 }
 
 } // namespace cutefish::ui
