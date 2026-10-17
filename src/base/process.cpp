@@ -360,15 +360,35 @@ bool Process::waitForFinished(std::chrono::milliseconds timeout)
     while (m_pid > 0) {
         const auto now = std::chrono::steady_clock::now();
         const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
-        pollfd descriptor{m_pidfd, POLLIN, 0};
-        const int ready = ::poll(&descriptor, 1, int(std::max<int64_t>(left.count(), 0)));
+        // A program blocked on a full output pipe, or waiting for the rest of
+        // its input, ends only when the pipes keep moving.
+        pollfd descriptors[4] = {{m_pidfd, POLLIN, 0}};
+        nfds_t count = 1;
+        if (m_stdoutWatch)
+            descriptors[count++] = {m_stdout, POLLIN, 0};
+        if (m_stderrWatch)
+            descriptors[count++] = {m_stderr, POLLIN, 0};
+        if (m_stdinWatch)
+            descriptors[count++] = {m_stdin, POLLOUT, 0};
+        const int ready = ::poll(descriptors, count, int(std::max<int64_t>(left.count(), 0)));
         if (ready < 0 && errno == EINTR)
             continue;
         if (ready < 0 || (ready == 0 && std::chrono::steady_clock::now() >= deadline))
             return false;
         if (ready == 0)
             continue;
-        finish();
+        for (nfds_t i = 1; i < count; ++i) {
+            if (!descriptors[i].revents)
+                continue;
+            if (descriptors[i].fd == m_stdout)
+                readAvailable(m_stdout, m_output, onStandardOutput);
+            else if (descriptors[i].fd == m_stderr)
+                readAvailable(m_stderr, m_error, onStandardError);
+            else if (descriptors[i].fd == m_stdin)
+                writeInput();
+        }
+        if (descriptors[0].revents)
+            finish();
     }
     return true;
 }

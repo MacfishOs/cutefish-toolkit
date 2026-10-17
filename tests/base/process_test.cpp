@@ -254,3 +254,24 @@ TEST(ProcessTest, KeepsTheInputOpenUntilClosed)
     write.start(100ms);
     ASSERT_TRUE(runUntilFinished(loop, slow));
 }
+
+// More than a pipe holds, both ways: waiting must keep the pipes moving.
+TEST(ProcessTest, WaitForFinishedKeepsReadingAndWriting)
+{
+    EventLoop loop;
+    Process writer(&loop);
+    ASSERT_TRUE(writer.start("sh", {"-c", "head -c 1000000 /dev/zero; head -c 300000 /dev/zero >&2; exit 4"}));
+    int exitCode = -1;
+    writer.onFinished = [&](int code, bool) { exitCode = code; };
+    ASSERT_TRUE(writer.waitForFinished(5s));
+    EXPECT_EQ(exitCode, 4);
+    EXPECT_EQ(writer.standardOutput().size(), 1000000u);
+    EXPECT_EQ(writer.standardError().size(), 300000u);
+
+    Process copier(&loop);
+    const std::string input(1000000, 'x');
+    copier.setStandardInput(input);
+    ASSERT_TRUE(copier.start("cat"));
+    ASSERT_TRUE(copier.waitForFinished(5s));
+    EXPECT_EQ(copier.standardOutput(), input);
+}
