@@ -33,6 +33,7 @@
 #include "modules/svg/include/SkSVGDOM.h"
 #include "modules/svg/include/SkSVGSVG.h"
 
+#include "base/file.h"
 #include "base/thread_pool.h"
 #include "ui/embedded_files.h"
 #include "ui/theme.h"
@@ -457,8 +458,9 @@ IconLoader::GtkCache::GtkCache(const std::string& base)
     const auto cacheTime = fs::last_write_time(file, error);
     if (error || cacheTime < fs::last_write_time(base, error) || error)
         return;
-    std::ifstream stream(file, std::ios::binary);
-    m_data.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    const std::optional<std::string> contents = base::file::read(file.string());
+    if (contents)
+        m_data.assign(contents->begin(), contents->end());
     if (m_data.empty() || read16(0) != 1)
         return;
     m_valid = true;
