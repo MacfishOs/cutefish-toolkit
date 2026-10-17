@@ -8,6 +8,9 @@
 #include <optional>
 #include <vector>
 
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSurface.h"
+
 #include "ui/platform_window.h"
 
 class GrDirectContext;
@@ -105,6 +108,9 @@ private:
     const GpuTarget* m_gpuTarget = nullptr;
     // The texture the last frame went into, 0 after a frame in memory.
     uint32_t m_lastTexture = 0;
+    // That texture as wrapped for drawing, while it holds the last frame.
+    sk_sp<SkSurface> m_gpuSurface;
+    bool m_gpuSurfaceOpaque = false;
 };
 
 } // namespace cutefish::ui

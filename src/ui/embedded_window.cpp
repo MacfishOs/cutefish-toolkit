@@ -148,21 +148,27 @@ bool EmbeddedPlatformWindow::present(SizeF size, double scale, bool opaque, cons
     if (m_gpuTarget) {
         if (m_gpuTarget->width != width || m_gpuTarget->height != height)
             return false;
-        GrGLTextureInfo info;
-        info.fTarget = 0x0DE1; // GL_TEXTURE_2D
-        info.fID = m_gpuTarget->texture;
-        info.fFormat = 0x8058; // GL_RGBA8
-        const GrBackendTexture texture = GrBackendTextures::MakeGL(width, height, skgpu::Mipmapped::kNo, info);
-        // Top-left origin: rows lie in the texture as an upload of the CPU frame would.
-        const sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(
-            m_gpuTarget->context, texture, kTopLeft_GrSurfaceOrigin, 0, kRGBA_8888_SkColorType, nullptr,
-            &properties);
-        if (!surface)
-            return false;
         const bool holdsFrame = m_gpuTarget->keepsLastFrame && m_lastTexture == m_gpuTarget->texture;
-        paint(surface->getCanvas(), holdsFrame ? 1 : 0);
+        // A texture kept since the last frame is the same GL object, so its
+        // framebuffer is too; any other may reuse a deleted texture's name.
+        if (!holdsFrame || !m_gpuSurface || m_gpuSurface->recordingContext() != m_gpuTarget->context
+            || m_gpuSurface->width() != width || m_gpuSurface->height() != height || m_gpuSurfaceOpaque != opaque) {
+            m_gpuSurface.reset();
+            GrGLTextureInfo info;
+            info.fTarget = 0x0DE1; // GL_TEXTURE_2D
+            info.fID = m_gpuTarget->texture;
+            info.fFormat = 0x8058; // GL_RGBA8
+            const GrBackendTexture texture = GrBackendTextures::MakeGL(width, height, skgpu::Mipmapped::kNo, info);
+            // Top-left origin: rows lie in the texture as an upload of the CPU frame would.
+            m_gpuSurface = SkSurfaces::WrapBackendTexture(m_gpuTarget->context, texture, kTopLeft_GrSurfaceOrigin, 0,
+                                                          kRGBA_8888_SkColorType, nullptr, &properties);
+            m_gpuSurfaceOpaque = opaque;
+        }
+        if (!m_gpuSurface)
+            return false;
+        paint(m_gpuSurface->getCanvas(), holdsFrame ? 1 : 0);
         // Submitted once the render, or the host's batch, ends.
-        m_gpuTarget->context->flush(surface.get());
+        m_gpuTarget->context->flush(m_gpuSurface.get());
         m_lastTexture = m_gpuTarget->texture;
         m_holdsFrame = false;
         return true;
@@ -182,6 +188,7 @@ bool EmbeddedPlatformWindow::present(SizeF size, double scale, bool opaque, cons
     paint(surface->getCanvas(), m_holdsFrame ? 1 : 0);
     m_holdsFrame = true;
     m_lastTexture = 0;
+    m_gpuSurface.reset();
     return true;
 }
 
