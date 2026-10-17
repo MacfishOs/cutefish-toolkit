@@ -568,6 +568,11 @@ static constexpr size_t kCoverageCacheEntries = 512;
 static std::list<CoverageEntry> s_coverage;
 static std::unordered_map<uint64_t, std::list<CoverageEntry>::iterator> s_coverageIndex;
 static size_t s_coverageBytes = 0;
+// Lookups since the last hit: text that moves by fractions of a pixel every
+// frame never hits, and is only sampled once this many have missed.
+static constexpr unsigned kCoverageMissesBeforeSampling = 256;
+static constexpr unsigned kCoverageSampling = 16;
+static unsigned s_coverageMisses = 0;
 
 static uint64_t hashBytes(uint64_t hash, const void* data, size_t size)
 {
@@ -585,16 +590,21 @@ static uint64_t hashValue(uint64_t hash, const T& value)
     return hashBytes(hash, &value, sizeof(value));
 }
 
-static uint64_t coverageHash(const std::vector<CoverageRun>& runs, const SkM44& matrix, SkPoint origin,
-                             SkISize size, SkPixelGeometry geometry)
+// None for a blob with a run that has no positions of its own.
+static std::optional<uint64_t> coverageHash(const SkTextBlob& blob, const SkM44& matrix, SkPoint origin, SkISize size,
+                                            SkPixelGeometry geometry)
 {
     uint64_t hash = 0xcbf29ce484222325ull;
-    for (const CoverageRun& run : runs) {
+    SkTextBlob::Iter iterator(blob);
+    SkTextBlob::Iter::ExperimentalRun run;
+    while (iterator.experimentalNext(&run)) {
+        if (!run.positions)
+            return std::nullopt;
         hash = hashValue(hash, run.font.getTypeface() ? run.font.getTypeface()->uniqueID() : 0);
         hash = hashValue(hash, run.font.getSize());
-        hash = hashValue(hash, run.glyphs.size());
-        hash = hashBytes(hash, run.glyphs.data(), run.glyphs.size() * sizeof(SkGlyphID));
-        hash = hashBytes(hash, run.positions.data(), run.positions.size() * sizeof(SkPoint));
+        hash = hashValue(hash, run.count);
+        hash = hashBytes(hash, run.glyphs, size_t(run.count) * sizeof(SkGlyphID));
+        hash = hashBytes(hash, run.positions, size_t(run.count) * sizeof(SkPoint));
     }
     SkScalar values[16];
     matrix.getColMajor(values);
@@ -606,16 +616,30 @@ static uint64_t coverageHash(const std::vector<CoverageRun>& runs, const SkM44& 
     return hashValue(hash, int(geometry));
 }
 
-static bool sameRuns(const std::vector<CoverageRun>& a, const std::vector<CoverageRun>& b)
+static bool sameRuns(const std::vector<CoverageRun>& runs, const SkTextBlob& blob)
 {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (!(a[i].font == b[i].font) || a[i].glyphs != b[i].glyphs || a[i].positions.size() != b[i].positions.size()
-            || std::memcmp(a[i].positions.data(), b[i].positions.data(), a[i].positions.size() * sizeof(SkPoint)))
+    SkTextBlob::Iter iterator(blob);
+    SkTextBlob::Iter::ExperimentalRun run;
+    size_t i = 0;
+    for (; iterator.experimentalNext(&run); ++i) {
+        if (i >= runs.size() || !(runs[i].font == run.font) || runs[i].glyphs.size() != size_t(run.count)
+            || !std::equal(run.glyphs, run.glyphs + run.count, runs[i].glyphs.begin())
+            || std::memcmp(run.positions, runs[i].positions.data(), size_t(run.count) * sizeof(SkPoint)))
             return false;
     }
-    return true;
+    return i == runs.size();
+}
+
+static std::vector<CoverageRun> coverageRuns(const SkTextBlob& blob)
+{
+    std::vector<CoverageRun> runs;
+    SkTextBlob::Iter iterator(blob);
+    SkTextBlob::Iter::ExperimentalRun run;
+    while (iterator.experimentalNext(&run)) {
+        runs.push_back({run.font, std::vector<SkGlyphID>(run.glyphs, run.glyphs + run.count),
+                        std::vector<SkPoint>(run.positions, run.positions + run.count)});
+    }
+    return runs;
 }
 
 static void evictCoverage()
@@ -628,6 +652,7 @@ static void evictCoverage()
 
 void clearSubpixelCoverage()
 {
+    s_coverageMisses = 0;
     s_coverageIndex.clear();
     s_coverage.clear();
     s_coverageBytes = 0;
@@ -647,20 +672,6 @@ static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob,
         return;
     const SkPixelGeometry geometry = Application::instance()->text().pixelGeometry();
 
-    // Only runs the clip leaves whole: where the image starts decides how
-    // the glyph positions round.
-    std::vector<CoverageRun> runs;
-    SkTextBlob::Iter iterator(*blob);
-    SkTextBlob::Iter::ExperimentalRun run;
-    bool cacheable = device == whole && int64_t(whole.width()) * whole.height() <= int64_t(kCoverageCacheBytes / 16);
-    while (cacheable && iterator.experimentalNext(&run)) {
-        if (!run.positions) {
-            cacheable = false;
-            break;
-        }
-        runs.push_back({run.font, std::vector<SkGlyphID>(run.glyphs, run.glyphs + run.count),
-                        std::vector<SkPoint>(run.positions, run.positions + run.count)});
-    }
     // As translate() and concat() would make it on the coverage canvas.
     SkM44 coverageMatrix;
     if (device.x() || device.y())
@@ -668,17 +679,21 @@ static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob,
     if (!matrix.isIdentity())
         coverageMatrix.preConcat(SkM44(matrix));
 
+    // Only runs the clip leaves whole: where the image starts decides how
+    // the glyph positions round.
+    std::optional<uint64_t> hash;
+    if (device == whole && int64_t(whole.width()) * whole.height() <= int64_t(kCoverageCacheBytes / 16))
+        hash = coverageHash(*blob, coverageMatrix, origin, device.size(), geometry);
     sk_sp<SkImage> image;
-    uint64_t hash = 0;
-    if (cacheable) {
-        hash = coverageHash(runs, coverageMatrix, origin, device.size(), geometry);
-        const auto found = s_coverageIndex.find(hash);
+    if (hash) {
+        const auto found = s_coverageIndex.find(*hash);
         if (found != s_coverageIndex.end()) {
             CoverageEntry& entry = *found->second;
             if (entry.matrix == coverageMatrix && entry.origin == origin && entry.size == device.size()
-                && entry.geometry == geometry && sameRuns(entry.runs, runs)) {
+                && entry.geometry == geometry && sameRuns(entry.runs, *blob)) {
                 s_coverage.splice(s_coverage.begin(), s_coverage, found->second);
                 image = entry.image;
+                s_coverageMisses = 0;
             }
         }
     }
@@ -699,15 +714,18 @@ static void drawSubpixelBlended(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob,
         white.setColor(SK_ColorWHITE);
         coverage->drawTextBlob(blob, origin.x(), origin.y(), white);
         image = surface->makeImageSnapshot();
-        if (cacheable && image) {
-            const auto found = s_coverageIndex.find(hash);
+        if (hash)
+            ++s_coverageMisses;
+        if (hash && image
+            && (s_coverageMisses < kCoverageMissesBeforeSampling || s_coverageMisses % kCoverageSampling == 0)) {
+            const auto found = s_coverageIndex.find(*hash);
             if (found != s_coverageIndex.end()) {
                 s_coverageBytes -= found->second->image->imageInfo().computeMinByteSize();
                 s_coverage.erase(found->second);
                 s_coverageIndex.erase(found);
             }
-            s_coverage.push_front({hash, std::move(runs), coverageMatrix, origin, device.size(), geometry, image});
-            s_coverageIndex[hash] = s_coverage.begin();
+            s_coverage.push_front({*hash, coverageRuns(*blob), coverageMatrix, origin, device.size(), geometry, image});
+            s_coverageIndex[*hash] = s_coverage.begin();
             s_coverageBytes += image->imageInfo().computeMinByteSize();
             while (s_coverage.size() > 1
                    && (s_coverageBytes > kCoverageCacheBytes || s_coverage.size() > kCoverageCacheEntries))
