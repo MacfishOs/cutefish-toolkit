@@ -1567,6 +1567,7 @@ bool Window::layoutIfNeeded()
     if (!m_layoutNeeded || !m_contentView)
         return false;
     fitContentHeight();
+    SizeF laidOut = m_size;
     m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
     if (m_overlay)
         m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
@@ -1580,6 +1581,13 @@ bool Window::layoutIfNeeded()
         m_contentView->layoutTree();
         if (m_overlay)
             m_overlay->layoutTree();
+        // A view resizing the window from its own layout leaves the tree at the old size.
+        if (!(m_size == laidOut)) {
+            laidOut = m_size;
+            m_contentView->setGeometry({0, 0, m_size.width, m_size.height});
+            if (m_overlay)
+                m_overlay->setGeometry({0, 0, m_size.width, m_size.height});
+        }
     }
     if (s_verifiesLayout && pending()) {
         const auto report = [](const auto& self, const View* view) -> void {

@@ -555,3 +555,42 @@ TEST(WindowTest, ConfirmDialogClosesFromItsCorner)
     TestInput::click(*window, {window->size().width - 8 - 16, 8 + 16});
     EXPECT_TRUE(rejected);
 }
+
+namespace {
+
+class ResizingView : public View
+{
+public:
+    Window* target = nullptr;
+    SizeF size;
+    bool resized = false;
+
+protected:
+    void layout() override
+    {
+        if (!target || resized)
+            return;
+        resized = true;
+        target->resize(size);
+    }
+};
+
+} // namespace
+
+TEST(WindowTest, ResizeFromLayoutLaysTheContentOutAtTheNewSize)
+{
+    Window window;
+    auto view = std::make_unique<ResizingView>();
+    ResizingView* content = view.get();
+    content->target = &window;
+    content->size = {300, 200};
+    window.resize({480, 144});
+    window.setContentView(std::move(view));
+    window.show();
+    window.grab();
+
+    EXPECT_EQ(window.size().width, 300);
+    EXPECT_EQ(window.size().height, 200);
+    EXPECT_EQ(content->geometry().width, 300);
+    EXPECT_EQ(content->geometry().height, 200);
+}
