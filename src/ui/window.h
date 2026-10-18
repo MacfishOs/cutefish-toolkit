@@ -261,6 +261,10 @@ public:
     // Asks the compositor to focus the window and raise it, through
     // xdg-activation, with the last input.
     void activate();
+    // As activate(), with a token another process was given for it, such as
+    // Application::takeActivationToken() of a second instance; activate()
+    // for an empty one.
+    void activate(const std::string& token);
     // The window's identifier for another process's dialog to be parented
     // to, as portals take it: "wayland:<handle>" through xdg-foreign, or
     // empty when the window cannot be exported. Shown windows only.

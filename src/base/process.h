@@ -89,9 +89,11 @@ public:
 
     // Runs a program on its own, in a session of its own and without this
     // process's protection from the out-of-memory killer; its end is collected
-    // in the background. The program's id, or -1.
+    // in the background. `environment` holds `NAME=value` entries set over
+    // this process's. The program's id, or -1.
     static pid_t startDetached(const std::string& program, const std::vector<std::string>& arguments = {},
-                               const std::string& workingDirectory = {});
+                               const std::string& workingDirectory = {},
+                               const std::vector<std::string>& environment = {});
 
 private:
     void readAvailable(int fd, std::string& into, const std::function<void(std::string_view)>& callback);

@@ -114,6 +114,8 @@ public:
     // xdg-activation for the window: a token for the last input and the focused
     // window, then the activation.
     void activate(ShellSurface* shell, const std::string& appId);
+    // The activation with a token from elsewhere.
+    void activateWithToken(ShellSurface* shell, const std::string& token);
     // A token for another process to activate its window with, from the
     // last input in the window; empty when the compositor gives none.
     void requestActivationToken(ShellSurface* shell, std::function<void(const std::string&)> done);

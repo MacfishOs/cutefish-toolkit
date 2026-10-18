@@ -779,6 +779,14 @@ void Connection::activate(ShellSurface* shell, const std::string& appId)
     flush();
 }
 
+void Connection::activateWithToken(ShellSurface* shell, const std::string& token)
+{
+    if (!m_activation || !shell)
+        return;
+    xdg_activation_v1_activate(m_activation, token.c_str(), shell->surface());
+    flush();
+}
+
 void Connection::requestActivationToken(ShellSurface* shell, std::function<void(const std::string&)> done)
 {
     if (!m_activation) {

@@ -111,6 +111,12 @@ void WaylandWindow::activate()
         m_connection->activate(m_shell.get(), Application::instance()->applicationId());
 }
 
+void WaylandWindow::activateWithToken(const std::string& token)
+{
+    if (m_shell)
+        m_connection->activateWithToken(m_shell.get(), token);
+}
+
 SizeF WaylandWindow::screenSize() const
 {
     if (m_shell)

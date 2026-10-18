@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace cutefish::base {
@@ -64,6 +65,10 @@ public:
     // Defaults to the executable's name.
     void setApplicationId(std::string applicationId);
     const std::string& applicationId() const { return m_applicationId; }
+    // The xdg-activation token the launcher gave this process, once: for a
+    // single-instance application to hand to its running instance, whose
+    // Window::activate() takes it. Empty when there was none.
+    std::string takeActivationToken() { return std::exchange(m_activationToken, {}); }
 
     base::EventLoop& loop() const { return *m_loop; }
     bool hasConnection() const { return m_connection != nullptr; }
@@ -94,6 +99,7 @@ private:
 
     std::vector<std::string> m_arguments;
     std::string m_applicationId;
+    std::string m_activationToken;
     Platform m_platform;
     std::unique_ptr<base::EventLoop> m_ownedLoop;
     base::EventLoop* m_loop = nullptr;

@@ -336,6 +336,30 @@ TEST(ProcessTest, ProgramsKeepARaisedOomScore)
     EXPECT_EQ(file::read(written), "250\n");
 }
 
+TEST(ProcessTest, DetachedProgramsGetTheGivenEnvironment)
+{
+    EventLoop loop;
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string());
+    const std::string written = directory.path() + "/environment";
+    ASSERT_GT(Process::startDetached("sh",
+                                     {"-c", "printf '%s %s %s' \"$CUTEFISH_GIVEN\" \"$HOME\" \"${PATH:+path}\" > "
+                                                    + written + ".part; mv " + written + ".part " + written},
+                                     {}, {"CUTEFISH_GIVEN=token", "HOME=/given"}),
+              0);
+    Timer poll(&loop);
+    poll.onTimeout = [&] {
+        if (std::filesystem::exists(written))
+            loop.quit();
+    };
+    poll.start(10ms);
+    Timer timeout(&loop);
+    timeout.setSingleShot(true);
+    timeout.onTimeout = [&loop] { loop.quit(); };
+    timeout.start(5s);
+    loop.run();
+    EXPECT_EQ(file::read(written), "token /given path");
+}
+
 TEST(ProcessTest, DetachedStartsReportFailures)
 {
     EXPECT_EQ(Process::startDetached("cutefish-no-such-program"), -1);

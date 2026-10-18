@@ -31,6 +31,14 @@ Application::Application(int argc, char** argv, Platform platform)
     std::setlocale(LC_ALL, "");
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
+    // The xdg-activation contract: the token is this process's alone, not
+    // its children's. Taken before the font thread starts, as unsetenv() is
+    // not thread-safe.
+    const char* token = platform == Platform::Wayland ? std::getenv("XDG_ACTIVATION_TOKEN") : nullptr;
+    if (token) {
+        m_activationToken = token;
+        unsetenv("XDG_ACTIVATION_TOKEN");
+    }
 
     const char* ctype = std::setlocale(LC_CTYPE, nullptr);
     const std::string ctypeLocale = ctype ? ctype : "";

@@ -56,6 +56,7 @@ public:
     void setFullScreen(bool fullScreen) override;
     void minimize() override;
     void activate() override;
+    void activateWithToken(const std::string& token) override;
     void exportHandle(std::function<void(const std::string&)> done) override;
     void requestActivationToken(std::function<void(const std::string&)> done) override;
     SizeF screenSize() const override;

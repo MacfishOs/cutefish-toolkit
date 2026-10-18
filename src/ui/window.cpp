@@ -520,6 +520,14 @@ void Window::activate()
     m_platform->activate();
 }
 
+void Window::activate(const std::string& token)
+{
+    if (token.empty())
+        m_platform->activate();
+    else
+        m_platform->activateWithToken(token);
+}
+
 void Window::requestActivationToken(std::function<void(const std::string& token)> done)
 {
     m_platform->requestActivationToken(std::move(done));

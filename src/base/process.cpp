@@ -494,11 +494,27 @@ bool Process::kill()
 }
 
 pid_t Process::startDetached(const std::string& program, const std::vector<std::string>& arguments,
-                             const std::string& workingDirectory)
+                             const std::string& workingDirectory, const std::vector<std::string>& environment)
 {
     std::vector<char*> argv = argumentVector(program, arguments);
+    std::vector<char*> envp;
+    if (!environment.empty()) {
+        const auto overridden = [&environment](std::string_view entry) {
+            const std::string_view name = entry.substr(0, entry.find('=') + 1);
+            return std::any_of(environment.begin(), environment.end(),
+                               [name](const std::string& set) { return set.starts_with(name); });
+        };
+        for (char** entry = environ; *entry; ++entry) {
+            if (!overridden(*entry))
+                envp.push_back(*entry);
+        }
+        for (const std::string& entry : environment)
+            envp.push_back(const_cast<char*>(entry.c_str()));
+        envp.push_back(nullptr);
+    }
     Spawn spawn;
     spawn.argv = argv.data();
+    spawn.envp = envp.empty() ? nullptr : envp.data();
     spawn.workingDirectory = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
     spawn.newSession = true;
     spawn.dropsOomProtection = true;

@@ -62,6 +62,8 @@ public:
     virtual void minimize() = 0;
     // Asks the compositor to focus and raise the window.
     virtual void activate() {}
+    // As activate(), with an xdg-activation token from another process.
+    virtual void activateWithToken(const std::string&) { activate(); }
     // "wayland:<handle>" for other clients to parent to; empty when none.
     virtual void exportHandle(std::function<void(const std::string&)> done) { done({}); }
     // An xdg-activation token for a process this one starts; empty when none.
