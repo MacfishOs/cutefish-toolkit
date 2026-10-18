@@ -417,7 +417,10 @@ private:
     void unwatchDamage(const View* watcher);
     // How text draws into this window's canvas, before it is painted.
     void applyTextTarget() const;
-    void updateLayers(View* view, PointF origin, SkCanvas* target);
+    // `visible`: where the clips above the view leave it room, in window
+    // device pixels, or null below a layer; textures wholly outside it wait
+    // until they come into view.
+    void updateLayers(View* view, PointF origin, SkCanvas* target, const SkIRect* visible);
     void addFrameClient(FrameClient* client);
     void removeFrameClient(FrameClient* client);
     bool hasTickingClients() const;

@@ -392,6 +392,44 @@ TEST(CompositingTest, TransformsMoveTexturesWithoutRepainting)
     }
 }
 
+TEST(CompositingTest, ClippedAwayLayersPaintOnceInView)
+{
+    for (const double scale : {1.0, 1.5}) {
+        Window window;
+        auto root = std::make_unique<View>();
+        View* clip = root->addChild<View>();
+        clip->setGeometry({10, 10, 150, 80});
+        clip->setClipsChildren(true);
+        Shapes* shapes = clip->addChild<Shapes>();
+        shapes->setGeometry({20, 120, 60, 40});
+        shapes->setTransform({{0, 0}, 0.9});
+        window.resize({200, 200});
+        window.setContentView(std::move(root));
+        window.setScale(scale);
+        window.show();
+
+        uint64_t now = 1000000000;
+        for (int i = 0; i < 3; ++i)
+            TestInput::presentFrame(window, now += kFrameNs);
+        shapes->setGeometry({20, 130.5, 60, 40});
+        TestInput::presentFrame(window, now += kFrameNs);
+        EXPECT_EQ(shapes->paints, 0) << scale;
+
+        // Brought in by its transform, then moved out and back in.
+        shapes->setTransform({{3, -100}, 0.9});
+        Image incremental = TestInput::presentFrame(window, now += kFrameNs);
+        EXPECT_GT(shapes->paints, 0) << scale;
+        EXPECT_EQ(mismatches(incremental, window.grab(now)), 0) << scale;
+        shapes->setTransform({{3, 0}, 0.9});
+        incremental = TestInput::presentFrame(window, now += kFrameNs);
+        EXPECT_EQ(mismatches(incremental, window.grab(now)), 0) << scale;
+        shapes->setGeometry({25, 20.5, 60, 40});
+        shapes->setTransform({{3, 0}, 0.95});
+        incremental = TestInput::presentFrame(window, now += kFrameNs);
+        EXPECT_EQ(mismatches(incremental, window.grab(now)), 0) << scale;
+    }
+}
+
 TEST(CompositingTest, DamageStaysWithTheChangedView)
 {
     Window window;

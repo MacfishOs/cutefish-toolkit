@@ -253,14 +253,22 @@ void Window::damageAll()
     scheduleFrame();
 }
 
-void Window::updateLayers(View* view, PointF origin, SkCanvas* target)
+void Window::updateLayers(View* view, PointF origin, SkCanvas* target, const SkIRect* visible)
 {
     if (!view->m_visible || view->m_opacity <= 0)
         return;
     // Inner textures first: an outer one draws them.
     const PointF position = origin + view->m_geometry.topLeft();
+    SkIRect inside;
+    const SkIRect* childVisible = nullptr;
+    if (visible && !view->needsLayer()) {
+        inside = *visible;
+        if (view->m_clipsChildren)
+            inside = intersection(inside, clipBounds(view, position, m_scale));
+        childVisible = &inside;
+    }
     for (const auto& child : view->m_children)
-        updateLayers(child.get(), position, target);
+        updateLayers(child.get(), position, target, childVisible);
     if (!view->needsLayer()) {
         view->m_layer.reset();
         return;
@@ -275,7 +283,14 @@ void Window::updateLayers(View* view, PointF origin, SkCanvas* target)
         layer.bounds = bounds;
         return;
     }
-    if (!layer.surface || layer.bounds.size() != bounds.size()
+    // Clipped away whole, as rows scrolled out of a list: painting it would
+    // show nothing. The texture is kept for when it comes back, but drawn
+    // nowhere meanwhile.
+    if (visible && !SkIRect::Intersects(mapThroughTransform(view, bounds, position), *visible)) {
+        layer.bounds = SkIRect::MakeEmpty();
+        return;
+    }
+    if (!layer.surface || layer.surface->width() != bounds.width() || layer.surface->height() != bounds.height()
         || layer.surface->recordingContext() != target->recordingContext()) {
         // A transparent texture needs greyscale text.
         const SkSurfaceProps properties = Application::instance()->text().surfaceProps(false);
@@ -362,7 +377,7 @@ void View::paintTree(Painter& painter, const SkRegion* region)
         return;
     }
 
-    if (!m_layer->surface)
+    if (!m_layer->surface || m_layer->bounds.isEmpty())
         return;
     const double scale = painter.scale();
     const PointF position = painter.offset() + m_geometry.topLeft();
@@ -406,11 +421,12 @@ void View::paintContent(Painter& painter, const SkRegion* region)
 
 void Window::paintContent(SkCanvas* canvas, const SkRegion* region)
 {
-    updateLayers(m_contentView.get(), {}, canvas);
+    const SkIRect window = SkIRect::MakeWH(canvas->imageInfo().width(), canvas->imageInfo().height());
+    updateLayers(m_contentView.get(), {}, canvas, &window);
     if (m_overlay)
-        updateLayers(m_overlay.get(), {}, canvas);
+        updateLayers(m_overlay.get(), {}, canvas, &window);
     if (m_toolTip)
-        updateLayers(m_toolTip.get(), {}, canvas);
+        updateLayers(m_toolTip.get(), {}, canvas, &window);
 
     const auto paintInside = [&](SkCanvas* target) {
         target->clear(backgroundColor().argb());
