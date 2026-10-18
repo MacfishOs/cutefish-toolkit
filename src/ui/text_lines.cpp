@@ -1063,4 +1063,37 @@ RectF tightBoundingRect(textlayout::Paragraph* paragraph, double pixelSize, doub
     return {left, top, right - left, bottom - top};
 }
 
+RectF inkBoundingRect(textlayout::Paragraph* paragraph, double pixelSize, double scale, bool hintedLayout)
+{
+    const bool hinted = Application::instance()->text().hintsGlyphMetrics(scale, hintedLayout);
+    double left = std::numeric_limits<double>::max();
+    double top = std::numeric_limits<double>::max();
+    double right = std::numeric_limits<double>::lowest();
+    double bottom = std::numeric_limits<double>::lowest();
+    paragraph->visit([&](int lineNumber, const textlayout::Paragraph::VisitorInfo* info) {
+        if (lineNumber != 0 || !info)
+            return;
+        SkFont font = info->font;
+        font.setSize(SkScalar(pixelSize * scale));
+        font.setSubpixel(!hinted);
+        font.setHinting(hinted ? SkFontHinting::kFull : SkFontHinting::kNone);
+        font.setLinearMetrics(!hinted);
+        std::vector<SkRect> bounds(size_t(info->count));
+        font.getBounds({info->glyphs, size_t(info->count)}, {bounds.data(), bounds.size()}, nullptr);
+        for (int i = 0; i < info->count; ++i) {
+            const SkRect& box = bounds[size_t(i)];
+            if (box.isEmpty())
+                continue;
+            const double pen = std::floor((info->origin.fX + info->positions[i].fX) * 64) / 64;
+            left = std::min(left, pen + box.left() / scale);
+            top = std::min(top, double(box.top()) / scale);
+            right = std::max(right, pen + box.right() / scale);
+            bottom = std::max(bottom, double(box.bottom()) / scale);
+        }
+    });
+    if (left > right)
+        return {};
+    return {left, top, right - left, bottom - top};
+}
+
 } // namespace cutefish::ui

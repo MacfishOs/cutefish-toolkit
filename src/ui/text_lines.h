@@ -136,5 +136,9 @@ TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const LineGlyp
 // The ink bounds of the paragraph's first line, from the origin of its
 // baseline: whole-pixel glyph boxes at the truncated advances.
 RectF tightBoundingRect(skia::textlayout::Paragraph* paragraph, double pixelSize, double scale, bool hintedLayout);
+// The ink of the paragraph's first line, from the origin of its baseline in
+// logical pixels: the glyphs' outlines at the device size, hinted only when
+// metrics are hinted, unrounded, at the truncated advances.
+RectF inkBoundingRect(skia::textlayout::Paragraph* paragraph, double pixelSize, double scale, bool hintedLayout);
 
 } // namespace cutefish::ui

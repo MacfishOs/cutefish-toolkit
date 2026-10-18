@@ -376,6 +376,13 @@ RectF Label::tightBoundingRect() const
     return ui::tightBoundingRect(layoutParagraph(kUnboundedWidth), pixelSize(), currentScale(), hintedLayout());
 }
 
+RectF Label::inkBoundingRect() const
+{
+    if (m_text.empty())
+        return {};
+    return ui::inkBoundingRect(layoutParagraph(kUnboundedWidth), pixelSize(), currentScale(), hintedLayout());
+}
+
 bool Label::isElided() const
 {
     if (m_wrap)

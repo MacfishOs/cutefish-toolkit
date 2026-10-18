@@ -104,6 +104,26 @@ TEST(TextMetricsTest, TightBoundingRectsRoundToWholePixels)
     EXPECT_EQ(Measured(11, 1.5, "Text").label->capHeight(), 8);
 }
 
+TEST(TextMetricsTest, InkBoundingRectsKeepFractionsWithinTheWholePixelOnes)
+{
+    for (const double scale : {1.0, 1.5, 2.0}) {
+        for (const std::string text : {"H", "42", "99+"}) {
+            const Measured measured(13, scale, text, 600);
+            const RectF ink = measured.label->inkBoundingRect();
+            const RectF tight = measured.label->tightBoundingRect();
+            EXPECT_GT(ink.width, 0) << text << " @" << scale;
+            EXPECT_GE(ink.x, tight.x - 0.5) << text << " @" << scale;
+            EXPECT_LE(ink.x + ink.width, tight.x + tight.width + 0.5) << text << " @" << scale;
+            EXPECT_GE(ink.y, tight.y - 0.5) << text << " @" << scale;
+            EXPECT_LE(ink.y + ink.height, tight.y + tight.height + 0.5) << text << " @" << scale;
+        }
+    }
+    // A capital sits on the baseline: its ink ends there.
+    const Measured capital(24, 2, "H");
+    const RectF ink = capital.label->inkBoundingRect();
+    EXPECT_NEAR(ink.y + ink.height, 0, 0.01);
+}
+
 TEST(TextMetricsTest, WholePixelMetricsUnscaled)
 {
     // Unscaled, metrics are hinted with fontconfig's full hinting and rounded.

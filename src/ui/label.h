@@ -139,6 +139,9 @@ public:
     // The ink bounds of the first line, relative to the
     // start of its baseline: whole pixels around the glyphs.
     RectF tightBoundingRect() const;
+    // The exact ink bounds of the first line, relative to the start of its
+    // baseline, at the window's scale.
+    RectF inkBoundingRect() const;
 
     // The unwrapped size.
     SizeF sizeHint() const override;
