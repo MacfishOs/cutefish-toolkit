@@ -49,6 +49,7 @@ pkg_get_variable(WAYLAND_PROTOCOLS_DATADIR wayland-protocols pkgdatadir)
 pkg_get_variable(WAYLAND_SCANNER wayland-scanner wayland_scanner)
 
 include(cmake/Skia.cmake)
+include(cmake/CutefishTranslations.cmake)
 
 add_subdirectory(src)
 add_subdirectory(examples)
@@ -56,6 +57,8 @@ if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+cutefish_add_translations(cutefish-toolkit SOURCES src/base src/ui)
 
 configure_package_config_file(cmake/CutefishToolkitConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/CutefishToolkitConfig.cmake
@@ -67,5 +70,8 @@ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/CutefishToolkitConf
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/CutefishToolkitConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/CutefishToolkitConfigVersion.cmake
+    cmake/CutefishTranslations.cmake
+    cmake/CutefishTranslationsUpdate.cmake
+    cmake/CutefishTranslationsCheck.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CutefishToolkit
 )

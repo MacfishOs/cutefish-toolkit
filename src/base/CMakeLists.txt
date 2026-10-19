@@ -15,6 +15,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
     file_watcher.h
     geometry.h
     hash.h
+    i18n.h
     json.h
     local_socket.h
     locale.h
@@ -47,6 +48,7 @@ add_library(cutefish-toolkit-base SHARED
     file_watcher.cpp
     geometry.cpp
     hash.cpp
+    i18n.cpp
     json.cpp
     local_socket.cpp
     locale.cpp
@@ -78,6 +80,10 @@ target_include_directories(cutefish-toolkit-base
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/cutefish-toolkit>
+)
+
+target_compile_definitions(cutefish-toolkit-base PRIVATE
+    CUTEFISH_LOCALE_DIR="${CMAKE_INSTALL_FULL_LOCALEDIR}"
 )
 
 target_link_libraries(cutefish-toolkit-base

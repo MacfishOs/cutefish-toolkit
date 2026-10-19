@@ -15,6 +15,7 @@
 #include "ui/layout.h"
 #include "ui/painter.h"
 #include "ui/theme.h"
+#include "ui/translation.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
@@ -301,6 +302,8 @@ ConfirmDialog::ConfirmDialog(Window* parent, std::string title, std::string text
     : m_parent(parent)
     , m_title(std::move(title))
     , m_text(std::move(text))
+    , m_confirm(tr("Confirm"))
+    , m_cancel(tr("Cancel"))
 {
 }
 

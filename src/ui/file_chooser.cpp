@@ -13,6 +13,7 @@
 #include "base/dbus.h"
 #include "base/event_loop.h"
 #include "ui/application.h"
+#include "ui/translation.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
@@ -225,7 +226,7 @@ void FileChooser::open()
     }
     std::string title = m_title;
     if (title.empty())
-        title = save ? "Save File" : folder ? "Open Folder" : "Open File";
+        title = save ? tr("Save File") : folder ? tr("Open Folder") : tr("Open File");
 
     auto request = std::make_unique<Request>();
     request->token = token;

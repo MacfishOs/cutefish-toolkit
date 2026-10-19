@@ -123,8 +123,8 @@ private:
     Window* m_parent;
     std::string m_title;
     std::string m_text;
-    std::string m_confirm = "Confirm";
-    std::string m_cancel = "Cancel";
+    std::string m_confirm;
+    std::string m_cancel;
     bool m_destructive = false;
     bool m_cancelVisible = true;
     std::unique_ptr<Window> m_window;

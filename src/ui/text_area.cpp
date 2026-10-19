@@ -24,6 +24,7 @@
 #include "ui/text_context.h"
 #include "ui/text_lines.h"
 #include "ui/theme.h"
+#include "ui/translation.h"
 #include "ui/window.h"
 
 namespace textlayout = skia::textlayout;
@@ -937,20 +938,20 @@ void TextArea::showContextMenu(PointF position)
         menu.setItemEnabled(index, enabled);
         menu.setItemVisible(index, editable);
     };
-    addEditing("Undo", [this] { undo(); }, d->edit.canUndo());
-    addEditing("Redo", [this] { redo(); }, d->edit.canRedo());
+    addEditing(tr("Undo"), [this] { undo(); }, d->edit.canUndo());
+    addEditing(tr("Redo"), [this] { redo(); }, d->edit.canRedo());
     if (editable)
         menu.addSeparator();
-    addEditing("Cut", [this] { cut(); }, selection);
-    const size_t copyIndex = menu.addItem("Copy", [this] { copy(); });
+    addEditing(tr("Cut"), [this] { cut(); }, selection);
+    const size_t copyIndex = menu.addItem(tr("Copy"), [this] { copy(); });
     menu.setItemEnabled(copyIndex, selection);
-    addEditing("Paste", [this] { paste(); }, true);
-    addEditing("Delete", [this] {
+    addEditing(tr("Paste"), [this] { paste(); }, true);
+    addEditing(tr("Delete"), [this] {
         d->edit.deleteBackward(false);
         edited();
     }, selection);
     menu.addSeparator();
-    const size_t selectAllIndex = menu.addItem("Select All", [this] { selectAll(); });
+    const size_t selectAllIndex = menu.addItem(tr("Select All"), [this] { selectAll(); });
     menu.setItemEnabled(selectAllIndex, !d->edit.text().empty());
     menu.popup(window(), mapToWindow(position));
 }

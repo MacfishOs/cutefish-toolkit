@@ -16,6 +16,7 @@
 #include "ui/platform_window.h"
 #include "ui/text_context.h"
 #include "ui/text_lines.h"
+#include "ui/translation.h"
 #include "ui/window.h"
 #include "wayland/connection.h"
 
@@ -29,6 +30,7 @@ Application::Application(int argc, char** argv, Platform platform)
 {
     s_instance = this;
     std::setlocale(LC_ALL, "");
+    i18n::bindDomain(kTranslationDomain);
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
     // The xdg-activation contract: the token is this process's alone, not
