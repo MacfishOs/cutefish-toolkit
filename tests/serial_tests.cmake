@@ -10,4 +10,7 @@ set_tests_properties(FrameCostTest.PageOfCardsRepaintsWithinAFrame
                      TextCostTest.LongTextArea
                      TextCostTest.TextFieldTyping
                      TextCostTest.CodeLines
-                     PROPERTIES RUN_SERIAL TRUE)
+                     PROPERTIES RUN_SERIAL TRUE LABELS timing)
+
+# Wall-clock bounds that a loaded machine misses.
+set_tests_properties(ImageViewTest.ShowsPicturesThatFinishTogetherTogether PROPERTIES LABELS timing)
