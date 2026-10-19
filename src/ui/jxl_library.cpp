@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: BSD-3-Clause
 
 // The JPEG XL functions the image decoder calls, forwarding to libjxl once
 // the first JPEG XL file is read. Linked, libjxl and its Highway, Brotli and

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: BSD-3-Clause
 
 // Type detection on the shared-mime-info files update-mime-database writes:
 // globs2, magic, icons and generic-icons.
