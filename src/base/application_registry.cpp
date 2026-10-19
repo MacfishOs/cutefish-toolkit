@@ -132,9 +132,9 @@ ApplicationRegistry::ApplicationRegistry(EventLoop& loop)
 
     if (dbus::Connection* bus = dbus::Connection::session(&loop)) {
         dbus::MatchRule rule;
-        rule.sender = "com.cutefish.Services";
-        rule.path = "/com/cutefish/Services/Language";
-        rule.interface = "com.cutefish.Services.Language";
+        rule.sender = "org.cutefish.Services";
+        rule.path = "/org/cutefish/Services/Language";
+        rule.interface = "org.cutefish.Services.Language";
         rule.member = "languageChanged";
         m_languageChanged = bus->subscribe(rule, [this](const dbus::Message&) {
             if (DesktopEntry::displayLanguage() != m_language)
