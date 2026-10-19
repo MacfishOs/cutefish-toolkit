@@ -3,11 +3,14 @@
 
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include "base/signal.h"
 
 namespace cutefish::base {
 class EventLoop;
@@ -86,7 +89,17 @@ public:
     int run();
     void quit(int exitCode = 0);
 
+    // Text, dates and numbers follow the session language as it changes:
+    // the process's locale is set again, then this runs, for the views to
+    // take their text again.
+    base::Signal<> languageChanged;
+    // LANG, LANGUAGE and the LC_ variables, an empty value removing one: for
+    // a host that hears of the session language itself, as the compositor
+    // does. Applications on Wayland follow cutefish-services on their own.
+    void setLanguageEnvironment(const std::map<std::string, std::string>& variables);
+
 private:
+    struct LanguageWatch;
     friend class EmbeddedWindow;
     friend struct Theme;
     friend class Window;
@@ -110,6 +123,7 @@ private:
     mutable bool m_fontsChangedWhileLoading = false;
     base::dbus::Connection* m_sessionBus = nullptr;
     std::unique_ptr<AppearanceWatcher> m_appearance;
+    std::unique_ptr<LanguageWatch> m_languageWatch;
     std::vector<Window*> m_windows;
     bool m_activeUpdatePending = false;
 };

@@ -79,8 +79,11 @@ public:
         Si,
     };
 
-    // The session's locale; read once.
+    // The session's locale, as the process's locale categories name it.
     static const Locale& system();
+    // Reads system() again after setlocale(); references to the previous
+    // one stay valid.
+    static void reloadSystem();
     // Every category from one locale, such as "en_SG", "zh_CN" or "C"; a
     // codeset or modifier ("en_SG.UTF-8@euro") is ignored.
     explicit Locale(std::string_view name);
@@ -149,6 +152,7 @@ private:
     friend class Collator;
 
     Locale() = default;
+    static const Locale* readSystem();
 
     std::shared_ptr<const Data> m_messages;
     std::shared_ptr<const Data> m_time;

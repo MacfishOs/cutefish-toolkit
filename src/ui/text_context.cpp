@@ -463,6 +463,15 @@ void TextContext::clearFontCaches()
     m_fontCollection->clearCaches();
 }
 
+void TextContext::setLocale(const std::string& ctypeLocale)
+{
+    const std::string locale = localeName(ctypeLocale);
+    if (locale == m_locale)
+        return;
+    m_locale = locale;
+    clearFontCaches();
+}
+
 double TextContext::pixelSize(double logicalSize)
 {
     return std::round(std::floor(logicalSize * 100 + 0.5) / 100);

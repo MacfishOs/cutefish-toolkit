@@ -6,11 +6,13 @@
 #include <clocale>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <system_error>
 #include <utility>
 
 #include "base/dbus.h"
 #include "base/event_loop.h"
+#include "base/locale.h"
 #include "gpu/egl_context.h"
 #include "ui/appearance.h"
 #include "ui/platform_window.h"
@@ -23,6 +25,22 @@
 namespace cutefish::ui {
 
 static Application* s_instance = nullptr;
+
+static constexpr const char* kLanguageService = "org.cutefish.Services";
+static constexpr const char* kLanguagePath = "/org/cutefish/Services/Language";
+static constexpr const char* kLanguageInterface = "org.cutefish.Services.Language";
+
+struct Application::LanguageWatch
+{
+    explicit LanguageWatch(base::dbus::Connection* bus)
+        : proxy(bus, kLanguageService, kLanguagePath, kLanguageInterface)
+    {
+    }
+
+    base::dbus::Proxy proxy;
+    base::dbus::Match changed;
+    base::dbus::PendingCall call;
+};
 
 Application::Application(int argc, char** argv, Platform platform)
     : m_arguments(argv, argv + argc)
@@ -72,6 +90,18 @@ Application::Application(int argc, char** argv, Platform platform)
     }
     if (m_appearance)
         m_appearance->waitForSettings();
+
+    if (m_sessionBus) {
+        m_languageWatch = std::make_unique<LanguageWatch>(m_sessionBus);
+        LanguageWatch* watch = m_languageWatch.get();
+        watch->changed = watch->proxy.onSignal("languageChanged", [this, watch](const base::dbus::Message&) {
+            watch->call = watch->proxy.getPropertyAsync("environment", [this](const base::dbus::Reply& reply) {
+                const auto value = reply.value<base::dbus::Variant>();
+                if (const auto variables = value ? value->get<std::map<std::string, std::string>>() : std::nullopt)
+                    setLanguageEnvironment(*variables);
+            });
+        });
+    }
 }
 
 Application::~Application()
@@ -84,6 +114,7 @@ Application::~Application()
     if (m_ownedLoop)
         m_loop->dropPosted();
     m_appearance.reset();
+    m_languageWatch.reset();
     m_sessionBus = nullptr;
     clearSubpixelCoverage();
     m_text.reset();
@@ -129,6 +160,34 @@ void Application::setApplicationId(std::string applicationId)
         if (!window->m_parent)
             window->m_platform->setAppId(m_applicationId);
     }
+}
+
+void Application::setLanguageEnvironment(const std::map<std::string, std::string>& variables)
+{
+    bool changed = false;
+    for (const auto& [name, value] : variables) {
+        const char* current = std::getenv(name.c_str());
+        if (value.empty() ? current != nullptr : !current || value != current) {
+            changed = true;
+            break;
+        }
+    }
+    if (!changed)
+        return;
+    // Threads reading the environment meanwhile are safe as long as only set
+    // variables are replaced: the C library keeps their previous strings.
+    for (const auto& [name, value] : variables) {
+        if (value.empty())
+            unsetenv(name.c_str());
+        else
+            setenv(name.c_str(), value.c_str(), 1);
+    }
+    std::setlocale(LC_ALL, "");
+    base::Locale::reloadSystem();
+    const char* ctype = std::setlocale(LC_CTYPE, nullptr);
+    text().setLocale(ctype ? ctype : "");
+    languageChanged.emit();
+    themeChanged();
 }
 
 void Application::themeChanged()

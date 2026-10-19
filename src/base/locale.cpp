@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -630,17 +631,35 @@ DateTime DateTime::utc(CalendarDate date, ClockTime time)
     return {date, time, 0, "UTC", "UTC"};
 }
 
+// Never freed: a reload leaves the previous locale to whoever holds it.
+static std::atomic<const Locale*> s_system{nullptr};
+
+const Locale* Locale::readSystem()
+{
+    auto* system = new Locale;
+    system->m_messages = dataFor(categoryName(LC_MESSAGES_MASK, LC_MESSAGES));
+    system->m_time = dataFor(categoryName(LC_TIME_MASK, LC_TIME));
+    system->m_numeric = dataFor(categoryName(LC_NUMERIC_MASK, LC_NUMERIC));
+    system->m_collation = localeId(categoryName(LC_COLLATE_MASK, LC_COLLATE));
+    return system;
+}
+
 const Locale& Locale::system()
 {
-    static const Locale locale = [] {
-        Locale system;
-        system.m_messages = dataFor(categoryName(LC_MESSAGES_MASK, LC_MESSAGES));
-        system.m_time = dataFor(categoryName(LC_TIME_MASK, LC_TIME));
-        system.m_numeric = dataFor(categoryName(LC_NUMERIC_MASK, LC_NUMERIC));
-        system.m_collation = localeId(categoryName(LC_COLLATE_MASK, LC_COLLATE));
-        return system;
-    }();
-    return locale;
+    const Locale* locale = s_system.load(std::memory_order_acquire);
+    if (!locale) {
+        const Locale* read = readSystem();
+        if (s_system.compare_exchange_strong(locale, read, std::memory_order_acq_rel))
+            locale = read;
+        else
+            delete read;
+    }
+    return *locale;
+}
+
+void Locale::reloadSystem()
+{
+    s_system.store(readSystem(), std::memory_order_release);
 }
 
 Locale::Locale(std::string_view name)

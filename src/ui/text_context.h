@@ -60,6 +60,8 @@ public:
     const std::string& family() const { return m_family; }
     // BCP 47, for picking the Han variant among fallback fonts.
     const std::string& locale() const { return m_locale; }
+    // After the session language changed; forgets the font caches.
+    void setLocale(const std::string& ctypeLocale);
 
     // The pixel size for a logical size: rounded to two decimals, then to
     // whole pixels.
