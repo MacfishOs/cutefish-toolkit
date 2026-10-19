@@ -28,7 +28,7 @@ public:
     void setDescription(std::string description) { m_description = std::move(description); }
     // A theme icon, looked up as image://icontheme does, or a file.
     void setIconSource(std::string icon) { m_icon = std::move(icon); }
-    // https://cutefishos.com unless set.
+    // https://cutefish.org unless set.
     void setLink(std::string link) { m_link = std::move(link); }
 
     // Raises the dialog when it is shown already.
@@ -49,7 +49,7 @@ private:
     std::string m_name;
     std::string m_description;
     std::string m_icon;
-    std::string m_link = "https://cutefishos.com";
+    std::string m_link = "https://cutefish.org";
     std::unique_ptr<Window> m_window;
 };
 
