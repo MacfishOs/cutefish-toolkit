@@ -14,6 +14,7 @@
 #include <langinfo.h>
 #include <locale.h>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 
 #include <unicode/uchar.h>
@@ -25,6 +26,9 @@
 #include <unicode/unum.h>
 #include <unicode/ures.h>
 #include <unicode/ustring.h>
+
+#include "base/file.h"
+#include "base/strings.h"
 
 // Exported by ICU's common library but declared only in its internal
 // uresimp.h: a nested lookup that inherits from parent locales key by key, as
@@ -660,6 +664,29 @@ const Locale& Locale::system()
 void Locale::reloadSystem()
 {
     s_system.store(readSystem(), std::memory_order_release);
+}
+
+std::string Locale::systemLanguage()
+{
+    for (const char* path : {"/etc/default/locale", "/etc/locale.conf"}) {
+        const std::optional<std::string> contents = file::read(path);
+        if (!contents)
+            continue;
+        for (const std::string& line : strings::split(*contents, '\n')) {
+            std::string value(strings::trimmed(line));
+            if (!value.starts_with("LANG="))
+                continue;
+            value.erase(0, 5);
+            if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') && value.back() == value.front())
+                value = value.substr(1, value.size() - 2);
+            const size_t codeset = value.find('.');
+            if (codeset != std::string::npos)
+                value.erase(codeset, value.find('@', codeset) - codeset);
+            if (!value.empty() && value != "C" && value != "POSIX")
+                return value;
+        }
+    }
+    return "en_US";
 }
 
 Locale::Locale(std::string_view name)

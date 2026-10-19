@@ -84,6 +84,10 @@ public:
     // Reads system() again after setlocale(); references to the previous
     // one stay valid.
     static void reloadSystem();
+    // The system's default language for sessions, such as "en_SG" or
+    // "sr_RS@latin", from LANG in /etc/default/locale or /etc/locale.conf;
+    // "en_US" without one.
+    static std::string systemLanguage();
     // Every category from one locale, such as "en_SG", "zh_CN" or "C"; a
     // codeset or modifier ("en_SG.UTF-8@euro") is ignored.
     explicit Locale(std::string_view name);

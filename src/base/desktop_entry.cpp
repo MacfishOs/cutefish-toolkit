@@ -8,6 +8,7 @@
 #include <map>
 
 #include "base/file.h"
+#include "base/locale.h"
 #include "base/paths.h"
 #include "base/settings.h"
 
@@ -213,33 +214,13 @@ std::vector<std::string> DesktopEntry::currentDesktops()
     return {"Cutefish"};
 }
 
-static std::string systemLanguage()
-{
-    std::string language;
-    if (const std::optional<std::string> contents = file::read("/etc/locale.gen")) {
-        size_t start = 0;
-        while (start < contents->size()) {
-            size_t end = contents->find('\n', start);
-            if (end == std::string::npos)
-                end = contents->size();
-            const std::string line = trimmed(std::string_view(*contents).substr(start, end - start));
-            start = end + 1;
-            if (line.empty() || line[0] == '#')
-                continue;
-            const std::string locale = line.substr(0, line.find(' '));
-            language = locale.substr(0, locale.find('.'));
-        }
-    }
-    return language.empty() ? "en_US" : language;
-}
-
 std::string DesktopEntry::displayLanguage()
 {
     // The session language lives in cutefish-services' settings.
     const Settings settings(paths::cutefishConfig("services"));
     std::string language = settings.stringValue("Language/language");
     if (language.empty())
-        return systemLanguage();
+        return Locale::systemLanguage();
     std::replace(language.begin(), language.end(), '-', '_');
     return language;
 }
