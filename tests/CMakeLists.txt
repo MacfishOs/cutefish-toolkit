@@ -10,6 +10,7 @@ add_executable(cutefish-toolkit-base-tests
     base/file_test.cpp
     base/hash_test.cpp
     base/helpers_test.cpp
+    base/i18n_test.cpp
     base/io_helpers_test.cpp
     base/geometry_test.cpp
     base/json_test.cpp

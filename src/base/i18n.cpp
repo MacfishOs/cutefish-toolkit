@@ -24,7 +24,7 @@ void bindDomain(const char* domain)
 
 const char* tr(const char* text)
 {
-    return gettext(text);
+    return dtr(nullptr, text);
 }
 
 const char* trc(const char* context, const char* text)
@@ -37,9 +37,10 @@ std::string trn(const char* singular, const char* plural, uint64_t n)
     return dtrn(nullptr, singular, plural, n);
 }
 
+// The catalogs map the empty text to their header.
 const char* dtr(const char* domain, const char* text)
 {
-    return dgettext(domain, text);
+    return *text ? dgettext(domain, text) : text;
 }
 
 // The catalogs key a message with a context as the context, an EOT and the

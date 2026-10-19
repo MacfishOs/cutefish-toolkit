@@ -12,8 +12,6 @@
 # into every po/<language>.po. check-translations, and the translations test,
 # check every catalog with msgfmt, the "{name}" placeholders included.
 
-set(_CUTEFISH_TRANSLATIONS_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-
 function(cutefish_add_translations domain)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "" "SOURCES;DESKTOP_FILES")
     set(po_directory ${CMAKE_CURRENT_SOURCE_DIR}/po)
@@ -31,7 +29,7 @@ function(cutefish_add_translations domain)
             COMMAND ${CMAKE_COMMAND} -DDOMAIN=${domain} -DSOURCE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}
                     -DSOURCES=${sources} -DDESKTOP_FILES=${desktop_files}
                     -DXGETTEXT=${CUTEFISH_XGETTEXT} -DMSGMERGE=${CUTEFISH_MSGMERGE}
-                    -P ${_CUTEFISH_TRANSLATIONS_DIRECTORY}/CutefishTranslationsUpdate.cmake
+                    -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CutefishTranslationsUpdate.cmake
             VERBATIM)
     endif()
 
@@ -86,11 +84,11 @@ function(cutefish_add_translations domain)
     string(REPLACE ";" "|" po_list "${po_files}")
     add_custom_target(check-translations
         COMMAND ${CMAKE_COMMAND} -DPO_FILES=${po_list} -DMSGFMT=${CUTEFISH_MSGFMT}
-                -P ${_CUTEFISH_TRANSLATIONS_DIRECTORY}/CutefishTranslationsCheck.cmake
+                -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CutefishTranslationsCheck.cmake
         VERBATIM)
     if(BUILD_TESTING AND po_files)
         add_test(NAME translations
             COMMAND ${CMAKE_COMMAND} -DPO_FILES=${po_list} -DMSGFMT=${CUTEFISH_MSGFMT}
-                    -P ${_CUTEFISH_TRANSLATIONS_DIRECTORY}/CutefishTranslationsCheck.cmake)
+                    -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CutefishTranslationsCheck.cmake)
     endif()
 endfunction()
