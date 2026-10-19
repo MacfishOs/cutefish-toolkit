@@ -14,6 +14,7 @@
 
 namespace cutefish::base {
 class EventLoop;
+class SessionLanguage;
 }
 
 namespace cutefish::base::dbus {
@@ -93,17 +94,18 @@ public:
     // the process's locale is set again, then this runs, for the views to
     // take their text again.
     base::Signal<> languageChanged;
-    // LANG, LANGUAGE and the LC_ variables, an empty value removing one: for
-    // a host that hears of the session language itself, as the compositor
-    // does. Applications on Wayland follow cutefish-services on their own.
+    // Applications on Wayland follow cutefish-services on their own; a host
+    // whose application has no session bus, as the compositor's, lends its.
+    void followSessionLanguage(base::dbus::Connection* bus);
+    // LANG, LANGUAGE and the LC_ variables, an empty value removing one.
     void setLanguageEnvironment(const std::map<std::string, std::string>& variables);
 
 private:
-    struct LanguageWatch;
     friend class EmbeddedWindow;
     friend struct Theme;
     friend class Window;
 
+    void languageEnvironmentChanged();
     void themeChanged();
     // The theme's font family changed: cached font lookups go.
     void fontsChanged();
@@ -123,7 +125,8 @@ private:
     mutable bool m_fontsChangedWhileLoading = false;
     base::dbus::Connection* m_sessionBus = nullptr;
     std::unique_ptr<AppearanceWatcher> m_appearance;
-    std::unique_ptr<LanguageWatch> m_languageWatch;
+    std::unique_ptr<base::SessionLanguage> m_languageWatch;
+    base::Subscription m_languageChanged;
     std::vector<Window*> m_windows;
     bool m_activeUpdatePending = false;
 };

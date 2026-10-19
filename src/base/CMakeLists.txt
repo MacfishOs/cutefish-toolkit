@@ -26,6 +26,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
     paths.h
     process.h
     region.h
+    session_language.h
     settings.h
     signal.h
     strings.h
@@ -59,6 +60,7 @@ add_library(cutefish-toolkit-base SHARED
     paths.cpp
     process.cpp
     region.cpp
+    session_language.cpp
     settings.cpp
     strings.cpp
     thread_pool.cpp

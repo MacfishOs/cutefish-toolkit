@@ -305,18 +305,35 @@ ConfirmDialog::ConfirmDialog(Window* parent, std::string title, std::string text
     , m_confirm(tr("Confirm"))
     , m_cancel(tr("Cancel"))
 {
+    m_languageChanged = Application::instance()->languageChanged.connect([this] {
+        setButtonTexts(m_defaultConfirm ? tr("Confirm") : m_confirm, m_defaultCancel ? tr("Cancel") : m_cancel);
+    });
 }
 
 ConfirmDialog::~ConfirmDialog() = default;
 
 void ConfirmDialog::setConfirmText(std::string text)
 {
-    m_confirm = std::move(text);
+    m_defaultConfirm = false;
+    setButtonTexts(std::move(text), m_cancel);
 }
 
 void ConfirmDialog::setCancelText(std::string text)
 {
-    m_cancel = std::move(text);
+    m_defaultCancel = false;
+    setButtonTexts(m_confirm, std::move(text));
+}
+
+void ConfirmDialog::setButtonTexts(std::string confirm, std::string cancel)
+{
+    m_confirm = std::move(confirm);
+    m_cancel = std::move(cancel);
+    if (!m_window)
+        return;
+    m_confirmButton->setText(m_confirm);
+    if (m_cancelButton)
+        m_cancelButton->setText(m_cancel);
+    m_window->resize({std::max(kConfirmMinimumWidth, m_actions->sizeHint().width + 2 * kContentPadding), 0});
 }
 
 void ConfirmDialog::setDestructive(bool destructive)
@@ -424,6 +441,9 @@ void ConfirmDialog::show()
         cancel->onClicked = [this] { finish(false); };
     }
     DialogButton* confirm = actions->addChild<DialogButton>(m_confirm, true);
+    m_actions = actions;
+    m_confirmButton = confirm;
+    m_cancelButton = cancel;
     confirm->setDestructive(m_destructive);
     confirm->onClicked = [this] { finish(true); };
 

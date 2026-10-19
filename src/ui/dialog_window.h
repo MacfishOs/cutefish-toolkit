@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/signal.h"
 #include "ui/view.h"
 
 namespace cutefish::ui {
@@ -103,7 +104,8 @@ public:
     ConfirmDialog(Window* parent, std::string title, std::string text = {});
     ~ConfirmDialog();
 
-    // Also while shown.
+    // Also while shown. Buttons left at "Confirm" and "Cancel" follow the
+    // session language themselves.
     void setTitle(std::string title);
     void setText(std::string text);
     void setConfirmText(std::string text);
@@ -119,6 +121,7 @@ public:
 
 private:
     void finish(bool accepted);
+    void setButtonTexts(std::string confirm, std::string cancel);
 
     Window* m_parent;
     std::string m_title;
@@ -130,6 +133,12 @@ private:
     std::unique_ptr<Window> m_window;
     Label* m_titleLabel = nullptr;
     Label* m_textLabel = nullptr;
+    View* m_actions = nullptr;
+    DialogButton* m_confirmButton = nullptr;
+    DialogButton* m_cancelButton = nullptr;
+    bool m_defaultConfirm = true;
+    bool m_defaultCancel = true;
+    base::Subscription m_languageChanged;
 };
 
 } // namespace cutefish::ui
