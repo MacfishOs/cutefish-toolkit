@@ -41,6 +41,11 @@ string(REPLACE "charset=CHARSET" "charset=UTF-8" text "${text}")
 string(REGEX REPLACE "\"Last-Translator: [^\n]*\n" "\"Last-Translator: \\\\n\"\n" text "${text}")
 string(REGEX REPLACE "\"Language-Team: [^\n]*\n" "\"Language-Team: \\\\n\"\n" text "${text}")
 
+# No text goes through printf: a "%" followed by a letter is not a directive.
+string(REGEX REPLACE "#, (possible-)?c-format\n" "" text "${text}")
+string(REGEX REPLACE ", (possible-)?c-format" "" text "${text}")
+string(REGEX REPLACE "#, (possible-)?c-format, " "#, " text "${text}")
+
 # Placeholders are "{name}", which msgfmt checks as python-brace-format.
 set(placeholder "\\{[A-Za-z_][A-Za-z0-9_]*\\}")
 string(REGEX REPLACE "\n((msgctxt [^\n]*\n)?msgid \"[^\n]*${placeholder}[^\n]*\"\n)"
