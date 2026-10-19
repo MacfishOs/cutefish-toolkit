@@ -8,6 +8,7 @@ SKIA_URL=https://skia.googlesource.com/skia
 SKIA_BRANCH=chrome/m156
 SKIA_REVISION=95ee33d7ec7791ab9c071675710a14fe6408ae4f
 
+mkdir -p "$(dirname "$0")/../third_party"
 cd "$(dirname "$0")/../third_party"
 
 if [[ ! -d skia/.git ]]; then
