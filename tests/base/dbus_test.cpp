@@ -404,6 +404,11 @@ TEST_F(DBusTest, ProxySignalsComeFromTheirNamesOwner)
     Match others = otherProxy.onSignal("Changed", [&](const Message& signal) {
         theirs.push_back(signal.argument<std::string>().value_or(""));
     });
+    // The matches are added asynchronously, and a signal from another
+    // connection may reach the bus first; the bus handles one connection's
+    // messages in order, so they are in place once a later call returns.
+    Proxy bus(m_connection.get(), "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus");
+    ASSERT_TRUE(bus.call("GetId"));
     // Signals sent before the owners are known wait for them.
     EXPECT_TRUE(other->emitSignal(kPath, kInterface, "Changed", std::string("early")));
     runFor(300ms);
