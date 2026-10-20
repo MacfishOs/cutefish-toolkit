@@ -1,0 +1,25 @@
+defines = -DU_USING_ICU_NAMESPACE=0 -DNDEBUG -DSKUNICODE_IMPLEMENTATION=1 -DSK_GAMMA_APPLY_TO_A8 -DSK_ENABLE_AVX512_OPTS -DU_SHOW_CPLUSPLUS_API=0 -DSK_CODEC_DECODES_ICO -DSK_CODEC_DECODES_PNG -DSK_CODEC_DECODES_PNG_WITH_LIBPNG -DSK_CODEC_ENCODES_PNG -DSK_CODEC_ENCODES_PNG_WITH_LIBPNG -DSK_TYPEFACE_FACTORY_FREETYPE -DSK_FONTMGR_FCI_AVAILABLE -DSK_FONTMGR_ANDROID_AVAILABLE -DSK_FONTMGR_FONTCONFIG_AVAILABLE -DSK_GL -DSK_CODEC_ENCODES_JPEG -DSK_CODEC_DECODES_JPEG -DSK_XML -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_GANESH -DSK_DISABLE_TRACING
+framework_dirs =
+include_dirs = -I../../third_party/skia
+cflags = -Wno-attributes -ffp-contract=off -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -Wno-psabi
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti -frtti
+root_out_dir = .
+target_output_name = libskunicode_icu
+
+build obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu_bidi.o: cxx ../../third_party/skia/modules/skunicode/src/SkUnicode_icu_bidi.cpp
+  source_file_part = SkUnicode_icu_bidi.cpp
+  source_name_part = SkUnicode_icu_bidi
+build obj/modules/skunicode/src/libskunicode_icu.SkBidiFactory_icu_full.o: cxx ../../third_party/skia/modules/skunicode/src/SkBidiFactory_icu_full.cpp
+  source_file_part = SkBidiFactory_icu_full.cpp
+  source_name_part = SkBidiFactory_icu_full
+build obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu.o: cxx ../../third_party/skia/modules/skunicode/src/SkUnicode_icu.cpp
+  source_file_part = SkUnicode_icu.cpp
+  source_name_part = SkUnicode_icu
+build obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu_builtin.o: cxx ../../third_party/skia/modules/skunicode/src/SkUnicode_icu_builtin.cpp
+  source_file_part = SkUnicode_icu_builtin.cpp
+  source_name_part = SkUnicode_icu_builtin
+
+build ./libskunicode_icu.a: alink obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu_bidi.o obj/modules/skunicode/src/libskunicode_icu.SkBidiFactory_icu_full.o obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu.o obj/modules/skunicode/src/libskunicode_icu.SkUnicode_icu_builtin.o || ./libskunicode_core.a ./libskia.a obj/third_party/icu/icu.stamp obj/src/partition_alloc/raw_ptr.stamp
+  arflags =
+  output_extension = .a
+  output_dir = 

@@ -1,0 +1,8 @@
+defines = -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_GANESH -DSK_DISABLE_TRACING
+framework_dirs =
+include_dirs = -I../../third_party/skia/client_utils/android -I../../third_party/skia/include/android -I../../third_party/skia/include/codec -I../../third_party/skia/include/config -I../../third_party/skia/include/core -I../../third_party/skia/include/docs -I../../third_party/skia/include/effects -I../../third_party/skia/include/encode -I../../third_party/skia/include/gpu -I../../third_party/skia/include/pathops -I../../third_party/skia/include/ports -I../../third_party/skia/include/svg -I../../third_party/skia/include/utils -I../../third_party/skia/include/utils/mac -I../../third_party/skia/modules/skottie/include -I../../third_party/skia/modules/skparagraph/include -I../../third_party/skia/modules/skshaper/include -I../../third_party/skia/modules/svg/include -I../../third_party/skia
+root_out_dir = .
+target_output_name = public
+
+
+build obj/public.stamp: stamp || obj/src/partition_alloc/raw_ptr.stamp

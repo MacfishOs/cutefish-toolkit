@@ -6,23 +6,88 @@
 #include <algorithm>
 #include <cmath>
 
+#include "include/core/SkImage.h"
 #include "ui/application.h"
 #include "ui/header_button.h"
+#include "ui/icon_loader.h"
+#include "ui/painter.h"
+#include "ui/theme.h"
 #include "ui/window.h"
 
 namespace cutefish::ui {
 
-static constexpr double kButton = 32;
+static constexpr double kButton = 46;
 static constexpr double kButtonSpacing = 1;
 
 namespace {
 
-// Restore while the window is maximized, maximize otherwise.
-class MaximizeButton final : public HeaderButton
+class TrafficLightButton : public HeaderButton
 {
 public:
-    MaximizeButton()
-        : HeaderButton("maximize", kButton)
+    TrafficLightButton(const std::string& artwork, Color plateColor)
+        : HeaderButton(artwork, kButton)
+        , m_plateColor(plateColor)
+    {
+    }
+
+    void paint(Painter& painter) override
+    {
+        const Window* window = this->window();
+        const bool active = window && window->isActive();
+
+        // draw the circle
+        const double radius = 7.0; // logical pixels (14px diameter)
+        const double size = radius * 2.0;
+        const Rect icon = painter.snappedRect({std::round((localRect().width - size) / 2),
+                                              std::round((localRect().height - size) / 2), size, size});
+
+        const bool pressed = m_pressed || m_checked;
+        const double opacity = active || m_hovered || pressed ? 1.0 : 0.35;
+        Color color = m_plateColor;
+        if (pressed) color = color.darker(1.2);
+
+        painter.fillDeviceRoundedRect({icon.x, icon.y, icon.width, icon.height}, icon.width / 2.0, color.withAlpha(opacity));
+
+        // if hovered, draw icon (glyph)
+        if (m_hovered || pressed) {
+            const std::string artworkName = currentArtwork();
+            if (artworkName.empty()) return;
+            // Draw the inner glyph in dark
+            const Color ink(0, 0, 0, 150);
+            sk_sp<SkImage> image = IconLoader::instance().glyph("window-" + artworkName, icon.width, ink);
+            painter.save();
+            painter.drawImage(image.get(), icon.x, icon.y);
+            painter.restore();
+        }
+    }
+
+protected:
+    Color m_plateColor;
+};
+
+class CloseTrafficLightButton final : public TrafficLightButton
+{
+public:
+    CloseTrafficLightButton()
+        : TrafficLightButton("close", Color::rgb(0xFF5F56))
+    {
+    }
+};
+
+class MinimizeTrafficLightButton final : public TrafficLightButton
+{
+public:
+    MinimizeTrafficLightButton()
+        : TrafficLightButton("minimize", Color::rgb(0xFFBD2E))
+    {
+    }
+};
+
+class MaximizeTrafficLightButton final : public TrafficLightButton
+{
+public:
+    MaximizeTrafficLightButton()
+        : TrafficLightButton("maximize", Color::rgb(0x27C93F))
     {
     }
 
@@ -38,9 +103,9 @@ protected:
 
 WindowHeader::WindowHeader(double height)
     : m_height(height)
-    , m_minimize(addChild<HeaderButton>("minimize", kButton))
-    , m_maximize(addChild<MaximizeButton>())
-    , m_close(addChild<HeaderButton>("close", kButton))
+    , m_minimize(addChild<MinimizeTrafficLightButton>())
+    , m_maximize(addChild<MaximizeTrafficLightButton>())
+    , m_close(addChild<CloseTrafficLightButton>())
 {
     m_minimize->onClicked = [this] {
         if (Window* window = this->window())
@@ -104,27 +169,24 @@ void WindowHeader::setButtonsCentered(bool centered)
 
 void WindowHeader::layout()
 {
+    const double h = geometry().height;
+    const double buttonSize = std::min(h, 46.0);
     // A RowLayout centres on whole pixels.
-    const double top = m_buttonsCentered ? std::floor((geometry().height - kButton) / 2) : m_buttonMargin;
-    double row = 0;
-    for (HeaderButton* button : {m_minimize, m_maximize, m_close}) {
-        if (button->isVisible())
-            row += (row > 0 ? kButtonSpacing : 0) + kButton;
-    }
-    // FishUI's RowLayout of the content, the buttons' row and an end margin
-    // item: each cell starts on a whole logical pixel, halves rounding up,
-    // so a fractional margin moves the row by up to half a pixel.
-    const double rowX = std::floor(geometry().width - m_buttonMargin - row + 0.5);
-    double x = rowX;
-    for (HeaderButton* button : {m_minimize, m_maximize, m_close}) {
+    const double top = m_buttonsCentered ? std::floor((h - buttonSize) / 2) : m_buttonMargin;
+
+    // Position buttons on the left side (macOS style)
+    const double trafficLightWidth = 20; // 12px circle + 8px spacing
+    double x = 12; // Start at 12px left margin
+    // Order: Close, Minimize, Maximize
+    for (HeaderButton* button : {m_close, m_minimize, m_maximize}) {
         if (!button->isVisible())
             continue;
-        button->setGeometry({x, top, kButton, kButton});
-        x += kButton + kButtonSpacing;
+        button->setGeometry({x, top, trafficLightWidth, buttonSize});
+        x += trafficLightWidth;
     }
-    // The content keeps the spacing before the row, as the ports expect.
+    // The content starts after the buttons
     if (m_content)
-        m_content->setGeometry({0, 0, std::max(0.0, rowX - kButtonSpacing), geometry().height});
+        m_content->setGeometry({x, 0, std::max(0.0, geometry().width - x), h});
 }
 
 void WindowHeader::pointerPress(const PointerEvent& event)

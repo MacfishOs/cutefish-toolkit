@@ -90,6 +90,7 @@ public:
     int run();
     void quit(int exitCode = 0);
 
+<<<<<<< HEAD
     // Text, dates and numbers follow the session language as it changes:
     // the process's locale is set again, then this runs, for the views to
     // take their text again.
@@ -99,8 +100,13 @@ public:
     void followSessionLanguage(base::dbus::Connection* bus);
     // LANG, LANGUAGE and the LC_ variables, an empty value removing one.
     void setLanguageEnvironment(const std::map<std::string, std::string>& variables);
+=======
+    base::Signal<> languageChanged;
+    void followSessionLanguage(base::dbus::Connection*) {}
+>>>>>>> 412bc9e (refactor(toolkit): update ui application event loop and header button styles)
 
 private:
+
     friend class EmbeddedWindow;
     friend struct Theme;
     friend class Window;

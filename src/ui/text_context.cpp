@@ -333,7 +333,6 @@ private:
     {
         FcPattern* pattern = FcPatternCreate();
         FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family.c_str()));
-        FcPatternAddBool(pattern, FC_VARIABLE, FcFalse);
         FcObjectSet* objects = FcObjectSetBuild(FC_FAMILY, FC_FILE, FC_INDEX, FC_WEIGHT, FC_WIDTH, FC_SLANT, nullptr);
         FcFontSet* fonts = FcFontList(nullptr, pattern, objects);
         FcObjectSetDestroy(objects);
@@ -394,7 +393,7 @@ private:
         if (typeface) {
             SkString name;
             typeface->getFamilyName(&name);
-            if (!(typeface->fontStyle() == font.style) || !name.equals(font.family.c_str()))
+            if (name.isEmpty())
                 typeface.reset();
         }
         if (!typeface)

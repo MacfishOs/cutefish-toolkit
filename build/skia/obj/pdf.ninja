@@ -1,0 +1,13 @@
+defines = -DSK_PDF_USE_HARFBUZZ_SUBSET -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_GANESH -DSK_DISABLE_TRACING -DSK_GAMMA_APPLY_TO_A8 -DSK_ENABLE_AVX512_OPTS -DSKIA_IMPLEMENTATION=1
+framework_dirs =
+include_dirs = -I../../third_party/skia
+cflags = -Wno-attributes -ffp-contract=off -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -Wno-psabi
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti -frtti
+root_out_dir = .
+target_output_name = pdf
+
+build obj/src/pdf/pdf.SkDocument_PDF_None.o: cxx ../../third_party/skia/src/pdf/SkDocument_PDF_None.cpp
+  source_file_part = SkDocument_PDF_None.cpp
+  source_name_part = SkDocument_PDF_None
+
+build obj/pdf.stamp: stamp obj/src/pdf/pdf.SkDocument_PDF_None.o || obj/src/partition_alloc/raw_ptr.stamp

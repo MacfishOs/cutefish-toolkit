@@ -1,0 +1,13 @@
+defines = -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_GANESH -DSK_DISABLE_TRACING -DSK_GAMMA_APPLY_TO_A8 -DSK_ENABLE_AVX512_OPTS -DSKIA_IMPLEMENTATION=1
+framework_dirs =
+include_dirs = -I../../third_party/skia
+cflags = -march=x86-64-v3 -Wno-attributes -ffp-contract=off -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -Wno-psabi
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti -frtti
+root_out_dir = .
+target_output_name = ml3
+
+build obj/src/opts/ml3.SkOpts_ml3.o: cxx ../../third_party/skia/src/opts/SkOpts_ml3.cpp
+  source_file_part = SkOpts_ml3.cpp
+  source_name_part = SkOpts_ml3
+
+build obj/ml3.stamp: stamp obj/src/opts/ml3.SkOpts_ml3.o || obj/src/partition_alloc/raw_ptr.stamp

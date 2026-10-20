@@ -60,10 +60,14 @@ private:
     std::string m_glyph;
     double m_glyphSize = 16;
     double m_size;
+
+protected:
     bool m_hovered = false;
     bool m_pressed = false;
     bool m_checked = false;
     bool m_highlighted = false;
+
+private:
     std::optional<Color> m_glyphColor;
     PlateAlphas m_light = {0.11, 0.21};
     PlateAlphas m_dark = {0.12, 0.06};

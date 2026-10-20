@@ -15,6 +15,8 @@ Theme Theme::light()
 {
     Theme theme;
     theme.darkMode = false;
+    theme.fontFamily = "SF Pro";
+    theme.fixedFontFamily = "SF Mono";
     theme.background = Color::rgb(0xF5F6FA);
     theme.secondBackground = Color::rgb(0xFFFFFF);
     theme.alternateBackground = Color::rgb(0xF2F4F5);
@@ -29,6 +31,8 @@ Theme Theme::dark()
 {
     Theme theme;
     theme.darkMode = true;
+    theme.fontFamily = "SF Pro";
+    theme.fixedFontFamily = "SF Mono";
     theme.background = Color::rgb(0x1C1C1D);
     theme.secondBackground = Color::rgb(0x2C2C2D);
     theme.alternateBackground = Color::rgb(0x3C3C3D);

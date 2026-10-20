@@ -17,8 +17,8 @@
 
 namespace cutefish::ui {
 
-// The artwork is drawn on a 24-pixel grid; any other size would be soft.
-static constexpr double kArtwork = 24;
+// The artwork is drawn on a 28-pixel grid; any other size would be soft.
+static constexpr double kArtwork = 28;
 
 HeaderButton::HeaderButton(std::string artwork, double size)
     : m_artwork(std::move(artwork))
