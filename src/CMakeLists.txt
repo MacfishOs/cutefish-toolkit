@@ -60,6 +60,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/application.h
     ui/bitmap.h
     ui/bitmap_painter.h
+    ui/canvas_2d.h
     ui/blurred_copy.h
     ui/fast_blur.h
     ui/bubble_shape.h
@@ -178,6 +179,7 @@ add_library(cutefish-toolkit SHARED
     ui/path.cpp
     ui/bitmap.cpp
     ui/bitmap_painter.cpp
+    ui/canvas_2d.cpp
     ui/blurred_copy.cpp
     ui/fast_blur.cpp
     ui/platform_window.cpp

@@ -37,6 +37,7 @@ add_executable(cutefish-toolkit-tests
     about_dialog_test.cpp
     animation_test.cpp
     bitmap_test.cpp
+    canvas_2d_test.cpp
     bubble_shape_test.cpp
     clipboard_test.cpp
     color_profile_test.cpp
