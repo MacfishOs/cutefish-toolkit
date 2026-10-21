@@ -11,6 +11,7 @@
 
 #include "base/dbus.h"
 #include "base/event_loop.h"
+#include "base/locale.h"
 #include "base/session_language.h"
 #include "gpu/egl_context.h"
 #include "ui/appearance.h"
@@ -30,7 +31,7 @@ Application::Application(int argc, char** argv, Platform platform)
     , m_platform(platform)
 {
     s_instance = this;
-    std::setlocale(LC_ALL, "");
+    base::Locale::setProcessLocale();
     i18n::bindDomain(kTranslationDomain);
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
