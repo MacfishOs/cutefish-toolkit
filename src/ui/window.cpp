@@ -455,6 +455,11 @@ void Window::setRestoreId(const std::string& id)
     m_platform->setRestoreId(id);
 }
 
+void Window::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    m_platform->setPlacementAnchor(anchor);
+}
+
 void Window::setHeaderDarkMode(std::optional<bool> dark)
 {
     if (dark == m_headerDarkMode)

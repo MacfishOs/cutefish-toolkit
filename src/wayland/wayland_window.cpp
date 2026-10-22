@@ -228,6 +228,12 @@ void WaylandWindow::setRestoreId(const std::string& id)
         m_shell->setRestoreId(id);
 }
 
+void WaylandWindow::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    if (m_shell)
+        m_shell->setPlacementAnchor(anchor);
+}
+
 bool WaylandWindow::setDesktopRole(const std::string& outputName)
 {
     return m_shell && m_shell->setDesktop(outputName);

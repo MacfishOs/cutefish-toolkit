@@ -144,6 +144,7 @@ public:
     void setSkipTaskbar(bool skip);
     void setAlwaysOnTop(bool onTop);
     void setRestoreId(const std::string& id);
+    void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
     // cutefish_shell_v1 on a trusted connection: the desktop role on the
     // output, normal focus; before map().
     bool setDesktop(const std::string& outputName);

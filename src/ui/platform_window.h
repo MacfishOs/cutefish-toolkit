@@ -93,6 +93,7 @@ public:
     virtual void setSkipTaskbar(bool) {}
     virtual void setAlwaysOnTop(bool) {}
     virtual void setRestoreId(const std::string&) {}
+    virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
     virtual void setForeignParent(const std::string&, bool) {}
     // On the trusted connection: cutefish_shell_v1's desktop role.
     virtual bool setDesktopRole(const std::string&) { return false; }

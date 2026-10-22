@@ -61,6 +61,17 @@ struct PopupPlacement
     bool resize = false;
 };
 
+// Where a toplevel opens: next to `rect`, in the compositor's global
+// logical coordinates, placed as a popup with this anchor and gravity is.
+struct PlacementAnchor
+{
+    RectF rect;
+    PopupAnchor anchor = PopupAnchor::Bottom;
+    PopupAnchor gravity = PopupAnchor::Bottom;
+
+    bool operator==(const PlacementAnchor&) const = default;
+};
+
 // What the compositor says about a toplevel.
 struct WindowStates
 {
@@ -181,6 +192,11 @@ public:
     // The compositor reopens the window where the last window of this
     // application with the same id was closed. Before show().
     void setRestoreId(const std::string& id);
+    // Opens next to a point or rectangle on the screen that came from the
+    // compositor, such as a status notifier item's activation point, each
+    // time it is shown; the compositor keeps it inside the work area. The
+    // user moves it freely afterwards. Before show(). Unset by default.
+    void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
     // Kept out of the dock and the window switcher, as tool windows are.
     void setSkipTaskbar(bool skip);
     // Above ordinary windows.

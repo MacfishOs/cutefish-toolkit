@@ -74,6 +74,7 @@ public:
     void setSkipTaskbar(bool skip) override;
     void setAlwaysOnTop(bool onTop) override;
     void setRestoreId(const std::string& id) override;
+    void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor) override;
     void setForeignParent(const std::string& handle, bool modal) override;
     bool setDesktopRole(const std::string& outputName) override;
     void setShellOutput(const std::string& outputName) override;

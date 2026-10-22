@@ -533,6 +533,25 @@ void ShellSurface::setRestoreId(const std::string& id)
         cutefish_window_hints_v1_set_restore_id(m_connection.windowHints(), m_surface, id.c_str());
 }
 
+void ShellSurface::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    if (!m_xdgToplevel || !m_connection.windowHints())
+        return;
+    if (!anchor) {
+        cutefish_window_hints_v1_unset_placement_anchor(m_connection.windowHints(), m_surface);
+        return;
+    }
+    const RectF& rect = anchor->rect;
+    const int left = int(std::lround(rect.x));
+    const int top = int(std::lround(rect.y));
+    // The enums follow cutefish_window_hints_v1's placement edges.
+    cutefish_window_hints_v1_set_placement_anchor(
+            m_connection.windowHints(), m_surface, left, top,
+            std::max(0, int(std::lround(rect.x + rect.width)) - left),
+            std::max(0, int(std::lround(rect.y + rect.height)) - top), uint32_t(anchor->anchor),
+            uint32_t(anchor->gravity));
+}
+
 void ShellSurface::map()
 {
     wl_surface_commit(m_surface);

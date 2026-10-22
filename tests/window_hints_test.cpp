@@ -58,6 +58,8 @@ TEST(WindowHintsTest, GlassAndShapeAreAcceptedEverywhere)
     window.setBackgroundGlass(std::nullopt);
     window.setResizeAroundCenter(true);
     window.setRestoreId("main");
+    window.setPlacementAnchor(PlacementAnchor{{700, 12, 0, 0}, PopupAnchor::Bottom, PopupAnchor::Bottom});
+    window.setPlacementAnchor(std::nullopt);
     EXPECT_GT(window.grab().width(), 0);
 }
 
