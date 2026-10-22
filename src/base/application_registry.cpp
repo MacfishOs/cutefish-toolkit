@@ -18,6 +18,9 @@ namespace cutefish::base {
 
 namespace fs = std::filesystem;
 
+static constexpr std::chrono::milliseconds kWatchRetry(2000);
+static constexpr std::chrono::milliseconds kWatchRetryLimit(60000);
+
 static std::string normalized(std::string_view value)
 {
     const size_t start = value.find_first_not_of(" \t\r\n");
@@ -70,11 +73,11 @@ static bool isScript(const std::string& name)
     return false;
 }
 
-static std::vector<DesktopEntry> scan(const std::string& language)
+static std::vector<DesktopEntry> scan(const std::vector<std::string>& directories, const std::string& language)
 {
     std::vector<DesktopEntry> results;
     std::set<std::string> selectedIds;
-    for (const std::string& rootPath : ApplicationRegistry::desktopPaths()) {
+    for (const std::string& rootPath : directories) {
         std::error_code error;
         if (!fs::is_directory(rootPath, error))
             continue;
@@ -116,19 +119,38 @@ ApplicationRegistry& ApplicationRegistry::instance(EventLoop* loop)
         loop = EventLoop::current();
     auto& registry = s_instances[loop];
     if (!registry) {
-        registry.reset(new ApplicationRegistry(*loop));
+        registry.reset(new ApplicationRegistry(*loop, desktopPaths()));
         loop->addDestroyHook([loop] { s_instances.erase(loop); });
     }
     return *registry;
 }
 
-ApplicationRegistry::ApplicationRegistry(EventLoop& loop)
+std::unique_ptr<ApplicationRegistry> ApplicationRegistry::create(EventLoop& loop, std::vector<std::string> directories)
+{
+    return std::unique_ptr<ApplicationRegistry>(new ApplicationRegistry(loop, std::move(directories)));
+}
+
+ApplicationRegistry::ApplicationRegistry(EventLoop& loop, std::vector<std::string> directories)
     : m_loop(loop)
+    , m_directories(std::move(directories))
     , m_debounce(&loop)
+    , m_watchRetry(&loop)
+    , m_watchRetryDelay(kWatchRetry)
 {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(std::chrono::milliseconds(100));
     m_debounce.onTimeout = [this] { startScan(); };
+
+    m_watchRetry.setSingleShot(true);
+    m_watchRetry.onTimeout = [this] {
+        m_watchRetryDelay = std::min(m_watchRetryDelay * 2, kWatchRetryLimit);
+        const size_t watched = m_watches.size();
+        monitorPaths();
+        // What changed in a directory while it went unwatched is only seen
+        // by reading it again.
+        if (m_watches.size() > watched)
+            scheduleScan();
+    };
 
     if (dbus::Connection* bus = dbus::Connection::session(&loop)) {
         dbus::MatchRule rule;
@@ -170,7 +192,7 @@ void ApplicationRegistry::startScan()
     }
     m_loading = true;
     m_language = DesktopEntry::displayLanguage();
-    m_scan = runInThread([language = m_language] { return scan(language); },
+    m_scan = runInThread([directories = m_directories, language = m_language] { return scan(directories, language); },
                          [this](std::vector<DesktopEntry> results) { applyScan(std::move(results)); });
 }
 
@@ -219,13 +241,16 @@ void ApplicationRegistry::applyScan(std::vector<DesktopEntry> results)
 void ApplicationRegistry::monitorPaths()
 {
     m_watches.clear();
-    const auto watch = [this](const std::string& path) {
+    bool complete = true;
+    const auto watch = [this, &complete](const std::string& path) {
         FileWatch watch = FileWatch::directory(path, [this](const std::string&) { scheduleScan(); }, &m_loop);
         if (watch.isActive())
             m_watches.push_back(std::move(watch));
+        else
+            complete = false;
     };
 
-    for (const std::string& rootPath : desktopPaths()) {
+    for (const std::string& rootPath : m_directories) {
         std::error_code error;
         if (!fs::is_directory(rootPath, error)) {
             // The closest directory that exists sees the applications
@@ -245,6 +270,13 @@ void ApplicationRegistry::monitorPaths()
             if (it->is_directory(error))
                 watch(it->path().string());
         }
+    }
+
+    if (complete) {
+        m_watchRetry.stop();
+        m_watchRetryDelay = kWatchRetry;
+    } else if (!m_watchRetry.isActive()) {
+        m_watchRetry.start(m_watchRetryDelay);
     }
 }
 

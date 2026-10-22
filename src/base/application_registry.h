@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -27,6 +28,8 @@ class ApplicationRegistry
 public:
     // The loop's registry, made on first use and gone with the loop.
     static ApplicationRegistry& instance(EventLoop* loop = nullptr);
+    // A registry of other applications directories, for tests.
+    static std::unique_ptr<ApplicationRegistry> create(EventLoop& loop, std::vector<std::string> directories);
 
     ApplicationRegistry(const ApplicationRegistry&) = delete;
     ApplicationRegistry& operator=(const ApplicationRegistry&) = delete;
@@ -38,7 +41,9 @@ public:
     std::shared_ptr<const DesktopEntry> byId(const std::string& id) const;
     std::shared_ptr<const DesktopEntry> byPath(const std::string& path) const;
     // The entry a window or process belongs to, from its app id or window
-    // class and its executable's path and name; null when none fits.
+    // class and its executable's path and name; null when none fits, or when
+    // nothing as certain as the app id or class picks one of several entries
+    // that fit equally well.
     std::shared_ptr<const DesktopEntry> resolveWindow(const std::string& appId, const std::string& windowClass,
                                                       const std::string& executablePath,
                                                       const std::string& executableName) const;
@@ -56,7 +61,7 @@ public:
     void scheduleScan();
 
 private:
-    explicit ApplicationRegistry(EventLoop& loop);
+    ApplicationRegistry(EventLoop& loop, std::vector<std::string> directories);
     friend struct std::default_delete<ApplicationRegistry>;
     ~ApplicationRegistry() = default;
 
@@ -65,7 +70,12 @@ private:
     void monitorPaths();
 
     EventLoop& m_loop;
+    std::vector<std::string> m_directories;
     Timer m_debounce;
+    // Brings back the watches that could not be made, such as when the
+    // user's inotify watches ran out.
+    Timer m_watchRetry;
+    std::chrono::milliseconds m_watchRetryDelay;
     Job m_scan;
     std::vector<FileWatch> m_watches;
     dbus::Match m_languageChanged;
