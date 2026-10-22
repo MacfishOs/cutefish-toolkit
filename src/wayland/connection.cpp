@@ -14,6 +14,7 @@
 
 #include <cursor-shape-v1-client-protocol.h>
 #include <cutefish-shell-v1-client-protocol.h>
+#include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
@@ -117,6 +118,9 @@ struct ConnectionListeners
             wl_output_add_listener(output, &outputListener, self);
             self->m_outputs.push_back({name, output, nullptr, {}});
             self->watchOutput(self->m_outputs.back());
+        } else if (strcmp(interface, cutefish_status_item_manager_v1_interface.name) == 0) {
+            self->m_statusItems = bind<cutefish_status_item_manager_v1>(
+                registry, name, &cutefish_status_item_manager_v1_interface, version, 1);
         } else if (strcmp(interface, cutefish_shell_v1_interface.name) == 0) {
             self->m_shell = bind<cutefish_shell_v1>(registry, name, &cutefish_shell_v1_interface, version, 1);
         } else if (strcmp(interface, wl_shm_interface.name) == 0) {
@@ -607,6 +611,8 @@ Connection::~Connection()
         cutefish_window_hints_v1_destroy(m_windowHints);
     if (m_surfaceBlur)
         cutefish_surface_blur_v1_destroy(m_surfaceBlur);
+    if (m_statusItems)
+        cutefish_status_item_manager_v1_destroy(m_statusItems);
     if (m_dialogManager)
         xdg_wm_dialog_v1_destroy(m_dialogManager);
     for (const auto& pending : m_activations)
@@ -670,12 +676,16 @@ bool Connection::initialize()
     // Reads without blocking: a drawing thread waiting on a queue of its own
     // may have read what woke the loop already.
     m_watch = m_loop.watch(wl_display_get_fd(m_display), EPOLLIN, [this](uint32_t) {
-        while (wl_display_prepare_read(m_display) != 0)
-            wl_display_dispatch_pending(m_display);
-        if (wl_display_read_events(m_display) < 0 || wl_display_dispatch_pending(m_display) < 0) {
-            fprintf(stderr, "cutefish-toolkit: lost the Wayland connection\n");
-            m_loop.quit(1);
+        // A failed display keeps its queued events, so preparing again
+        // would never succeed.
+        while (wl_display_prepare_read(m_display) != 0) {
+            if (wl_display_dispatch_pending(m_display) < 0) {
+                handleConnectionLost();
+                return;
+            }
         }
+        if (wl_display_read_events(m_display) < 0 || wl_display_dispatch_pending(m_display) < 0)
+            handleConnectionLost();
     });
     // Events another queue's reader left on ours would otherwise wait for
     // the next wake-up.
@@ -684,6 +694,19 @@ bool Connection::initialize()
         wl_display_flush(m_display);
     });
     return true;
+}
+
+// The descriptor of a closed connection stays readable for good: the loop
+// stops watching it, so the loss is reported once, and is asked to end.
+void Connection::handleConnectionLost()
+{
+    m_loop.unwatch(m_watch);
+    m_watch = 0;
+    m_loop.removePrepareHook(m_hook);
+    m_hook = 0;
+    m_lost = true;
+    fprintf(stderr, "cutefish-toolkit: lost the Wayland connection\n");
+    m_loop.quit(1);
 }
 
 uint32_t Connection::keyboardModifiers() const

@@ -343,6 +343,13 @@ void EventLoop::quit(int exitCode)
 {
     m_exitCode = exitCode;
     m_running = false;
+    if (m_quitHandler)
+        m_quitHandler(exitCode);
+}
+
+void EventLoop::setQuitHandler(std::function<void(int exitCode)> handler)
+{
+    m_quitHandler = std::move(handler);
 }
 
 void EventLoop::runPosted()

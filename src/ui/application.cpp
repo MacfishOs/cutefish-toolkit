@@ -181,6 +181,11 @@ void Application::scheduleActiveUpdate()
         update();
 }
 
+bool Application::isConnectionLost() const
+{
+    return m_connection && m_connection->isLost();
+}
+
 void Application::quit(int exitCode)
 {
     m_loop->quit(exitCode);

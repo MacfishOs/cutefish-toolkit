@@ -14,6 +14,7 @@
 
 struct cutefish_surface_blur_v1;
 struct cutefish_shell_v1;
+struct cutefish_status_item_manager_v1;
 struct cutefish_window_hints_v1;
 struct wl_compositor;
 struct wl_subcompositor;
@@ -82,12 +83,16 @@ public:
     xdg_toplevel_drag_manager_v1* toplevelDragManager() const { return m_toplevelDragManager; }
     // The keyboard's modifiers now, as KeyEvent has them.
     uint32_t keyboardModifiers() const;
+    // The compositor closed the connection, as when it exits or restarts.
+    bool isLost() const { return m_lost; }
     xdg_wm_base* wmBase() const { return m_wmBase; }
     wp_viewporter* viewporter() const { return m_viewporter; }
     wp_fractional_scale_manager_v1* fractionalScaleManager() const { return m_fractionalScaleManager; }
     wp_presentation* presentation() const { return m_presentation; }
     cutefish_window_hints_v1* windowHints() const { return m_windowHints; }
     cutefish_surface_blur_v1* surfaceBlur() const { return m_surfaceBlur; }
+    // Null when the compositor has no status bar items.
+    cutefish_status_item_manager_v1* statusItems() const { return m_statusItems; }
     xdg_wm_dialog_v1* dialogManager() const { return m_dialogManager; }
     zxdg_importer_v2* importer() const { return m_importer; }
     wl_seat* seat() const { return m_seat; }
@@ -156,6 +161,7 @@ private:
 
     Connection(base::EventLoop& loop, wl_display* display);
     bool initialize();
+    void handleConnectionLost();
 
     base::EventLoop& m_loop;
     wl_display* m_display = nullptr;
@@ -171,6 +177,7 @@ private:
     wp_cursor_shape_manager_v1* m_cursorShapeManager = nullptr;
     cutefish_window_hints_v1* m_windowHints = nullptr;
     cutefish_surface_blur_v1* m_surfaceBlur = nullptr;
+    cutefish_status_item_manager_v1* m_statusItems = nullptr;
     cutefish_shell_v1* m_shell = nullptr;
     xdg_wm_dialog_v1* m_dialogManager = nullptr;
     xdg_activation_v1* m_activation = nullptr;
@@ -229,6 +236,7 @@ private:
     ScrollEvent m_scroll;
     bool m_scrollPending = false;
     int m_watch = 0;
+    bool m_lost = false;
     int m_hook = 0;
 };
 

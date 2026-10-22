@@ -136,6 +136,7 @@ add_custom_command(OUTPUT ${header}
 list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
 
 add_executable(cutefish-toolkit-wayland-tests
+    wayland/connection_test.cpp
     wayland/data_device_test.cpp
     wayland/output_test.cpp
     wayland/seat_test.cpp

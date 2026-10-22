@@ -76,6 +76,9 @@ public:
 
     base::EventLoop& loop() const { return *m_loop; }
     bool hasConnection() const { return m_connection != nullptr; }
+    // The compositor closed the connection, as when it exits or restarts;
+    // the loop has been asked to quit with 1.
+    bool isConnectionLost() const;
     // Wayland only.
     wayland::Connection& connection() const { return *m_connection; }
     gpu::EglContext& gpu() const { return *m_gpu; }
