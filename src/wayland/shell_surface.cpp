@@ -207,6 +207,31 @@ struct ShellSurfaceListeners
     };
 };
 
+// Path commands and wl_fixed points, as cutefish_surface_blur_v1 and
+// cutefish_window_hints_v1 take them; a close is implied by the fill.
+static std::vector<int32_t> pathValues(const Path& path)
+{
+    std::vector<int32_t> values;
+    for (const Path::Element& element : path.elements()) {
+        switch (element.type) {
+        case Path::Element::Type::MoveTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO);
+            break;
+        case Path::Element::Type::LineTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO);
+            break;
+        case Path::Element::Type::CurveTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO);
+            break;
+        case Path::Element::Type::CurveToData:
+            break;
+        }
+        values.push_back(wl_fixed_from_double(element.x));
+        values.push_back(wl_fixed_from_double(element.y));
+    }
+    return values;
+}
+
 ShellSurface::ShellSurface(Connection& connection, Delegate* delegate)
     : m_connection(connection)
     , m_delegate(delegate)
@@ -502,27 +527,7 @@ void ShellSurface::setBlurShape(const Path& path)
         cutefish_surface_blur_v1_unset_shape(blur, m_surface);
         return;
     }
-    // Commands and wl_fixed points; a close is implied by the fill.
-    std::vector<int32_t> values;
-    const std::vector<Path::Element> elements = path.elements();
-    for (size_t i = 0; i < elements.size(); ++i) {
-        const Path::Element& element = elements[i];
-        switch (element.type) {
-        case Path::Element::Type::MoveTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO);
-            break;
-        case Path::Element::Type::LineTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO);
-            break;
-        case Path::Element::Type::CurveTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO);
-            break;
-        case Path::Element::Type::CurveToData:
-            break;
-        }
-        values.push_back(wl_fixed_from_double(element.x));
-        values.push_back(wl_fixed_from_double(element.y));
-    }
+    const std::vector<int32_t> values = pathValues(path);
     // The protocol's limit; a longer outline would be a protocol error.
     if (values.size() > 4096) {
         cutefish_surface_blur_v1_unset_shape(blur, m_surface);
@@ -534,6 +539,32 @@ void ShellSurface::setBlurShape(const Path& path)
     if (data) {
         std::copy(values.begin(), values.end(), static_cast<int32_t*>(data));
         cutefish_surface_blur_v1_set_shape(blur, m_surface, &array);
+    }
+    wl_array_release(&array);
+}
+
+void ShellSurface::setServerResize(bool enabled)
+{
+    if (m_xdgToplevel && m_connection.windowHints())
+        cutefish_window_hints_v1_set_server_resize(m_connection.windowHints(), m_surface, enabled ? 1 : 0);
+}
+
+void ShellSurface::setBodyShape(const Path& path)
+{
+    cutefish_window_hints_v1* hints = m_connection.windowHints();
+    if (!hints)
+        return;
+    const std::vector<int32_t> values = pathValues(path);
+    if (path.isEmpty() || values.size() > 4096) {
+        cutefish_window_hints_v1_unset_body_shape(hints, m_surface);
+        return;
+    }
+    wl_array array;
+    wl_array_init(&array);
+    void* data = wl_array_add(&array, values.size() * sizeof(int32_t));
+    if (data) {
+        std::copy(values.begin(), values.end(), static_cast<int32_t*>(data));
+        cutefish_window_hints_v1_set_body_shape(hints, m_surface, &array);
     }
     wl_array_release(&array);
 }

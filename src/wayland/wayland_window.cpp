@@ -363,6 +363,18 @@ void WaylandWindow::configure(int width, int height, const WindowStates& states)
     notifyConfigure(width, height, states);
 }
 
+void WaylandWindow::setBodyShape(const Path& path)
+{
+    if (m_shell)
+        m_shell->setBodyShape(path);
+}
+
+void WaylandWindow::setUserResizable(bool resizable)
+{
+    if (m_shell)
+        m_shell->setServerResize(resizable);
+}
+
 void WaylandWindow::setStatusItemIdentifier(const std::string& identifier)
 {
     if (m_shell)

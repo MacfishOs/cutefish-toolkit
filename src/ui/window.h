@@ -199,6 +199,15 @@ public:
     // time it is shown; the compositor keeps it inside the work area. The
     // user moves it freely afterwards. Before show(). Unset by default.
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
+    // The outline a window draws its body in, inside a transparent window,
+    // such as a bubble with an arrow: the compositor then neither clips it to
+    // a rounded rectangle nor outlines it, and casts its shadow from this
+    // outline. Window coordinates; an empty path is the window's rectangle,
+    // the default. At once.
+    void setBodyShape(const Path& path);
+    // Whether the user resizes the window by its edges (the default); off,
+    // the compositor offers no resize edges or cursors there.
+    void setUserResizable(bool resizable);
     // Kept out of the dock and the window switcher, as tool windows are.
     void setSkipTaskbar(bool skip);
     // Above ordinary windows.

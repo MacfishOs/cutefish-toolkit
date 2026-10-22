@@ -77,6 +77,8 @@ public:
     void setAlwaysOnTop(bool onTop) override;
     void setRestoreId(const std::string& id) override;
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor) override;
+    void setBodyShape(const Path& path) override;
+    void setUserResizable(bool resizable) override;
     void setStatusItemIdentifier(const std::string& identifier) override;
     void setStatusItemHighlight(bool highlighted) override;
     void setForeignParent(const std::string& handle, bool modal) override;

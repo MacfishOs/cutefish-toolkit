@@ -26,6 +26,7 @@
 
 #include "base/event_loop.h"
 #include "wayland/connection.h"
+#include "ui/path.h"
 #include "wayland/shell_surface.h"
 
 using namespace cutefish;
@@ -241,4 +242,44 @@ TEST(WindowHintsProtocolTest, PlacementAnchorIsSentAndUnset)
               (std::vector<int64_t>{11, 20, 30, 41, CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_TOP_LEFT,
                                     CUTEFISH_WINDOW_HINTS_V1_PLACEMENT_EDGE_BOTTOM_RIGHT}));
     EXPECT_EQ(hints[2].name, "unset_placement_anchor");
+}
+
+// A body shape goes out as the hint with its outline, and an empty one unsets
+// it; the resize edges can be turned off.
+TEST(WindowHintsProtocolTest, BodyShapeIsSentAndUnset)
+{
+    FakeCompositor compositor;
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+
+    Target target;
+    auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+    Path bubble;
+    bubble.moveTo(10, 0);
+    bubble.lineTo(20, 10);
+    bubble.lineTo(0, 10);
+    bubble.close();
+    shell->setBodyShape(bubble);
+    shell->setBodyShape(Path());
+    shell->setServerResize(false);
+    connection->flush();
+    settle(compositor, connection->display());
+
+    // A toplevel's edges are the compositor's until it says otherwise.
+    std::vector<FakeCompositor::Request> resize = compositor.hints();
+    std::erase_if(resize, [](const FakeCompositor::Request& request) {
+        return request.name != "set_server_resize";
+    });
+    ASSERT_EQ(resize.size(), 2u);
+    EXPECT_EQ(resize[0].arguments, (std::vector<int64_t>{1}));
+    EXPECT_EQ(resize[1].arguments, (std::vector<int64_t>{0}));
+
+    std::vector<FakeCompositor::Request> hints = compositor.hints();
+    std::erase_if(hints, [](const FakeCompositor::Request& request) {
+        return request.name.find("body_shape") == std::string::npos;
+    });
+    ASSERT_EQ(hints.size(), 2u);
+    EXPECT_EQ(hints[0].name, "set_body_shape");
+    EXPECT_EQ(hints[1].name, "unset_body_shape");
 }

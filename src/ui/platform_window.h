@@ -113,6 +113,8 @@ public:
     virtual void setAlwaysOnTop(bool) {}
     virtual void setRestoreId(const std::string&) {}
     virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
+    virtual void setBodyShape(const Path&) {}
+    virtual void setUserResizable(bool) {}
     // A status item's identifier and highlight request.
     virtual void setStatusItemIdentifier(const std::string&) {}
     virtual void setStatusItemHighlight(bool) {}

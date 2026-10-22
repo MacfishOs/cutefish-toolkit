@@ -159,6 +159,10 @@ public:
     void setAlwaysOnTop(bool onTop);
     void setRestoreId(const std::string& id);
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
+    // A toplevel's resize edges, which the compositor owns; on by default.
+    void setServerResize(bool enabled);
+    // See cutefish_window_hints_v1.set_body_shape; empty unsets it.
+    void setBodyShape(const Path& path);
     // A status item's identifier and highlight request; at once.
     void setStatusItemIdentifier(const std::string& identifier);
     void setStatusItemHighlight(bool highlighted);

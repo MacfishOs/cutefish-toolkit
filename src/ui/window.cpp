@@ -469,6 +469,16 @@ void Window::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
     m_platform->setPlacementAnchor(anchor);
 }
 
+void Window::setBodyShape(const Path& path)
+{
+    m_platform->setBodyShape(path);
+}
+
+void Window::setUserResizable(bool resizable)
+{
+    m_platform->setUserResizable(resizable);
+}
+
 void Window::setHeaderDarkMode(std::optional<bool> dark)
 {
     if (dark == m_headerDarkMode)
