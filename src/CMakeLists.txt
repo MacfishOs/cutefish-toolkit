@@ -99,6 +99,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/menu.h
     ui/painter.h
     ui/path.h
+    ui/popup_glass.h
     ui/progress_bar.h
     ui/cell_layout.h
     ui/round_image_button.h
