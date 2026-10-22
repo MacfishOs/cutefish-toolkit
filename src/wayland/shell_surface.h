@@ -25,6 +25,7 @@ struct xdg_surface;
 struct xdg_toplevel;
 struct zxdg_imported_v2;
 struct cutefish_shell_surface_v1;
+struct cutefish_status_item_v1;
 
 namespace cutefish::ui {
 class DropOffer;
@@ -88,10 +89,22 @@ public:
         virtual uint32_t drop() { return 0; }
         // A desktop surface's work area, surface-local logical pixels.
         virtual void workArea(const RectF&) {}
+
+        // A status item's: the widest it may be, ahead of the configure that
+        // carries the height; the bar's look; its highlight; its place on
+        // the screen, empty while it has none.
+        virtual void statusItemLimits(int) {}
+        virtual void statusItemAppearance(bool, uint32_t) {}
+        virtual void statusItemHighlight(bool) {}
+        virtual void statusItemPlaced(const RectF&) {}
     };
+
+    struct StatusItemRole {};
 
     // A toplevel.
     ShellSurface(Connection& connection, Delegate* delegate);
+    // A status item in the bar, which the connection must offer.
+    ShellSurface(Connection& connection, Delegate* delegate, StatusItemRole);
     // A popup of the parent, placed relative to it; with a grab, it takes the
     // keyboard and goes when the pointer presses elsewhere.
     ShellSurface(Connection& connection, Delegate* delegate, ShellSurface* parent,
@@ -105,6 +118,7 @@ public:
     wl_surface* surface() const { return m_surface; }
     // Null for a popup.
     xdg_toplevel* toplevel() const { return m_xdgToplevel; }
+    bool isStatusItem() const { return m_statusItem != nullptr; }
     Connection& connection() const { return m_connection; }
 
     void setTitle(const std::string& title);
@@ -145,6 +159,9 @@ public:
     void setAlwaysOnTop(bool onTop);
     void setRestoreId(const std::string& id);
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
+    // A status item's identifier and highlight request; at once.
+    void setStatusItemIdentifier(const std::string& identifier);
+    void setStatusItemHighlight(bool highlighted);
     // cutefish_shell_v1 on a trusted connection: the desktop role on the
     // output, normal focus; before map().
     bool setDesktop(const std::string& outputName);
@@ -160,6 +177,7 @@ private:
     friend struct ShellSurfaceListeners;
 
     void createSurface();
+    void createXdgSurface();
 
     Connection& m_connection;
     Delegate* m_delegate;
@@ -172,6 +190,7 @@ private:
     xdg_dialog_v1* m_dialog = nullptr;
     zxdg_imported_v2* m_imported = nullptr;
     cutefish_shell_surface_v1* m_shellSurface = nullptr;
+    cutefish_status_item_v1* m_statusItem = nullptr;
     wl_callback* m_frameCallback = nullptr;
     ShellSurface* m_parent = nullptr;
     // The outputs the surface is on, the first entered first.

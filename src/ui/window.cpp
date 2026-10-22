@@ -156,6 +156,15 @@ Window::Window(TrustedConnection& connection)
     Application::instance()->m_windows.push_back(this);
 }
 
+Window::Window(StatusItemClient* statusItem)
+    : m_frameDamage(std::make_unique<FrameDamage>())
+    , m_self(std::make_shared<Window*>(this))
+{
+    m_platform = PlatformWindow::createStatusItem(this, statusItem);
+    m_platform->setAppId(Application::instance()->applicationId());
+    Application::instance()->m_windows.push_back(this);
+}
+
 static bool familyActivated(const Window* window);
 
 Window::Window(Window* parent, const PopupPlacement& placement, bool grab)

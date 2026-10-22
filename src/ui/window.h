@@ -28,6 +28,8 @@ struct FrameDamage;
 class FrameClient;
 class Path;
 class PlatformWindow;
+class StatusItem;
+class StatusItemClient;
 class TestInput;
 class TrustedConnection;
 class View;
@@ -331,7 +333,11 @@ private:
     friend class FrameClient;
     friend class HeaderBackdrop;
     friend class PlatformWindow;
+    friend class StatusItem;
     friend class Subsurface;
+
+    // A status item's window, made by StatusItem.
+    explicit Window(StatusItemClient* statusItem);
     friend class TestInput;
     friend class View;
 

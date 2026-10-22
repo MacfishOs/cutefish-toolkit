@@ -123,17 +123,19 @@ foreach(xml
         DEPENDS ${WAYLAND_PROTOCOLS_DATADIR}/${xml} VERBATIM)
     list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
 endforeach()
-# The project's own protocol, for a compositor that records its requests.
-set(code ${TEST_PROTOCOL_DIR}/cutefish-window-hints-v1-protocol.c)
-set(header ${TEST_PROTOCOL_DIR}/cutefish-window-hints-v1-server-protocol.h)
-set(xml ${PROJECT_SOURCE_DIR}/protocols/cutefish-window-hints-v1.xml)
-add_custom_command(OUTPUT ${code}
-    COMMAND ${WAYLAND_SCANNER} private-code ${xml} ${code}
-    DEPENDS ${xml} VERBATIM)
-add_custom_command(OUTPUT ${header}
-    COMMAND ${WAYLAND_SCANNER} server-header ${xml} ${header}
-    DEPENDS ${xml} VERBATIM)
-list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
+# The project's own protocols, for a compositor that records their requests.
+foreach(name cutefish-window-hints-v1 cutefish-status-item-v1)
+    set(code ${TEST_PROTOCOL_DIR}/${name}-protocol.c)
+    set(header ${TEST_PROTOCOL_DIR}/${name}-server-protocol.h)
+    set(xml ${PROJECT_SOURCE_DIR}/protocols/${name}.xml)
+    add_custom_command(OUTPUT ${code}
+        COMMAND ${WAYLAND_SCANNER} private-code ${xml} ${code}
+        DEPENDS ${xml} VERBATIM)
+    add_custom_command(OUTPUT ${header}
+        COMMAND ${WAYLAND_SCANNER} server-header ${xml} ${header}
+        DEPENDS ${xml} VERBATIM)
+    list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
+endforeach()
 
 add_executable(cutefish-toolkit-wayland-tests
     wayland/connection_test.cpp
@@ -141,6 +143,7 @@ add_executable(cutefish-toolkit-wayland-tests
     wayland/output_test.cpp
     wayland/seat_test.cpp
     wayland/selection_test.cpp
+    wayland/status_item_test.cpp
     wayland/window_hints_test.cpp
     ${TEST_PROTOCOL_SOURCES}
 )

@@ -50,6 +50,8 @@ cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 cutefish_wayland_protocol(cutefish-shell-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-shell-v1.xml)
+cutefish_wayland_protocol(cutefish-status-item-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-status-item-v1.xml)
 
 add_subdirectory(base)
 
@@ -106,6 +108,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/search_field.h
     ui/segmented_control.h
     ui/slider.h
+    ui/status_item.h
     ui/styled_label.h
     ui/subsurface.h
     ui/switch.h
@@ -197,6 +200,7 @@ add_library(cutefish-toolkit SHARED
     ui/search_field.cpp
     ui/segmented_control.cpp
     ui/slider.cpp
+    ui/status_item.cpp
     ui/styled_label.cpp
     ui/subsurface.cpp
     ui/switch.cpp
@@ -235,6 +239,7 @@ add_library(cutefish-toolkit SHARED
     ${cutefish-window-hints-v1_SOURCES}
     ${cutefish-surface-blur-v1_SOURCES}
     ${cutefish-shell-v1_SOURCES}
+    ${cutefish-status-item-v1_SOURCES}
 )
 
 # The glyph icons, built in so they need no install location.

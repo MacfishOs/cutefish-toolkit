@@ -38,6 +38,16 @@ WaylandWindow::WaylandWindow(Window* window, Connection& connection, gpu::EglCon
 {
 }
 
+WaylandWindow::WaylandWindow(Window* window, StatusItemClient* statusItem)
+    : PlatformWindow(window)
+    , m_connection(&Application::instance()->connection())
+    , m_statusItem(statusItem)
+    , m_gpu(&Application::instance()->gpu())
+    , m_shell(std::make_unique<ShellSurface>(*m_connection, static_cast<ShellSurface::Delegate*>(this),
+                                             ShellSurface::StatusItemRole {}))
+{
+}
+
 WaylandWindow::~WaylandWindow()
 {
     for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
@@ -347,7 +357,46 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
 
 void WaylandWindow::configure(int width, int height, const WindowStates& states)
 {
+    // A status item's width is its own.
+    if (m_statusItem && width <= 0)
+        width = int(std::ceil(m_window->size().width));
     notifyConfigure(width, height, states);
+}
+
+void WaylandWindow::setStatusItemIdentifier(const std::string& identifier)
+{
+    if (m_shell)
+        m_shell->setStatusItemIdentifier(identifier);
+}
+
+void WaylandWindow::setStatusItemHighlight(bool highlighted)
+{
+    if (m_shell)
+        m_shell->setStatusItemHighlight(highlighted);
+}
+
+void WaylandWindow::statusItemLimits(int maxWidth)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemLimits(maxWidth);
+}
+
+void WaylandWindow::statusItemAppearance(bool dark, uint32_t foreground)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemAppearance(dark, foreground);
+}
+
+void WaylandWindow::statusItemHighlight(bool highlighted)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemHighlight(highlighted);
+}
+
+void WaylandWindow::statusItemPlaced(const RectF& rect)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemPlaced(rect);
 }
 
 void WaylandWindow::configureBounds(int width, int height)

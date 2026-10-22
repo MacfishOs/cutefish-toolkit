@@ -45,6 +45,8 @@ public:
     // A toplevel on another connection, such as the session's trusted one.
     WaylandWindow(Window* window, Connection& connection, gpu::EglContext& context);
     WaylandWindow(Window* window, WaylandWindow* parent, const PopupPlacement& placement, bool grab);
+    // A status item in the bar; the connection must offer them.
+    WaylandWindow(Window* window, StatusItemClient* statusItem);
     ~WaylandWindow() override;
 
     bool isHeadless() const override { return false; }
@@ -75,6 +77,8 @@ public:
     void setAlwaysOnTop(bool onTop) override;
     void setRestoreId(const std::string& id) override;
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor) override;
+    void setStatusItemIdentifier(const std::string& identifier) override;
+    void setStatusItemHighlight(bool highlighted) override;
     void setForeignParent(const std::string& handle, bool modal) override;
     bool setDesktopRole(const std::string& outputName) override;
     void setShellOutput(const std::string& outputName) override;
@@ -119,8 +123,13 @@ private:
     void dragLeave() override;
     uint32_t drop() override;
     void workArea(const RectF& area) override;
+    void statusItemLimits(int maxWidth) override;
+    void statusItemAppearance(bool dark, uint32_t foreground) override;
+    void statusItemHighlight(bool highlighted) override;
+    void statusItemPlaced(const RectF& rect) override;
 
     Connection* m_connection;
+    StatusItemClient* m_statusItem = nullptr;
     gpu::EglContext* m_gpu;
     std::unique_ptr<ShellSurface> m_shell;
     // A popup is made on show(), when its size is known.
