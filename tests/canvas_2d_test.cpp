@@ -120,6 +120,22 @@ TEST(Canvas2DTest, GroupsCompositeWithTheirAlpha)
     EXPECT_EQ(canvas.globalAlpha(), 0.5);
 }
 
+TEST(Canvas2DTest, GroupsCastOneShadow)
+{
+    Bitmap bitmap(20, 20, Format::Argb32Premultiplied);
+    Canvas2D canvas(bitmap);
+    canvas.scale(2, 2);
+    canvas.setShadow({6, 6}, 0, {0, 0, 0, 0.5});
+    canvas.beginGroup();
+    canvas.setFillColor(kRed);
+    canvas.fillRect({0, 0, 2, 2});
+    canvas.fillRect({0, 0, 2, 2});
+    canvas.endGroup();
+    EXPECT_EQ(bitmap.pixel(1, 1), 0xFFFF0000u);
+    EXPECT_NEAR(double(bitmap.alpha(7, 7)), 128, 2);
+    EXPECT_EQ(bitmap.pixel(11, 11), 0u);
+}
+
 TEST(Canvas2DTest, ShadowsIgnoreTheTransform)
 {
     Bitmap bitmap(20, 20, Format::Argb32Premultiplied);

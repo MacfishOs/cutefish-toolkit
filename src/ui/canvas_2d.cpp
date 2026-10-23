@@ -19,6 +19,7 @@
 #include "include/core/SkPathBuilder.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkGradient.h"
+#include "include/effects/SkImageFilters.h"
 
 #include "ui/painter.h"
 #include "ui/text_layout.h"
@@ -416,6 +417,21 @@ void Canvas2D::beginGroup()
     SkPaint paint;
     paint.setAlphaf(float(std::clamp(m_state.alpha, 0.0, 1.0)));
     paint.setBlendMode(toSkBlendMode(m_state.composite));
+    // The group casts the shadow set when it began, once for all it draws.
+    // The filter works in the layer's space; the offset and blur are in the
+    // canvas's own units, as for a single drawing.
+    SkMatrix inverse;
+    if (m_state.shadowColor.alpha > 0
+        && (m_state.shadowBlur > 0 || m_state.shadowOffset.x != 0 || m_state.shadowOffset.y != 0)
+        && m_canvas->getTotalMatrix().invert(&inverse)) {
+        const SkVector device = m_owned->base.mapVector(SkScalar(m_state.shadowOffset.x),
+                                                         SkScalar(m_state.shadowOffset.y));
+        const SkVector local = inverse.mapVector(device.x(), device.y());
+        const double scale = deviceScale();
+        const double sigma = scale > 0 ? m_state.shadowBlur * m_baseScale / 2 / scale : 0;
+        paint.setImageFilter(SkImageFilters::DropShadow(local.x(), local.y(), SkScalar(sigma), SkScalar(sigma),
+                                                        toSkColor(m_state.shadowColor, 1), nullptr, nullptr));
+    }
     save();
     m_canvas->saveLayer(nullptr, &paint);
     m_state.alpha = 1;
