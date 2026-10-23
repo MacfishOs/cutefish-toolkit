@@ -205,6 +205,10 @@ public:
     // outline. Window coordinates; an empty path is the window's rectangle,
     // the default. At once.
     void setBodyShape(const Path& path);
+    // Whether the compositor casts the window's shadow (the default); off
+    // for a window that draws its own shadow, or wants none, in a
+    // transparent surface. At once.
+    void setCastsShadow(bool castsShadow);
     // Whether the user resizes the window by its edges (the default); off,
     // the compositor offers no resize edges or cursors there.
     void setUserResizable(bool resizable);

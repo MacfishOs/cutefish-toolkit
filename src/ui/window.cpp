@@ -474,6 +474,11 @@ void Window::setBodyShape(const Path& path)
     m_platform->setBodyShape(path);
 }
 
+void Window::setCastsShadow(bool castsShadow)
+{
+    m_platform->setCastsShadow(castsShadow);
+}
+
 void Window::setUserResizable(bool resizable)
 {
     m_platform->setUserResizable(resizable);

@@ -114,6 +114,7 @@ public:
     virtual void setRestoreId(const std::string&) {}
     virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
     virtual void setBodyShape(const Path&) {}
+    virtual void setCastsShadow(bool) {}
     virtual void setUserResizable(bool) {}
     // A status item's identifier and highlight request.
     virtual void setStatusItemIdentifier(const std::string&) {}

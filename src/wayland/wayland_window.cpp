@@ -369,6 +369,12 @@ void WaylandWindow::setBodyShape(const Path& path)
         m_shell->setBodyShape(path);
 }
 
+void WaylandWindow::setCastsShadow(bool castsShadow)
+{
+    if (m_shell)
+        m_shell->setCastsShadow(castsShadow);
+}
+
 void WaylandWindow::setUserResizable(bool resizable)
 {
     if (m_shell)

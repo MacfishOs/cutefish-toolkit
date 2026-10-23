@@ -569,6 +569,12 @@ void ShellSurface::setBodyShape(const Path& path)
     wl_array_release(&array);
 }
 
+void ShellSurface::setCastsShadow(bool castsShadow)
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_set_shadow(m_connection.windowHints(), m_surface, castsShadow ? 1 : 0);
+}
+
 void ShellSurface::setGlass(const std::optional<GlassMaterial>& material)
 {
     cutefish_surface_blur_v1* blur = m_connection.surfaceBlur();

@@ -163,6 +163,8 @@ public:
     void setServerResize(bool enabled);
     // See cutefish_window_hints_v1.set_body_shape; empty unsets it.
     void setBodyShape(const Path& path);
+    // See cutefish_window_hints_v1.set_shadow.
+    void setCastsShadow(bool castsShadow);
     // A status item's identifier and highlight request; at once.
     void setStatusItemIdentifier(const std::string& identifier);
     void setStatusItemHighlight(bool highlighted);
