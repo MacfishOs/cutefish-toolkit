@@ -904,6 +904,36 @@ void paintTextLines(SkCanvas* canvas, const LineGlyphs& lineGlyphs, const std::v
     }
 }
 
+void drawTextBlobForTarget(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob, float x, float y, const SkPaint& paint)
+{
+    bool subpixel = false;
+    SkTextBlob::Iter::ExperimentalRun run;
+    for (SkTextBlob::Iter it(*blob); it.experimentalNext(&run);)
+        subpixel = subpixel || run.font.getEdging() == SkFont::Edging::kSubpixelAntiAlias;
+    if (!subpixel || !translucentTarget(canvas)) {
+        canvas->drawTextBlob(blob, x, y, paint);
+        return;
+    }
+    if (drawsSubpixelBlended(canvas, SkFont::Edging::kSubpixelAntiAlias)) {
+        drawSubpixelBlended(canvas, blob, SkPoint::Make(x, y), paint.getColor());
+        return;
+    }
+    SkTextBlobBuilder builder;
+    for (SkTextBlob::Iter it(*blob); it.experimentalNext(&run);) {
+        if (!run.positions) {
+            canvas->drawTextBlob(blob, x, y, paint);
+            return;
+        }
+        SkFont font = run.font;
+        greyscaleOnTranslucent(canvas, font);
+        const auto& buffer = builder.allocRunPos(font, run.count);
+        std::copy(run.glyphs, run.glyphs + run.count, buffer.glyphs);
+        std::copy(run.positions, run.positions + run.count, buffer.points());
+    }
+    if (const sk_sp<SkTextBlob> grey = builder.make())
+        canvas->drawTextBlob(grey, x, y, paint);
+}
+
 namespace {
 
 // UTF-16 offsets into UTF-8 ones, walking on from the last offset asked for
