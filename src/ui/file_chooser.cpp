@@ -26,6 +26,10 @@ static const char* const kRequestInterface = "org.freedesktop.portal.Request";
 // (us): 0 a glob pattern, 1 a MIME type.
 using PortalRule = std::tuple<uint32_t, std::string>;
 using PortalFilter = std::tuple<std::string, std::vector<PortalRule>>;
+// (ss): an option of a choice, or a choice and the option picked.
+using PortalOption = std::tuple<std::string, std::string>;
+// (ssa(ss)s): id, label, options (none for a check box) and the initial selection.
+using PortalChoice = std::tuple<std::string, std::string, std::vector<PortalOption>, std::string>;
 
 struct FileChooser::Request
 {
@@ -150,6 +154,11 @@ void FileChooser::setCurrentFilter(std::string name)
     m_currentFilter = std::move(name);
 }
 
+void FileChooser::setChoices(std::vector<Choice> choices)
+{
+    m_choices = std::move(choices);
+}
+
 void FileChooser::setCurrentFolder(std::string path)
 {
     m_currentFolder = std::move(path);
@@ -214,6 +223,16 @@ void FileChooser::open()
                 options["current_filter"] = base::dbus::Variant(portalFilter(filter));
         }
         options["filters"] = base::dbus::Variant(filters);
+    }
+    if (!m_choices.empty()) {
+        std::vector<PortalChoice> choices;
+        for (const Choice& choice : m_choices) {
+            std::vector<PortalOption> values;
+            for (const auto& [id, label] : choice.options)
+                values.emplace_back(id, label);
+            choices.emplace_back(choice.id, choice.label, std::move(values), choice.selected);
+        }
+        options["choices"] = base::dbus::Variant(choices);
     }
     if (!m_currentFolder.empty())
         options["current_folder"] = base::dbus::Variant(portalPath(m_currentFolder));
@@ -285,6 +304,11 @@ void FileChooser::call(Request* current, const std::string& parentWindow)
                 }
                 if (const auto chosen = results.find("current_filter"); chosen != results.end())
                     filter = std::get<0>(chosen->second.value<PortalFilter>({}));
+                m_chosenOptions.clear();
+                if (const auto chosen = results.find("choices"); chosen != results.end()) {
+                    for (const auto& [id, value] : chosen->second.value<std::vector<PortalOption>>({}))
+                        m_chosenOptions.emplace_back(id, value);
+                }
             }
             if (response == 0) {
                 if (auto accepted = onAccepted)

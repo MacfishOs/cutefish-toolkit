@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cutefish::ui {
@@ -37,6 +38,16 @@ public:
         static Filter fromNameFilter(std::string_view nameFilter);
     };
 
+    // A control of the program's in the dialog: a combo box of options, ids
+    // and labels, or a check box when it has none, "true" or "false".
+    struct Choice
+    {
+        std::string id;
+        std::string label;
+        std::vector<std::pair<std::string, std::string>> options;
+        std::string selected;
+    };
+
     // With a parent, the dialog is attached to it, modal unless told otherwise.
     explicit FileChooser(Window* parent = nullptr);
     // Closes a dialog still open.
@@ -52,6 +63,7 @@ public:
     void setFilters(std::vector<Filter> filters);
     // One of the filters' names.
     void setCurrentFilter(std::string name);
+    void setChoices(std::vector<Choice> choices);
     void setCurrentFolder(std::string path);
     // Saving: the name suggested, and the file it replaces when it exists.
     void setCurrentFile(std::string path);
@@ -63,6 +75,8 @@ public:
 
     // Local paths, and the name of the filter chosen, if any.
     std::function<void(const std::vector<std::string>& paths, const std::string& filter)> onAccepted;
+    // While onAccepted runs: each choice's id and the option picked.
+    const std::vector<std::pair<std::string, std::string>>& chosenOptions() const { return m_chosenOptions; }
     std::function<void()> onRejected;
 
     struct Request;
@@ -76,6 +90,8 @@ private:
     std::string m_acceptLabel;
     std::vector<Filter> m_filters;
     std::string m_currentFilter;
+    std::vector<Choice> m_choices;
+    std::vector<std::pair<std::string, std::string>> m_chosenOptions;
     std::string m_currentFolder;
     std::string m_currentFile;
     bool m_modal = true;
