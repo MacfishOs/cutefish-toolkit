@@ -124,7 +124,7 @@ foreach(xml
     list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
 endforeach()
 # The project's own protocols, for a compositor that records their requests.
-foreach(name cutefish-window-hints-v1 cutefish-status-item-v1)
+foreach(name cutefish-window-hints-v1 cutefish-window-placement-v1 cutefish-status-item-v1)
     set(code ${TEST_PROTOCOL_DIR}/${name}-protocol.c)
     set(header ${TEST_PROTOCOL_DIR}/${name}-server-protocol.h)
     set(xml ${PROJECT_SOURCE_DIR}/protocols/${name}.xml)

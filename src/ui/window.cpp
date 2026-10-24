@@ -479,6 +479,25 @@ void Window::setCastsShadow(bool castsShadow)
     m_platform->setCastsShadow(castsShadow);
 }
 
+void Window::setOpacity(double opacity)
+{
+    m_platform->setOpacity(opacity);
+}
+
+bool Window::setScreenPosition(PointF position)
+{
+    return m_platform->setScreenPosition(position);
+}
+
+void Window::handleScreenPosition(PointF position)
+{
+    if (m_screenPosition == position)
+        return;
+    m_screenPosition = position;
+    if (onScreenPositionChanged)
+        onScreenPositionChanged();
+}
+
 void Window::setUserResizable(bool resizable)
 {
     m_platform->setUserResizable(resizable);

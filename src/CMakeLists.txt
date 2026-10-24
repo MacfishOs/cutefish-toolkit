@@ -52,6 +52,8 @@ cutefish_wayland_protocol(cutefish-shell-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-shell-v1.xml)
 cutefish_wayland_protocol(cutefish-status-item-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-status-item-v1.xml)
+cutefish_wayland_protocol(cutefish-window-placement-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-window-placement-v1.xml)
 
 add_subdirectory(base)
 
@@ -241,6 +243,7 @@ add_library(cutefish-toolkit SHARED
     ${cutefish-surface-blur-v1_SOURCES}
     ${cutefish-shell-v1_SOURCES}
     ${cutefish-status-item-v1_SOURCES}
+    ${cutefish-window-placement-v1_SOURCES}
 )
 
 # The glyph icons, built in so they need no install location.

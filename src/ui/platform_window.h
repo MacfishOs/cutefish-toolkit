@@ -115,6 +115,10 @@ public:
     virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
     virtual void setBodyShape(const Path&) {}
     virtual void setCastsShadow(bool) {}
+    virtual void setOpacity(double) {}
+    // A toplevel's top left in the compositor's global logical coordinates;
+    // false where the compositor places windows itself.
+    virtual bool setScreenPosition(PointF) { return false; }
     virtual void setUserResizable(bool) {}
     // A status item's identifier and highlight request.
     virtual void setStatusItemIdentifier(const std::string&) {}
@@ -167,6 +171,7 @@ protected:
     void notifyDragLeave();
     uint32_t notifyDrop();
     void notifyWorkArea(const RectF& area);
+    void notifyScreenPosition(PointF position);
 
     Window* m_window;
 };

@@ -276,6 +276,11 @@ void PlatformWindow::notifyWorkArea(const RectF& area)
     m_window->handleWorkArea(area);
 }
 
+void PlatformWindow::notifyScreenPosition(PointF position)
+{
+    m_window->handleScreenPosition(position);
+}
+
 PlatformWindow* PlatformWindow::platformOf(Window* window)
 {
     return window ? window->m_platform.get() : nullptr;

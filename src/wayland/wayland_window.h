@@ -79,6 +79,8 @@ public:
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor) override;
     void setBodyShape(const Path& path) override;
     void setCastsShadow(bool castsShadow) override;
+    void setOpacity(double opacity) override;
+    bool setScreenPosition(PointF position) override;
     void setUserResizable(bool resizable) override;
     void setStatusItemIdentifier(const std::string& identifier) override;
     void setStatusItemHighlight(bool highlighted) override;
@@ -126,6 +128,7 @@ private:
     void dragLeave() override;
     uint32_t drop() override;
     void workArea(const RectF& area) override;
+    void screenPosition(PointF position) override;
     void statusItemLimits(int maxWidth) override;
     void statusItemAppearance(bool dark, uint32_t foreground) override;
     void statusItemHighlight(bool highlighted) override;
@@ -143,6 +146,7 @@ private:
     double m_blurRadius = 0;
     Path m_blurShape;
     std::optional<GlassMaterial> m_glass;
+    double m_opacity = 1;
     std::vector<SubsurfaceClient*> m_subsurfaces;
     wl_egl_window* m_eglWindow = nullptr;
     EGLSurface m_eglSurface = EGL_NO_SURFACE;

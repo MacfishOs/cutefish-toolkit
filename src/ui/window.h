@@ -209,6 +209,21 @@ public:
     // for a window that draws its own shadow, or wants none, in a
     // transparent surface. At once.
     void setCastsShadow(bool castsShadow);
+    // The whole window, frame and shadow included, at this opacity from 0
+    // to 1 (the default 1). At 0 it is unseen but still takes the pointer.
+    // At once.
+    void setOpacity(double opacity);
+    // Puts the window's top left at a point in the compositor's global
+    // logical coordinates (Application::screens()): before show() it opens
+    // there, afterwards it moves there; the compositor keeps it reachable.
+    // False where the compositor places windows itself, as it does for
+    // ordinary clients.
+    bool setScreenPosition(PointF position);
+    // Where the window's top left is on the screen, once it is shown, where
+    // the compositor tells; unset elsewhere.
+    const std::optional<PointF>& screenPosition() const { return m_screenPosition; }
+    // After screenPosition() changed, whoever moved the window.
+    std::function<void()> onScreenPositionChanged;
     // Whether the user resizes the window by its edges (the default); off,
     // the compositor offers no resize edges or cursors there.
     void setUserResizable(bool resizable);
@@ -365,6 +380,7 @@ private:
     void handleConfigure(int width, int height, const WindowStates& states);
     void handleConfigureBounds(int width, int height);
     void handleWorkArea(const RectF& area);
+    void handleScreenPosition(PointF position);
     // A shown modal dialog of this window blocks its pointer.
     bool blockedByModal() const;
     void handleInteractiveResize(bool active);
@@ -473,6 +489,7 @@ private:
 
     std::unique_ptr<PlatformWindow> m_platform;
     SizeF m_screenSize;
+    std::optional<PointF> m_screenPosition;
     std::unique_ptr<FrameDamage> m_frameDamage;
     Window* m_parent = nullptr;
     // Popups keep no keyboard focus of their own: the root window's keys go

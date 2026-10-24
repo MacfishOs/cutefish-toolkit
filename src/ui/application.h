@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/signal.h"
+#include "ui/geometry.h"
 
 namespace cutefish::base {
 class EventLoop;
@@ -89,6 +90,27 @@ public:
     // The loop's shared session bus connection, when there is one.
     base::dbus::Connection* sessionBus() const { return m_sessionBus; }
     const std::vector<Window*>& windows() const { return m_windows; }
+
+    struct Screen
+    {
+        // The wl_output name.
+        std::string name;
+        // In the compositor's global logical coordinates, the ones
+        // Window::setScreenPosition takes.
+        RectF geometry;
+        // What windows are laid out in: the screen less the desktop's
+        // panels and dock; the whole screen until the compositor tells.
+        RectF workArea;
+        // Device pixels per logical pixel.
+        double scale = 1;
+        // The one with the status bar.
+        bool primary = false;
+    };
+    // The outputs, known from the start, before any window; none off
+    // Wayland.
+    std::vector<Screen> screens() const;
+    // A screen came, went or changed.
+    base::Signal<> screensChanged;
 
     int run();
     void quit(int exitCode = 0);

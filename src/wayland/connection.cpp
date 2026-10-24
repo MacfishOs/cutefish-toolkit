@@ -17,6 +17,7 @@
 #include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include <cutefish-window-placement-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <text-input-unstable-v3-client-protocol.h>
@@ -108,6 +109,10 @@ struct ConnectionListeners
             self->m_windowHints = bind<cutefish_window_hints_v1>(
                 registry, name, &cutefish_window_hints_v1_interface, version, 1);
             cutefish_window_hints_v1_add_listener(self->m_windowHints, &windowHints, self);
+        } else if (strcmp(interface, cutefish_window_placement_v1_interface.name) == 0) {
+            self->m_windowPlacement = bind<cutefish_window_placement_v1>(
+                registry, name, &cutefish_window_placement_v1_interface, version, 1);
+            cutefish_window_placement_v1_add_listener(self->m_windowPlacement, &windowPlacement, self);
         } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
             self->m_outputManager = bind<zxdg_output_manager_v1>(
                 registry, name, &zxdg_output_manager_v1_interface, version, 3);
@@ -153,7 +158,16 @@ struct ConnectionListeners
     {
     }
 
-    static void outputMode(void*, wl_output*, uint32_t, int32_t, int32_t, int32_t) {}
+    static void outputMode(void* data, wl_output* wlOutput, uint32_t flags, int32_t width, int32_t height, int32_t)
+    {
+        auto* self = static_cast<Connection*>(data);
+        if (!(flags & WL_OUTPUT_MODE_CURRENT))
+            return;
+        for (Connection::Output& output : self->m_outputs) {
+            if (output.output == wlOutput)
+                output.pixelSize = {double(width), double(height)};
+        }
+    }
 
     // wl_output.done closes every update, xdg_output's included from its
     // version 3 on.
@@ -206,6 +220,22 @@ struct ConnectionListeners
     {
         if (ShellSurface* shell = shellSurfaceFor(surface))
             shell->delegate()->interactiveResize(active != 0);
+    }
+
+    static void workArea(void* data, cutefish_window_hints_v1*, const char* output, int32_t x, int32_t y,
+                         int32_t width, int32_t height, uint32_t primary)
+    {
+        auto* self = static_cast<Connection*>(data);
+        self->m_workAreas[output ? output : ""] = {{double(x), double(y), double(width), double(height)},
+                                                   primary != 0};
+        if (self->onOutputsChanged)
+            self->onOutputsChanged();
+    }
+
+    static void windowPosition(void*, cutefish_window_placement_v1*, wl_surface* surface, int32_t x, int32_t y)
+    {
+        if (ShellSurface* shell = shellSurfaceFor(surface))
+            shell->delegate()->screenPosition({double(x), double(y)});
     }
 
     static void ping(void*, xdg_wm_base* wmBase, uint32_t serial)
@@ -474,7 +504,8 @@ struct ConnectionListeners
                                                           xdgOutputName, xdgOutputDescription};
     static constexpr zwp_pointer_gesture_hold_v1_listener hold = {holdBegin, holdEnd};
     static constexpr xdg_wm_base_listener wmBase = {ping};
-    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize};
+    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize, workArea};
+    static constexpr cutefish_window_placement_v1_listener windowPlacement = {windowPosition};
     static constexpr wl_seat_listener seat = {capabilities, seatName};
     static constexpr wl_pointer_listener pointer = {
         pointerEnter,
@@ -532,8 +563,20 @@ std::unique_ptr<Connection> Connection::openFd(base::EventLoop& loop, int fd)
 std::vector<Connection::OutputInfo> Connection::outputs() const
 {
     std::vector<OutputInfo> list;
-    for (const Output& output : m_outputs)
-        list.push_back({output.outputName, output.position, output.logicalSize});
+    for (const Output& output : m_outputs) {
+        OutputInfo info {output.outputName, output.position, output.logicalSize,
+                         {output.position.x, output.position.y, output.logicalSize.width,
+                          output.logicalSize.height}};
+        // Either side of the output, whichever way it is turned.
+        const double logical = std::max(output.logicalSize.width, output.logicalSize.height);
+        if (logical > 0 && output.pixelSize.width > 0)
+            info.scale = std::max(output.pixelSize.width, output.pixelSize.height) / logical;
+        if (const auto area = m_workAreas.find(output.outputName); area != m_workAreas.end()) {
+            info.workArea = area->second.area;
+            info.primary = area->second.primary;
+        }
+        list.push_back(std::move(info));
+    }
     return list;
 }
 
@@ -609,6 +652,8 @@ Connection::~Connection()
         wl_seat_release(m_seat);
     if (m_windowHints)
         cutefish_window_hints_v1_destroy(m_windowHints);
+    if (m_windowPlacement)
+        cutefish_window_placement_v1_destroy(m_windowPlacement);
     if (m_surfaceBlur)
         cutefish_surface_blur_v1_destroy(m_surfaceBlur);
     if (m_statusItems)

@@ -11,6 +11,7 @@
 #include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include <cutefish-window-placement-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <viewporter-client-protocol.h>
@@ -573,6 +574,23 @@ void ShellSurface::setCastsShadow(bool castsShadow)
 {
     if (m_connection.windowHints())
         cutefish_window_hints_v1_set_shadow(m_connection.windowHints(), m_surface, castsShadow ? 1 : 0);
+}
+
+void ShellSurface::setOpacity(double opacity)
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_set_opacity(m_connection.windowHints(), m_surface,
+                                             wl_fixed_from_double(std::clamp(opacity, 0.0, 1.0)));
+}
+
+bool ShellSurface::setScreenPosition(PointF position)
+{
+    cutefish_window_placement_v1* placement = m_connection.windowPlacement();
+    if (!m_xdgToplevel || !placement)
+        return false;
+    cutefish_window_placement_v1_set_position(placement, m_surface, int(std::lround(position.x)),
+                                              int(std::lround(position.y)));
+    return true;
 }
 
 void ShellSurface::setGlass(const std::optional<GlassMaterial>& material)

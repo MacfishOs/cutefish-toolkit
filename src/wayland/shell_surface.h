@@ -80,6 +80,9 @@ public:
         virtual void configureBounds(int, int) {}
         // The user started or ended resizing the window by an edge.
         virtual void interactiveResize(bool) {}
+        // Where a toplevel's top left is on the screen, in the compositor's
+        // global logical coordinates; only where it may place itself.
+        virtual void screenPosition(PointF) {}
 
         // A drag over the surface; enter and motion return the action the
         // window would take, drop the one it took.
@@ -165,6 +168,12 @@ public:
     void setBodyShape(const Path& path);
     // See cutefish_window_hints_v1.set_shadow.
     void setCastsShadow(bool castsShadow);
+    // See cutefish_window_hints_v1.set_opacity.
+    void setOpacity(double opacity);
+    // A toplevel's top left at a point in the compositor's global logical
+    // coordinates, the next time it maps or at once when it is mapped; false
+    // when the compositor does not let this client place its windows.
+    bool setScreenPosition(PointF position);
     // A status item's identifier and highlight request; at once.
     void setStatusItemIdentifier(const std::string& identifier);
     void setStatusItemHighlight(bool highlighted);

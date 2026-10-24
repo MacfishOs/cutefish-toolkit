@@ -69,6 +69,9 @@ Application::Application(int argc, char** argv, Platform platform)
         if (!m_connection)
             std::exit(1);
         m_gpu = gpu::EglContext::createInBackground(m_connection->display());
+        m_connection->onOutputsChanged = [this] {
+            screensChanged();
+        };
         if (m_appearance)
             m_appearance->advance();
     }
@@ -179,6 +182,20 @@ void Application::scheduleActiveUpdate()
         m_connection->sync(update);
     else
         update();
+}
+
+std::vector<Application::Screen> Application::screens() const
+{
+    std::vector<Screen> screens;
+    if (!m_connection)
+        return screens;
+    for (const wayland::Connection::OutputInfo& output : m_connection->outputs()) {
+        screens.push_back({output.name,
+                           {output.position.x, output.position.y, output.logicalSize.width,
+                            output.logicalSize.height},
+                           output.workArea, output.scale, output.primary});
+    }
+    return screens;
 }
 
 bool Application::isConnectionLost() const

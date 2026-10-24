@@ -20,6 +20,7 @@
 #include <wayland-server.h>
 
 #include "cutefish-window-hints-v1-server-protocol.h"
+#include "cutefish-window-placement-v1-server-protocol.h"
 #include "fractional-scale-v1-server-protocol.h"
 #include "viewporter-server-protocol.h"
 #include "xdg-shell-server-protocol.h"
@@ -34,9 +35,9 @@ using namespace cutefish::ui;
 
 namespace {
 
-// The globals a toplevel ShellSurface needs, on a thread of its own. Nothing
-// is answered; the window hints requests are written down with their
-// integer arguments.
+// The globals a toplevel ShellSurface needs, on a thread of its own, with
+// window placement when asked. Nothing is answered; the window hints and
+// placement requests are written down with their integer arguments.
 class FakeCompositor
 {
 public:
@@ -46,7 +47,7 @@ public:
         std::vector<int64_t> arguments;
     };
 
-    FakeCompositor()
+    explicit FakeCompositor(bool placement = false)
     {
         int fds[2];
         socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds);
@@ -60,6 +61,8 @@ public:
         global(&wp_viewporter_interface, 1);
         global(&wp_fractional_scale_manager_v1_interface, 1);
         global(&cutefish_window_hints_v1_interface, 1);
+        if (placement)
+            global(&cutefish_window_placement_v1_interface, 1);
         m_client = wl_client_create(m_display, fds[0]);
         m_thread = std::thread([this] {
             wl_event_loop* loop = wl_display_get_event_loop(m_display);
@@ -96,6 +99,15 @@ public:
         return m_hints;
     }
 
+    // cutefish_window_placement_v1.position for the surface made last.
+    void sendPosition(int x, int y)
+    {
+        post([this, x, y] {
+            for (wl_resource* placement : m_placements)
+                cutefish_window_placement_v1_send_position(placement, m_surfaces.back(), x, y);
+        });
+    }
+
     int clientFd = -1;
 
 private:
@@ -121,13 +133,18 @@ private:
     {
         wl_resource* resource = wl_resource_create(m_client, &interface, version, id);
         wl_resource_set_dispatcher(resource, dispatch, nullptr, this, nullptr);
+        if (&interface == &cutefish_window_placement_v1_interface)
+            m_placements.push_back(resource);
+        else if (&interface == &wl_surface_interface)
+            m_surfaces.push_back(resource);
     }
 
     static int dispatch(const void*, void* object, uint32_t, const wl_message* message, wl_argument* arguments)
     {
         auto* resource = static_cast<wl_resource*>(object);
         auto* self = static_cast<FakeCompositor*>(wl_resource_get_user_data(resource));
-        const bool hints = wl_resource_instance_of(resource, &cutefish_window_hints_v1_interface, nullptr);
+        const bool hints = wl_resource_instance_of(resource, &cutefish_window_hints_v1_interface, nullptr)
+                           || wl_resource_instance_of(resource, &cutefish_window_placement_v1_interface, nullptr);
         Request request{message->name, {}};
         int index = 0;
         for (const char* c = message->signature; *c; ++c) {
@@ -139,6 +156,8 @@ private:
                 request.arguments.push_back(arguments[index].i);
             else if (*c == 'u')
                 request.arguments.push_back(arguments[index].u);
+            else if (*c == 'f')
+                request.arguments.push_back(arguments[index].f);
             ++index;
         }
         if (hints) {
@@ -173,6 +192,8 @@ private:
     std::vector<std::function<void()>> m_tasks;
     std::vector<std::unique_ptr<Global>> m_globals;
     std::vector<Request> m_hints;
+    std::vector<wl_resource*> m_placements;
+    std::vector<wl_resource*> m_surfaces;
 };
 
 class Target final : public wayland::ShellSurface::Delegate
@@ -196,6 +217,9 @@ public:
     void keyboardLeave() override {}
     void key(const KeyEvent&, bool) override {}
     void textInput(const TextInputEvent&) override {}
+    void screenPosition(PointF position) override { positions.push_back(position); }
+
+    std::vector<PointF> positions;
 };
 
 // Waits until the compositor has read everything the client sent.
@@ -282,4 +306,49 @@ TEST(WindowHintsProtocolTest, BodyShapeIsSentAndUnset)
     ASSERT_EQ(hints.size(), 2u);
     EXPECT_EQ(hints[0].name, "set_body_shape");
     EXPECT_EQ(hints[1].name, "unset_body_shape");
+}
+
+// Opacity goes out as the hint; a toplevel places itself only where the
+// compositor offers placement, rounded to whole logical pixels, and hears
+// where it went.
+TEST(WindowHintsProtocolTest, OpacityAndScreenPositionAreSent)
+{
+    {
+        FakeCompositor compositor;
+        base::EventLoop loop;
+        std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+        ASSERT_TRUE(connection);
+        EXPECT_FALSE(connection->windowPlacement());
+        Target target;
+        auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+        EXPECT_FALSE(shell->setScreenPosition({10, 20}));
+    }
+
+    FakeCompositor compositor(true);
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+    ASSERT_TRUE(connection->windowPlacement());
+    Target target;
+    auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+    shell->setOpacity(0.5);
+    EXPECT_TRUE(shell->setScreenPosition({10.4, 20.6}));
+    connection->flush();
+    settle(compositor, connection->display());
+
+    std::vector<FakeCompositor::Request> requests = compositor.hints();
+    std::erase_if(requests, [](const FakeCompositor::Request& request) {
+        return request.name != "set_opacity" && request.name != "set_position";
+    });
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].name, "set_opacity");
+    EXPECT_EQ(requests[0].arguments, (std::vector<int64_t>{wl_fixed_from_double(0.5)}));
+    EXPECT_EQ(requests[1].name, "set_position");
+    EXPECT_EQ(requests[1].arguments, (std::vector<int64_t>{10, 21}));
+
+    compositor.sendPosition(30, 40);
+    for (int i = 0; i < 100 && target.positions.empty(); ++i)
+        wl_display_roundtrip(connection->display());
+    ASSERT_EQ(target.positions.size(), 1u);
+    EXPECT_EQ(target.positions[0], (PointF{30, 40}));
 }

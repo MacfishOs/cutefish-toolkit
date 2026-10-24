@@ -172,6 +172,8 @@ void WaylandWindow::show(int width, int height)
             m_shell->setBlurShape(m_blurShape);
         if (m_glass)
             m_shell->setGlass(m_glass);
+        if (m_opacity < 1)
+            m_shell->setOpacity(m_opacity);
     }
     m_shell->map();
 }
@@ -264,6 +266,11 @@ void WaylandWindow::activateShellSurface()
 void WaylandWindow::workArea(const RectF& area)
 {
     notifyWorkArea(area);
+}
+
+void WaylandWindow::screenPosition(PointF position)
+{
+    notifyScreenPosition(position);
 }
 
 void WaylandWindow::setForeignParent(const std::string& handle, bool modal)
@@ -373,6 +380,18 @@ void WaylandWindow::setCastsShadow(bool castsShadow)
 {
     if (m_shell)
         m_shell->setCastsShadow(castsShadow);
+}
+
+void WaylandWindow::setOpacity(double opacity)
+{
+    m_opacity = opacity;
+    if (m_shell)
+        m_shell->setOpacity(opacity);
+}
+
+bool WaylandWindow::setScreenPosition(PointF position)
+{
+    return m_shell && m_shell->setScreenPosition(position);
 }
 
 void WaylandWindow::setUserResizable(bool resizable)
