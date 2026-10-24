@@ -63,6 +63,9 @@ public:
     double opacity() const { return m_opacity; }
     // Intersects the clip with the rect, edges on device pixels.
     void clip(const RectF& rect);
+    // The clip's bounds in logical coordinates from the offset: where
+    // anything drawn can still show.
+    RectF clipBounds() const;
     // Intersects the clip with a rounded rect, antialiased, for content cut
     // to a card's or a thumbnail's corners; the rect snapped as a shape.
     void clipRoundedRect(const RectF& rect, double radius, Corners corners = Corners::Circular);

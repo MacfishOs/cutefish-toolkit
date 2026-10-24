@@ -67,6 +67,14 @@ void Painter::clip(const RectF& rect)
     m_canvas->clipRect(toSkRect(deviceRect(rect)));
 }
 
+RectF Painter::clipBounds() const
+{
+    // The painter draws in device pixels whatever matrix the canvas has.
+    const SkIRect device = m_canvas->getDeviceClipBounds();
+    return {device.left() / m_scale - m_offset.x, device.top() / m_scale - m_offset.y, device.width() / m_scale,
+            device.height() / m_scale};
+}
+
 void Painter::clipRoundedRect(const RectF& rect, double radius, Corners corners)
 {
     const SkRect device = toSkRect(snappedRect(rect));

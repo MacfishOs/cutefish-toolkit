@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <typeinfo>
+#include <vector>
 
 #include "test_views.h"
 #include "ui/button.h"
@@ -452,6 +453,66 @@ TEST(CompositingTest, DamageStaysWithTheChangedView)
     TestInput::presentFrame(window, now += kFrameNs);
     EXPECT_EQ(left->paints, leftPaints + 1);
     EXPECT_EQ(right->paints, rightPaints);
+}
+
+namespace {
+
+// Squares of 20 logical pixels in rows, one colour each.
+class Board : public View
+{
+public:
+    std::vector<Color> colors = std::vector<Color>(10 * 5, Color::rgb(0x2E7DF7));
+    RectF lastClip;
+
+protected:
+    void paint(Painter& painter) override
+    {
+        lastClip = painter.clipBounds();
+        for (int i = 0; i < int(colors.size()); ++i)
+            painter.fillRect({double(i % 10) * 20, double(i / 10) * 20, 20, 20}, colors[size_t(i)]);
+    }
+};
+
+} // namespace
+
+TEST(CompositingTest, PartialPaintRepaintsOnlyTheRect)
+{
+    Window window;
+    auto root = std::make_unique<View>();
+    Board* board = root->addChild<Board>();
+    board->setGeometry({10, 10, 200, 100});
+    window.resize({220, 120});
+    window.setBackgroundColor(Color::rgb(0xFFFFFF));
+    window.setContentView(std::move(root));
+    window.show();
+
+    uint64_t now = 1000000000;
+    for (int i = 0; i < 4; ++i)
+        TestInput::presentFrame(window, now += kFrameNs);
+    // Both squares change, but only the second is asked to paint again.
+    board->colors[0] = Color::rgb(0x30A46C);
+    board->colors[12] = Color::rgb(0xE5484D);
+    board->requestPaint({40, 20, 20, 20});
+    const Image incremental = TestInput::presentFrame(window, now += kFrameNs);
+    const double scale = window.scale();
+    const auto at = [scale](double x, double y) {
+        return std::pair<int, int>(int(std::lround(x * scale)), int(std::lround(y * scale)));
+    };
+    const auto [inX, inY] = at(10 + 50, 10 + 30);
+    const auto [outX, outY] = at(10 + 10, 10 + 10);
+    EXPECT_EQ(incremental.pixel(inX, inY).r, 0xE5);
+    EXPECT_EQ(incremental.pixel(outX, outY).r, 0x2E);
+    // The clip, in the view's coordinates, takes in the rect: a view that
+    // paints only inside its clip paints all that changed.
+    EXPECT_LE(board->lastClip.x, 40);
+    EXPECT_LE(board->lastClip.y, 20);
+    EXPECT_GE(board->lastClip.x + board->lastClip.width, 60);
+    EXPECT_GE(board->lastClip.y + board->lastClip.height, 40);
+    const Image full = window.grab(now);
+    EXPECT_EQ(full.pixel(outX, outY).r, 0x30);
+    EXPECT_EQ(full.pixel(inX, inY).r, 0xE5);
+    EXPECT_GE(board->lastClip.x + board->lastClip.width, 200);
+    EXPECT_GE(board->lastClip.y + board->lastClip.height, 100);
 }
 
 TEST(CompositingTest, LayeredOpacityAppliesToTheGroup)

@@ -341,6 +341,19 @@ void View::requestPaint()
     invalidate();
 }
 
+void View::requestPaint(const RectF& rect)
+{
+    Window* window = this->window();
+    // A layer's texture is painted again whole.
+    if (!window || m_layer) {
+        invalidate();
+        return;
+    }
+    if (!m_dirty && !m_compositeDirty)
+        window->damageRect(this, rect);
+    window->scheduleFrame();
+}
+
 // From the parent's coordinates into the view's, through its transform.
 static PointF mapFromParent(const View* view, PointF point)
 {

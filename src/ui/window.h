@@ -444,6 +444,7 @@ private:
     // the window above it.
     void addDamage(const View* view, SkIRect rect, bool painted);
     void damageNow(const View* view);
+    void damageRect(const View* view, const RectF& rect);
     void collectDamage(View* view, PointF origin);
     // Theme and scale changes: the window and every texture.
     void damageAll();

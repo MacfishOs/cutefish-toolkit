@@ -190,6 +190,9 @@ public:
     // views lay out only when their size changes.
     void requestLayout();
     void requestPaint();
+    // Only part of the view, in its coordinates, is painted again: the rest
+    // of the window keeps what the last frame drew there.
+    void requestPaint(const RectF& rect);
     // Changes whenever the view or one of its children asks for layout, or
     // the window's scale, theme or text layout changes, but not when a view
     // is only moved or resized. Measurements of the view taken in one

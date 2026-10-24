@@ -188,6 +188,20 @@ void Window::damageNow(const View* view)
     addDamage(view, placedRect(view, origin, true), true);
 }
 
+void Window::damageRect(const View* view, const RectF& rect)
+{
+    PointF origin;
+    for (const View* ancestor = view->m_parent; ancestor; ancestor = ancestor->m_parent)
+        origin += ancestor->m_geometry.topLeft();
+    const PointF position = origin + view->m_geometry.topLeft();
+    SkIRect device = SkRect::MakeXYWH(SkScalar((position.x + rect.x) * m_scale), SkScalar((position.y + rect.y) * m_scale),
+                                      SkScalar(rect.width * m_scale), SkScalar(rect.height * m_scale))
+                             .roundOut();
+    if (view->isComposited(true))
+        device = mapThroughTransform(view, device, position);
+    addDamage(view, device, true);
+}
+
 void Window::collectDamage(View* view, PointF origin)
 {
     // A hidden view stays dirty and is damaged once shown.
