@@ -192,8 +192,15 @@ void RoundImageButton::paint(Painter& painter)
                                            extent, extent});
     sk_sp<SkImage> image = IconLoader::instance().glyph(m_iconName, rect.width, m_iconColor.value_or(theme.text),
                                                         ratio);
-    if (!image)
+    if (!image) {
+        if (m_source.empty()) {
+            m_source = m_iconName;
+            m_iconName.clear();
+            updateIcon();
+            requestLayout();
+        }
         return;
+    }
     painter.save();
     painter.multiplyOpacity(m_iconOpacity.value_or(isEnabled() ? 1.0 : 0.35));
     painter.drawImage(image.get(), rect.x, rect.y);
