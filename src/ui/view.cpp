@@ -175,6 +175,23 @@ void View::setLayered(bool layered)
     m_layered = layered;
 }
 
+void View::setOpaqueLayer(bool opaque)
+{
+    if (opaque == m_opaqueLayer)
+        return;
+    m_opaqueLayer = opaque;
+    if (m_layer)
+        m_layer->surface.reset();
+    invalidate();
+}
+
+void View::scrollPainted(const RectF& rect, double dx, double dy)
+{
+    Window* window = this->window();
+    if (!window || m_dirty || !window->scrollLayer(this, rect, dx, dy))
+        requestPaint(rect);
+}
+
 void View::invalidate()
 {
     Window* window = this->window();
@@ -344,13 +361,16 @@ void View::requestPaint()
 void View::requestPaint(const RectF& rect)
 {
     Window* window = this->window();
-    // A layer's texture is painted again whole.
-    if (!window || m_layer) {
+    if (!window) {
         invalidate();
         return;
     }
-    if (!m_dirty && !m_compositeDirty)
-        window->damageRect(this, rect);
+    if (!m_dirty) {
+        if (m_layer)
+            window->damageLayer(this, rect);
+        if (!m_compositeDirty)
+            window->damageRect(this, rect);
+    }
     window->scheduleFrame();
 }
 

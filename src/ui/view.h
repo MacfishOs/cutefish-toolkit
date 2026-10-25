@@ -140,6 +140,16 @@ public:
     // Opacity then applies to them as one, and text loses subpixel colour.
     bool isLayered() const { return m_layered; }
     void setLayered(bool layered);
+    // A layered view that paints every pixel of its rect opaquely keeps
+    // subpixel colour in its text; its texture holds that rect only, so
+    // nothing it or its children paint reaches outside.
+    bool hasOpaqueLayer() const { return m_opaqueLayer; }
+    void setOpaqueLayer(bool opaque);
+    // Moves what the view last painted inside the rect, in its coordinates,
+    // by (dx, dy) and paints only what that uncovers, along with whatever was
+    // waiting to be painted there, moved with it. A view without a layer, or
+    // a move that is not whole device pixels, paints the rect again.
+    void scrollPainted(const RectF& rect, double dx, double dy);
 
     // Everything the view paints, in its own coordinates: its rect, and more
     // where shadows or focus rings reach out.
@@ -329,6 +339,8 @@ private:
     double m_opacity = 1;
     Transform m_transform;
     bool m_layered = false;
+    // In the padding before m_layer, as m_cursorShape is.
+    bool m_opaqueLayer = false;
     std::unique_ptr<Layer> m_layer;
     bool m_dirty = false;
     bool m_compositeDirty = false;

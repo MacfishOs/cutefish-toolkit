@@ -18,6 +18,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPathBuilder.h"
 #include "include/core/SkRRect.h"
+#include "include/core/SkRegion.h"
 #include "include/effects/SkGradient.h"
 
 #include "ui/icon_loader.h"
@@ -67,12 +68,49 @@ void Painter::clip(const RectF& rect)
     m_canvas->clipRect(toSkRect(deviceRect(rect)));
 }
 
+// The clip in the painter's device pixels, before the canvas's own matrix
+// (a layer's texture offset).
+static SkIRect untransformedClip(SkCanvas* canvas)
+{
+    SkMatrix inverse;
+    const SkIRect device = canvas->getDeviceClipBounds();
+    if (!canvas->getTotalMatrix().invert(&inverse))
+        return device;
+    return inverse.mapRect(SkRect::Make(device)).roundOut();
+}
+
 RectF Painter::clipBounds() const
 {
-    // The painter draws in device pixels whatever matrix the canvas has.
-    const SkIRect device = m_canvas->getDeviceClipBounds();
+    const SkIRect device = untransformedClip(m_canvas);
     return {device.left() / m_scale - m_offset.x, device.top() / m_scale - m_offset.y, device.width() / m_scale,
             device.height() / m_scale};
+}
+
+std::vector<RectF> Painter::clipRects() const
+{
+    if (!m_damage)
+        return {clipBounds()};
+    SkRegion parts(*m_damage);
+    parts.op(untransformedClip(m_canvas), SkRegion::kIntersect_Op);
+    // A region keeps its rects in horizontal bands, cutting a column at every
+    // band another part starts or ends; the columns are joined again.
+    std::vector<SkIRect> columns;
+    for (SkRegion::Iterator it(parts); !it.done(); it.next()) {
+        const SkIRect& rect = it.rect();
+        const auto above = std::find_if(columns.begin(), columns.end(), [&rect](const SkIRect& column) {
+            return column.left() == rect.left() && column.right() == rect.right() && column.bottom() == rect.top();
+        });
+        if (above != columns.end())
+            above->fBottom = rect.bottom();
+        else
+            columns.push_back(rect);
+    }
+    std::vector<RectF> rects;
+    for (const SkIRect& device : columns) {
+        rects.push_back({device.left() / m_scale - m_offset.x, device.top() / m_scale - m_offset.y,
+                         device.width() / m_scale, device.height() / m_scale});
+    }
+    return rects;
 }
 
 void Painter::clipRoundedRect(const RectF& rect, double radius, Corners corners)

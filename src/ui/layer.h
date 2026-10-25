@@ -25,6 +25,15 @@ struct Layer
     // Window device pixels, untransformed, whose texture content is stale.
     SkRegion damage;
     bool repaintAll = true;
+    // Moves of texture content asked for since the last frame, in order:
+    // window device pixels, untransformed, and whole-pixel offsets.
+    struct Scroll
+    {
+        SkIRect rect;
+        int dx = 0;
+        int dy = 0;
+    };
+    std::vector<Scroll> scrolls;
 };
 
 // What changed in the window since the last presented frame.

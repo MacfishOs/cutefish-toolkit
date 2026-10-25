@@ -461,6 +461,11 @@ private:
     void addDamage(const View* view, SkIRect rect, bool painted);
     void damageNow(const View* view);
     void damageRect(const View* view, const RectF& rect);
+    // The rect, in the layered view's coordinates, in its texture.
+    void damageLayer(View* view, const RectF& rect);
+    // Queues a move of the layered view's texture content and moves its
+    // damage along; false when the texture cannot be moved.
+    bool scrollLayer(View* view, const RectF& rect, double dx, double dy);
     void collectDamage(View* view, PointF origin);
     // Theme and scale changes: the window and every texture.
     void damageAll();

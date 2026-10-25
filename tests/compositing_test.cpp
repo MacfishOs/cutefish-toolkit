@@ -27,6 +27,7 @@
 #include "ui/switch.h"
 #include "ui/test_input.h"
 #include "ui/text_field.h"
+#include "ui/text_layout.h"
 #include "ui/theme.h"
 #include "ui/window.h"
 #include "ui/window_header.h"
@@ -513,6 +514,152 @@ TEST(CompositingTest, PartialPaintRepaintsOnlyTheRect)
     EXPECT_EQ(full.pixel(inX, inY).r, 0xE5);
     EXPECT_GE(board->lastClip.x + board->lastClip.width, 200);
     EXPECT_GE(board->lastClip.y + board->lastClip.height, 100);
+}
+
+namespace {
+
+// Rows of squares and text under a vertical offset, as a scrolled document
+// paints; it paints every pixel, so its layer can be opaque.
+class Document : public View
+{
+public:
+    double offset = 0;
+    int highlighted = -1;
+    Color squares = Color::rgb(0x2E7DF7);
+    int paints = 0;
+
+protected:
+    void paint(Painter& painter) override
+    {
+        ++paints;
+        painter.clip(localRect());
+        painter.fillRect(localRect(), Color::rgb(0xFFFFFF));
+        const double scale = painter.scale();
+        for (int row = int(offset / 18); row * 18 - offset < geometry().height; ++row) {
+            const double y = row * 18 - offset;
+            const Color color = row == highlighted ? Color::rgb(0xE5484D) : squares;
+            painter.fillRect({4, y + 3, 12, 12}, color);
+            TextLayout line("Line " + std::to_string(row) + " of the scrolled document", {"Noto Sans", 10, false, false},
+                            scale);
+            line.setDefaultColor(Color::rgb(0x1C1C1E));
+            line.beginLayout();
+            line.createLine(geometry().width - 24, {22, y + 1});
+            line.endLayout();
+            line.draw(painter, {});
+        }
+    }
+};
+
+struct DocumentWindow
+{
+    Window window;
+    Document* document = nullptr;
+
+    DocumentWindow(double scale, double offset)
+    {
+        auto root = std::make_unique<View>();
+        document = root->addChild<Document>();
+        document->setGeometry({10, 20, 220, 150});
+        document->setLayered(true);
+        document->setOpaqueLayer(true);
+        document->offset = offset;
+        window.resize({240, 180});
+        window.setBackgroundColor(Color::rgb(0xF6F6F7));
+        window.setContentView(std::move(root));
+        window.setScale(scale);
+        window.show();
+    }
+};
+
+} // namespace
+
+TEST(CompositingTest, ScrolledLayersMatchAFreshPaint)
+{
+    for (const double scale : {1.0, 1.5, 2.0}) {
+        DocumentWindow scrolled(scale, 40);
+        uint64_t now = 1000000000;
+        for (int i = 0; i < 3; ++i)
+            TestInput::presentFrame(scrolled.window, now += kFrameNs);
+        Document* document = scrolled.document;
+        const RectF all = document->localRect();
+
+        // Whole device pixels at every scale: only the uncovered rows paint.
+        for (const double step : {2.0, -6.0, 30.0}) {
+            document->offset += step;
+            document->scrollPainted(all, 0, -step);
+            const Image incremental = TestInput::presentFrame(scrolled.window, now += kFrameNs);
+            DocumentWindow fresh(scale, document->offset);
+            EXPECT_EQ(mismatches(incremental, fresh.window.grab()), 0) << scale << " step " << step;
+        }
+
+        // Squares recoloured without a paint stay as they were where the
+        // texture moved, and take the colour only where it uncovered.
+        document->squares = Color::rgb(0x30A46C);
+        document->offset += 30;
+        document->scrollPainted(all, 0, -30);
+        Image moved = TestInput::presentFrame(scrolled.window, now += kFrameNs);
+        const int top = int(std::lround(20 * scale));
+        const int uncovered = int(std::lround((20 + all.height - 30) * scale));
+        int greenAbove = 0;
+        int greenBelow = 0;
+        for (int y = top; y < int(std::lround((20 + all.height) * scale)); ++y) {
+            for (int x = 0; x < moved.width(); ++x) {
+                const Color c = moved.pixel(x, y);
+                if (c.r == 0x30 && c.g == 0xA4 && c.b == 0x6C)
+                    ++(y < uncovered ? greenAbove : greenBelow);
+            }
+        }
+        EXPECT_EQ(greenAbove, 0) << scale;
+        EXPECT_GT(greenBelow, 0) << scale;
+        document->squares = Color::rgb(0x2E7DF7);
+        document->requestPaint();
+        TestInput::presentFrame(scrolled.window, now += kFrameNs);
+
+        // A change waiting to be painted moves with the content.
+        document->highlighted = int(document->offset / 18) + 3;
+        document->requestPaint({0, document->highlighted * 18 - document->offset, all.width, 18});
+        document->offset += 4;
+        document->scrollPainted(all, 0, -4);
+        Image incremental = TestInput::presentFrame(scrolled.window, now += kFrameNs);
+        DocumentWindow fresh(scale, document->offset);
+        fresh.document->highlighted = document->highlighted;
+        EXPECT_EQ(mismatches(incremental, fresh.window.grab()), 0) << scale << " with waiting damage";
+
+        // A move of part of a device pixel paints the rect again.
+        const int paints = document->paints;
+        document->offset += 1.0 / 3;
+        document->scrollPainted(all, 0, -1.0 / 3);
+        incremental = TestInput::presentFrame(scrolled.window, now += kFrameNs);
+        EXPECT_EQ(document->paints, paints + 1);
+        DocumentWindow fractional(scale, document->offset);
+        fractional.document->highlighted = document->highlighted;
+        EXPECT_EQ(mismatches(incremental, fractional.window.grab()), 0) << scale << " fractional";
+    }
+}
+
+TEST(CompositingTest, ResizedLayersMatchAFreshPaint)
+{
+    for (const double scale : {1.0, 1.5}) {
+        DocumentWindow resized(scale, 10);
+        uint64_t now = 1000000000;
+        TestInput::presentFrame(resized.window, now += kFrameNs);
+        // Growing, shrinking and growing again, inside the texture's room and past it.
+        for (const double width : {226.0, 214.0, 230.0, 160.0, 228.0}) {
+            resized.document->setGeometry({10, 20, width, 150 - (230 - width) / 4});
+            const Image incremental = TestInput::presentFrame(resized.window, now += kFrameNs);
+            DocumentWindow fresh(scale, 10);
+            fresh.document->setGeometry(resized.document->geometry());
+            EXPECT_EQ(mismatches(incremental, fresh.window.grab()), 0) << scale << " width " << width;
+        }
+    }
+}
+
+TEST(CompositingTest, OpaqueLayersKeepSubpixelText)
+{
+    DocumentWindow layered(1.0, 0);
+    DocumentWindow direct(1.0, 0);
+    direct.document->setLayered(false);
+    EXPECT_EQ(mismatches(layered.window.grab(), direct.window.grab()), 0);
 }
 
 TEST(CompositingTest, LayeredOpacityAppliesToTheGroup)
