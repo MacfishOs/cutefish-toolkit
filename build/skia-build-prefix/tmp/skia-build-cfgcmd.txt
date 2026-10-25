@@ -1,1 +1,0 @@
-cmd='/home/jatin/Documents/development/cutefish-new/cutefish-toolkit/third_party/skia/bin/gn;gen;/home/jatin/Documents/development/cutefish-new/cutefish-toolkit/build/skia;--root=/home/jatin/Documents/development/cutefish-new/cutefish-toolkit/third_party/skia'
