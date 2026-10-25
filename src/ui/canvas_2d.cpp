@@ -390,11 +390,57 @@ void Canvas2D::fillRadialGradient(const std::vector<GradientStopF>& stops, Point
     m_canvas->drawPaint(paint);
 }
 
+struct RetainedBitmap::Data
+{
+    sk_sp<SkImage> image;
+};
+
+RetainedBitmap::RetainedBitmap() = default;
+
+RetainedBitmap::RetainedBitmap(const Bitmap& bitmap)
+{
+    if (bitmap.isNull())
+        return;
+    sk_sp<SkImage> image = SkImages::RasterFromPixmapCopy(skPixmap(bitmap));
+    if (image)
+        d = std::make_shared<const Data>(Data {std::move(image)});
+}
+
+RetainedBitmap::~RetainedBitmap() = default;
+RetainedBitmap::RetainedBitmap(const RetainedBitmap&) = default;
+RetainedBitmap& RetainedBitmap::operator=(const RetainedBitmap&) = default;
+
+int RetainedBitmap::width() const
+{
+    return d ? d->image->width() : 0;
+}
+
+int RetainedBitmap::height() const
+{
+    return d ? d->image->height() : 0;
+}
+
+size_t RetainedBitmap::byteCount() const
+{
+    return d ? size_t(d->image->width()) * size_t(d->image->height()) * 4 : 0;
+}
+
 void Canvas2D::drawBitmap(const Bitmap& bitmap, const RectF& rect, bool mirrored)
 {
     if (!m_canvas || bitmap.isNull())
         return;
-    const sk_sp<SkImage> image = SkImages::RasterFromPixmapCopy(skPixmap(bitmap));
+    drawImage(SkImages::RasterFromPixmapCopy(skPixmap(bitmap)).get(), rect, mirrored);
+}
+
+void Canvas2D::drawBitmap(const RetainedBitmap& bitmap, const RectF& rect, bool mirrored)
+{
+    if (!m_canvas || bitmap.isNull())
+        return;
+    drawImage(bitmap.d->image.get(), rect, mirrored);
+}
+
+void Canvas2D::drawImage(SkImage* image, const RectF& rect, bool mirrored)
+{
     if (!image)
         return;
     SkPaint paint;

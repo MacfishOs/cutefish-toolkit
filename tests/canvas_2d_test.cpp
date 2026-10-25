@@ -44,6 +44,37 @@ TEST(Canvas2DTest, FillsThroughTheTransform)
     EXPECT_EQ(bitmap.pixel(1, 1), 0u);
 }
 
+TEST(Canvas2DTest, RetainedBitmapsDrawAsTheirBitmap)
+{
+    Bitmap source(4, 2, Format::Argb32Premultiplied);
+    source.fill(0xFFFF0000u);
+    source.setPixel(1, 0, 0x800000FFu);
+    const ui::RetainedBitmap retained(source);
+    ASSERT_FALSE(retained.isNull());
+    EXPECT_EQ(retained.width(), 4);
+    EXPECT_EQ(retained.height(), 2);
+    EXPECT_EQ(retained.byteCount(), 32u);
+    // Taken when made: later changes to the bitmap do not reach it.
+    const Bitmap original = Bitmap::copyOf(source.bits(), 4, 2, source.stride(), Format::Argb32Premultiplied);
+    source.fill(0xFF00FF00u);
+
+    Bitmap direct(12, 6, Format::Argb32Premultiplied);
+    Canvas2D directCanvas(direct);
+    directCanvas.setImageSmoothing(Canvas2D::Smoothing::None);
+    directCanvas.drawBitmap(original, {2, 1, 8, 4});
+    directCanvas.drawBitmap(original, {0, 0, 4, 2}, true);
+    Bitmap drawn(12, 6, Format::Argb32Premultiplied);
+    Canvas2D drawnCanvas(drawn);
+    drawnCanvas.setImageSmoothing(Canvas2D::Smoothing::None);
+    drawnCanvas.drawBitmap(retained, {2, 1, 8, 4});
+    drawnCanvas.drawBitmap(retained, {0, 0, 4, 2}, true);
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 12; ++x)
+            EXPECT_EQ(drawn.pixel(x, y), direct.pixel(x, y)) << x << "," << y;
+    }
+    EXPECT_TRUE(ui::RetainedBitmap().isNull());
+}
+
 TEST(Canvas2DTest, ClipsSavesAndAlpha)
 {
     Bitmap bitmap(10, 10, Format::Argb32Premultiplied);

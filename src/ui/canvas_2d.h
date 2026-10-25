@@ -13,11 +13,35 @@
 #include "ui/path.h"
 
 class SkCanvas;
+class SkImage;
 
 namespace cutefish::ui {
 
 class Painter;
 class TextLayout;
+
+// A bitmap copied once to be drawn many times: a GPU canvas uploads it on
+// its first draw and keeps the texture while any copy of the handle lives.
+class RetainedBitmap
+{
+public:
+    RetainedBitmap();
+    explicit RetainedBitmap(const Bitmap& bitmap);
+    ~RetainedBitmap();
+    RetainedBitmap(const RetainedBitmap&);
+    RetainedBitmap& operator=(const RetainedBitmap&);
+
+    bool isNull() const { return !d; }
+    int width() const;
+    int height() const;
+    // The pixels the handle keeps, for the bytes it costs.
+    size_t byteCount() const;
+
+private:
+    friend class Canvas2D;
+    struct Data;
+    std::shared_ptr<const Data> d;
+};
 
 // A colour with floating-point components, 0 to 1, not premultiplied.
 struct ColorF
@@ -160,6 +184,7 @@ public:
     // Scaled into the rect, its first row at the rect's top, or at its
     // bottom when mirrored.
     void drawBitmap(const Bitmap& bitmap, const RectF& rect, bool mirrored = false);
+    void drawBitmap(const RetainedBitmap& bitmap, const RectF& rect, bool mirrored = false);
 
     // Drawing from here on is a group, composited as one at the matching
     // end with the global alpha, composite mode and shadow of the begin.
@@ -196,6 +221,7 @@ private:
     struct Owned;
 
     void applyMatrix();
+    void drawImage(SkImage* image, const RectF& rect, bool mirrored);
     void drawWith(const std::function<void(SkCanvas*, const void* paint)>& draw, const ColorF& color,
                   bool stroke);
 
