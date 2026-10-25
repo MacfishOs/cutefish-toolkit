@@ -177,3 +177,35 @@ TEST(Canvas2DTest, TextStaysUprightUnderAMirror)
     EXPECT_LT(top, 12);
     EXPECT_GT(bottom, top + 10);
 }
+
+TEST(Canvas2DTest, TextTurnsWithTheSpace)
+{
+    Bitmap bitmap(40, 80, Format::Argb32Premultiplied);
+    Canvas2D canvas(bitmap);
+    // A quarter turn: x runs down the bitmap and y from its right edge.
+    canvas.setTransform(base::AffineTransform(0, 1, -1, 0, 40, 0));
+    ui::TextLayout layout("HHHH", ui::FontSpec{ui::Theme::current().fontFamily, 20}, canvas.deviceScale());
+    layout.setDefaultColor(ui::Color::rgb(0x000000));
+    layout.beginLayout();
+    layout.createLine(1000, {0, 0});
+    layout.endLayout();
+    canvas.drawText(layout, {4, 4});
+    int left = 40, right = -1, top = 80, bottom = -1;
+    for (int y = 0; y < 80; ++y) {
+        for (int x = 0; x < 40; ++x) {
+            if (bitmap.alpha(x, y) > 128) {
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+    }
+    ASSERT_GE(right, 0);
+    // The run reads downwards from the turned origin at (36, 4): taller
+    // than it is wide, and left of that origin.
+    EXPECT_GT(bottom - top, 2 * (right - left));
+    EXPECT_GE(top, 2);
+    EXPECT_GE(left, 4);
+    EXPECT_LE(right, 37);
+}

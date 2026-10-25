@@ -477,7 +477,18 @@ void Canvas2D::drawText(TextLayout& layout, PointF origin)
     m_canvas->resetMatrix();
     Painter painter(m_canvas, scale);
     painter.multiplyOpacity(m_state.alpha);
-    layout.draw(painter, {device.x() / scale, device.y() / scale});
+    // Text keeps to the device's pixels at the space's scale; a turned
+    // space turns it about its origin, a mirrored one leaves it upright.
+    const double determinant = double(total.getScaleX()) * total.getScaleY() - double(total.getSkewX()) * total.getSkewY();
+    const bool turned = determinant > 0 && (total.getSkewX() != 0 || total.getSkewY() != 0 || total.getScaleX() < 0);
+    if (turned) {
+        SkMatrix placed = SkMatrix::Translate(device.x(), device.y());
+        placed.preRotate(SkRadiansToDegrees(std::atan2(total.getSkewY(), total.getScaleX())));
+        m_canvas->setMatrix(placed);
+        layout.draw(painter, {0, 0});
+    } else {
+        layout.draw(painter, {device.x() / scale, device.y() / scale});
+    }
     m_canvas->restore();
     applyMatrix();
 }
