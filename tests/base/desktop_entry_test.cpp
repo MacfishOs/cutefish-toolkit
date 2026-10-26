@@ -4,10 +4,13 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
+#include <memory>
 
 #include "base/application_registry.h"
 #include "base/desktop_entry.h"
 #include "base/event_loop.h"
+#include "base/file.h"
 
 using namespace cutefish::base;
 using namespace std::chrono_literals;
@@ -80,6 +83,81 @@ TEST(ApplicationRegistryTest, ScansAndResolves)
         EXPECT_EQ(registry.resolveWindow("", "", "/usr/bin/cutefish-settings", "cutefish-settings"), settings);
         EXPECT_EQ(registry.resolveWindow("cutefish-settings", "", "", ""), settings);
     }
+}
+
+// Runs the loop until the registry has read its directories again.
+static bool waitForScan(EventLoop& loop, ApplicationRegistry& registry, std::chrono::milliseconds timeout)
+{
+    bool scanned = false;
+    Subscription subscription = registry.changed.connect([&] {
+        scanned = true;
+        loop.quit();
+    });
+    const int timer = loop.startTimer(timeout, false, [&loop] { loop.quit(); });
+    loop.run();
+    loop.stopTimer(timer);
+    return scanned;
+}
+
+static std::string launcherEntry(const std::string& name, const std::string& windowClass)
+{
+    return "[Desktop Entry]\nType=Application\nName=" + name + "\nExec=launcher \"/opt/" + name + "/" + name
+        + "\" %U\nStartupWMClass=" + windowClass + "\nNoDisplay=true\n";
+}
+
+TEST(ApplicationRegistryTest, NamesAWindowOfASharedLauncherByItsAppId)
+{
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(file::writeAtomically(directory.path() + "/org.example.Clip.desktop",
+                                      launcherEntry("Clip", "org.example.Clip")));
+    ASSERT_TRUE(file::writeAtomically(directory.path() + "/org.example.Edit.desktop",
+                                      launcherEntry("Edit", "org.example.Edit")));
+
+    EventLoop loop;
+    std::unique_ptr<ApplicationRegistry> registry = ApplicationRegistry::create(loop, {directory.path()});
+    ASSERT_TRUE(waitForScan(loop, *registry, 5s));
+    ASSERT_EQ(registry->entries().size(), 2u);
+
+    const std::string launcher = "/usr/bin/launcher";
+    EXPECT_EQ(registry->resolveWindow("org.example.Edit", "org.example.Edit", launcher, "launcher"),
+              registry->byId("org.example.Edit"));
+    EXPECT_EQ(registry->resolveWindow("org.example.Clip", "org.example.Clip", launcher, "launcher"),
+              registry->byId("org.example.Clip"));
+}
+
+TEST(ApplicationRegistryTest, NamesAWindowByTheOnlyEntryForItsProgram)
+{
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(file::writeAtomically(directory.path() + "/org.example.Edit.desktop",
+                                      launcherEntry("Edit", "org.example.Edit")));
+
+    EventLoop loop;
+    std::unique_ptr<ApplicationRegistry> registry = ApplicationRegistry::create(loop, {directory.path()});
+    ASSERT_TRUE(waitForScan(loop, *registry, 5s));
+    EXPECT_EQ(registry->resolveWindow("", "", "/usr/bin/launcher", "launcher"), registry->byId("org.example.Edit"));
+}
+
+TEST(ApplicationRegistryTest, WatchesADirectoryOnceItCanBeWatched)
+{
+    file::TemporaryDirectory directory(std::filesystem::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(directory.isValid());
+    namespace fs = std::filesystem;
+    // Without read access inotify refuses the watch, as it does when the
+    // user's watches have run out.
+    fs::permissions(directory.path(), fs::perms::none);
+
+    EventLoop loop;
+    std::unique_ptr<ApplicationRegistry> registry = ApplicationRegistry::create(loop, {directory.path()});
+    ASSERT_TRUE(waitForScan(loop, *registry, 5s));
+    EXPECT_TRUE(registry->entries().empty());
+
+    fs::permissions(directory.path(), fs::perms::owner_all);
+    ASSERT_TRUE(file::writeAtomically(directory.path() + "/org.example.Edit.desktop",
+                                      launcherEntry("Edit", "org.example.Edit")));
+    ASSERT_TRUE(waitForScan(loop, *registry, 10s));
+    EXPECT_NE(registry->byId("org.example.Edit"), nullptr);
 }
 
 TEST(DesktopEntryTest, KeepsEmptyQuotedArguments)

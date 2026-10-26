@@ -21,7 +21,7 @@ std::string cacheHome();
 std::string stateHome();
 // /run/user/<uid>
 std::string runtimeDirectory();
-// /usr/local/share and /usr/share
+// The user's and the system's Flatpak exports, /usr/local/share and /usr/share
 std::vector<std::string> dataDirectories();
 // /etc/xdg
 std::vector<std::string> configDirectories();

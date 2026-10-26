@@ -12,6 +12,7 @@
 #include "ui/embedded_platform_window.h"
 #include "ui/text_context.h"
 #include "ui/window.h"
+#include "wayland/connection.h"
 #include "wayland/wayland_window.h"
 
 namespace cutefish::ui {
@@ -25,6 +26,13 @@ class HeadlessWindow final : public PlatformWindow
 {
 public:
     using PlatformWindow::PlatformWindow;
+
+    // A status item: configured at the size it shows at, in a light bar.
+    HeadlessWindow(Window* window, StatusItemClient* statusItem)
+        : PlatformWindow(window)
+        , m_statusItem(statusItem)
+    {
+    }
 
     bool isHeadless() const override { return true; }
     void setTitle(const std::string&) override {}
@@ -54,8 +62,20 @@ public:
 
     void show(int width, int height) override
     {
-        m_states.activated = true;
+        m_states.activated = !m_statusItem;
+        if (m_statusItem) {
+            m_statusItem->statusItemAppearance(false, 0xd9000000);
+            m_statusItem->statusItemHighlight(m_highlight);
+            m_statusItem->statusItemLimits(0);
+        }
         notifyConfigure(width, height, m_states);
+    }
+
+    void setStatusItemHighlight(bool highlighted) override
+    {
+        m_highlight = highlighted;
+        if (m_statusItem)
+            m_statusItem->statusItemHighlight(highlighted);
     }
 
     // A chain of buffers taken in turn, so frames repaint what changed since
@@ -99,6 +119,8 @@ private:
     const Image* m_presented = nullptr;
     int m_moveRequests = 0;
     std::optional<GlassMaterial> m_glass;
+    StatusItemClient* m_statusItem = nullptr;
+    bool m_highlight = false;
 };
 
 } // namespace
@@ -123,6 +145,20 @@ std::unique_ptr<PlatformWindow> PlatformWindow::create(Window* window, PlatformW
             window, static_cast<wayland::WaylandWindow*>(parent), placement, grab);
     }
     return std::make_unique<wayland::WaylandWindow>(window);
+}
+
+std::unique_ptr<PlatformWindow> PlatformWindow::createStatusItem(Window* window, StatusItemClient* client)
+{
+    if (statusItemsSupported())
+        return std::make_unique<wayland::WaylandWindow>(window, client);
+    return std::make_unique<HeadlessWindow>(window, client);
+}
+
+bool PlatformWindow::statusItemsSupported()
+{
+    Application* application = Application::instance();
+    return application && application->platform() == Application::Platform::Wayland
+            && application->connection().statusItems();
 }
 
 void PlatformWindow::notifyConfigure(int width, int height, const WindowStates& states)
@@ -238,6 +274,11 @@ void PlatformWindow::notifyTextInput(const TextInputEvent& event)
 void PlatformWindow::notifyWorkArea(const RectF& area)
 {
     m_window->handleWorkArea(area);
+}
+
+void PlatformWindow::notifyScreenPosition(PointF position)
+{
+    m_window->handleScreenPosition(position);
 }
 
 PlatformWindow* PlatformWindow::platformOf(Window* window)

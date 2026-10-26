@@ -50,6 +50,12 @@ cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 cutefish_wayland_protocol(cutefish-shell-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-shell-v1.xml)
+cutefish_wayland_protocol(cutefish-main-menu-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-main-menu-v1.xml)
+cutefish_wayland_protocol(cutefish-status-item-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-status-item-v1.xml)
+cutefish_wayland_protocol(cutefish-window-placement-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-window-placement-v1.xml)
 
 add_subdirectory(base)
 
@@ -60,6 +66,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/application.h
     ui/bitmap.h
     ui/bitmap_painter.h
+    ui/canvas_2d.h
     ui/blurred_copy.h
     ui/fast_blur.h
     ui/bubble_shape.h
@@ -96,6 +103,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/menu.h
     ui/painter.h
     ui/path.h
+    ui/popup_glass.h
     ui/progress_bar.h
     ui/cell_layout.h
     ui/round_image_button.h
@@ -105,6 +113,7 @@ set(CUTEFISH_TOOLKIT_PUBLIC_HEADERS
     ui/search_field.h
     ui/segmented_control.h
     ui/slider.h
+    ui/status_item.h
     ui/styled_label.h
     ui/subsurface.h
     ui/switch.h
@@ -130,6 +139,7 @@ add_library(cutefish-toolkit SHARED
     wayland/primary_selection.cpp
     wayland/selection.cpp
     wayland/keyboard.cpp
+    wayland/main_menu.cpp
     wayland/text_input.cpp
     wayland/shell_surface.cpp
     wayland/wayland_window.cpp
@@ -178,6 +188,7 @@ add_library(cutefish-toolkit SHARED
     ui/path.cpp
     ui/bitmap.cpp
     ui/bitmap_painter.cpp
+    ui/canvas_2d.cpp
     ui/blurred_copy.cpp
     ui/fast_blur.cpp
     ui/platform_window.cpp
@@ -195,6 +206,7 @@ add_library(cutefish-toolkit SHARED
     ui/search_field.cpp
     ui/segmented_control.cpp
     ui/slider.cpp
+    ui/status_item.cpp
     ui/styled_label.cpp
     ui/subsurface.cpp
     ui/switch.cpp
@@ -233,6 +245,9 @@ add_library(cutefish-toolkit SHARED
     ${cutefish-window-hints-v1_SOURCES}
     ${cutefish-surface-blur-v1_SOURCES}
     ${cutefish-shell-v1_SOURCES}
+    ${cutefish-main-menu-v1_SOURCES}
+    ${cutefish-status-item-v1_SOURCES}
+    ${cutefish-window-placement-v1_SOURCES}
 )
 
 # The glyph icons, built in so they need no install location.

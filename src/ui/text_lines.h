@@ -12,10 +12,13 @@
 #include <vector>
 
 #include "include/core/SkColor.h"
+#include "include/core/SkRefCnt.h"
 
 #include "ui/geometry.h"
 
 class SkCanvas;
+class SkPaint;
+class SkTextBlob;
 class SkTypeface;
 
 namespace skia::textlayout {
@@ -132,6 +135,11 @@ TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const std::str
                           double align, const AdvanceRule& roundAdvances);
 TextGeometry textGeometry(skia::textlayout::Paragraph* paragraph, const LineGlyphs& glyphs, const std::string& text,
                           double width, double align);
+
+// Draws a blob of positioned runs as paintTextLines draws glyphs: subpixel
+// runs on a translucent target through the subpixel blend when the window
+// allows it, else greyscale.
+void drawTextBlobForTarget(SkCanvas* canvas, const sk_sp<SkTextBlob>& blob, float x, float y, const SkPaint& paint);
 
 // The ink bounds of the paragraph's first line, from the origin of its
 // baseline: whole-pixel glyph boxes at the truncated advances.

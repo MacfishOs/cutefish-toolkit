@@ -8,6 +8,8 @@
 #include <cmath>
 #include <wayland-egl.h>
 
+#include <cutefish-main-menu-v1-client-protocol.h>
+
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
@@ -21,6 +23,7 @@
 #include "ui/text_context.h"
 #include "wayland/connection.h"
 #include "wayland/data_device.h"
+#include "wayland/main_menu.h"
 #include "wayland/text_input.h"
 
 namespace cutefish::ui::wayland {
@@ -35,6 +38,16 @@ WaylandWindow::WaylandWindow(Window* window, Connection& connection, gpu::EglCon
     , m_connection(&connection)
     , m_gpu(&context)
     , m_shell(std::make_unique<ShellSurface>(connection, static_cast<ShellSurface::Delegate*>(this)))
+{
+}
+
+WaylandWindow::WaylandWindow(Window* window, StatusItemClient* statusItem)
+    : PlatformWindow(window)
+    , m_connection(&Application::instance()->connection())
+    , m_statusItem(statusItem)
+    , m_gpu(&Application::instance()->gpu())
+    , m_shell(std::make_unique<ShellSurface>(*m_connection, static_cast<ShellSurface::Delegate*>(this),
+                                             ShellSurface::StatusItemRole {}))
 {
 }
 
@@ -162,6 +175,8 @@ void WaylandWindow::show(int width, int height)
             m_shell->setBlurShape(m_blurShape);
         if (m_glass)
             m_shell->setGlass(m_glass);
+        if (m_opacity < 1)
+            m_shell->setOpacity(m_opacity);
     }
     m_shell->map();
 }
@@ -228,6 +243,12 @@ void WaylandWindow::setRestoreId(const std::string& id)
         m_shell->setRestoreId(id);
 }
 
+void WaylandWindow::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    if (m_shell)
+        m_shell->setPlacementAnchor(anchor);
+}
+
 bool WaylandWindow::setDesktopRole(const std::string& outputName)
 {
     return m_shell && m_shell->setDesktop(outputName);
@@ -248,6 +269,11 @@ void WaylandWindow::activateShellSurface()
 void WaylandWindow::workArea(const RectF& area)
 {
     notifyWorkArea(area);
+}
+
+void WaylandWindow::screenPosition(PointF position)
+{
+    notifyScreenPosition(position);
 }
 
 void WaylandWindow::setForeignParent(const std::string& handle, bool modal)
@@ -341,7 +367,88 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
 
 void WaylandWindow::configure(int width, int height, const WindowStates& states)
 {
+    // A status item's width is its own.
+    if (m_statusItem && width <= 0)
+        width = int(std::ceil(m_window->size().width));
     notifyConfigure(width, height, states);
+}
+
+void WaylandWindow::setBodyShape(const Path& path)
+{
+    if (m_shell)
+        m_shell->setBodyShape(path);
+}
+
+void WaylandWindow::setCastsShadow(bool castsShadow)
+{
+    if (m_shell)
+        m_shell->setCastsShadow(castsShadow);
+}
+
+void WaylandWindow::setOpacity(double opacity)
+{
+    m_opacity = opacity;
+    if (m_shell)
+        m_shell->setOpacity(opacity);
+}
+
+bool WaylandWindow::setScreenPosition(PointF position)
+{
+    return m_shell && m_shell->setScreenPosition(position);
+}
+
+void WaylandWindow::setUserResizable(bool resizable)
+{
+    if (m_shell)
+        m_shell->setServerResize(resizable);
+}
+
+void WaylandWindow::setMainMenu(Menu* menu)
+{
+    if (!m_shell || !m_shell->toplevel() || !m_connection->mainMenus())
+        return;
+    std::shared_ptr<MainMenuMirror> mirror = m_connection->mainMenu(menu);
+    if (mirror == m_mainMenu)
+        return;
+    m_mainMenu = std::move(mirror);
+    cutefish_main_menu_manager_v1_set_main_menu(m_connection->mainMenus(), m_shell->surface(),
+                                                m_mainMenu ? m_mainMenu->proxy() : nullptr);
+}
+
+void WaylandWindow::setStatusItemIdentifier(const std::string& identifier)
+{
+    if (m_shell)
+        m_shell->setStatusItemIdentifier(identifier);
+}
+
+void WaylandWindow::setStatusItemHighlight(bool highlighted)
+{
+    if (m_shell)
+        m_shell->setStatusItemHighlight(highlighted);
+}
+
+void WaylandWindow::statusItemLimits(int maxWidth)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemLimits(maxWidth);
+}
+
+void WaylandWindow::statusItemAppearance(bool dark, uint32_t foreground)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemAppearance(dark, foreground);
+}
+
+void WaylandWindow::statusItemHighlight(bool highlighted)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemHighlight(highlighted);
+}
+
+void WaylandWindow::statusItemPlaced(const RectF& rect)
+{
+    if (m_statusItem)
+        m_statusItem->statusItemPlaced(rect);
 }
 
 void WaylandWindow::configureBounds(int width, int height)

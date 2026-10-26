@@ -3,7 +3,6 @@
 
 #include "base/session_language.h"
 
-#include <clocale>
 #include <cstdlib>
 #include <optional>
 
@@ -64,7 +63,7 @@ bool SessionLanguage::apply(const std::map<std::string, std::string>& variables)
         else
             setenv(name.c_str(), value.c_str(), 1);
     }
-    std::setlocale(LC_ALL, "");
+    Locale::setProcessLocale();
     Locale::reloadSystem();
     return true;
 }

@@ -13,9 +13,12 @@
 #include <wayland-client.h>
 
 #include <cursor-shape-v1-client-protocol.h>
+#include <cutefish-main-menu-v1-client-protocol.h>
 #include <cutefish-shell-v1-client-protocol.h>
+#include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include <cutefish-window-placement-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <text-input-unstable-v3-client-protocol.h>
@@ -32,11 +35,14 @@
 #include "base/event_loop.h"
 #include "wayland/data_device.h"
 #include "wayland/keyboard.h"
+#include "wayland/main_menu.h"
 #include "wayland/primary_selection.h"
 #include "wayland/text_input.h"
 #include "wayland/shell_surface.h"
 
 namespace cutefish::ui::wayland {
+
+static std::vector<Connection*> s_connections;
 
 static ShellSurface* shellSurfaceFor(wl_surface* surface)
 {
@@ -107,6 +113,10 @@ struct ConnectionListeners
             self->m_windowHints = bind<cutefish_window_hints_v1>(
                 registry, name, &cutefish_window_hints_v1_interface, version, 1);
             cutefish_window_hints_v1_add_listener(self->m_windowHints, &windowHints, self);
+        } else if (strcmp(interface, cutefish_window_placement_v1_interface.name) == 0) {
+            self->m_windowPlacement = bind<cutefish_window_placement_v1>(
+                registry, name, &cutefish_window_placement_v1_interface, version, 1);
+            cutefish_window_placement_v1_add_listener(self->m_windowPlacement, &windowPlacement, self);
         } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
             self->m_outputManager = bind<zxdg_output_manager_v1>(
                 registry, name, &zxdg_output_manager_v1_interface, version, 3);
@@ -117,6 +127,12 @@ struct ConnectionListeners
             wl_output_add_listener(output, &outputListener, self);
             self->m_outputs.push_back({name, output, nullptr, {}});
             self->watchOutput(self->m_outputs.back());
+        } else if (strcmp(interface, cutefish_status_item_manager_v1_interface.name) == 0) {
+            self->m_statusItems = bind<cutefish_status_item_manager_v1>(
+                registry, name, &cutefish_status_item_manager_v1_interface, version, 1);
+        } else if (strcmp(interface, cutefish_main_menu_manager_v1_interface.name) == 0) {
+            self->m_mainMenus = bind<cutefish_main_menu_manager_v1>(
+                registry, name, &cutefish_main_menu_manager_v1_interface, version, 1);
         } else if (strcmp(interface, cutefish_shell_v1_interface.name) == 0) {
             self->m_shell = bind<cutefish_shell_v1>(registry, name, &cutefish_shell_v1_interface, version, 1);
         } else if (strcmp(interface, wl_shm_interface.name) == 0) {
@@ -149,7 +165,16 @@ struct ConnectionListeners
     {
     }
 
-    static void outputMode(void*, wl_output*, uint32_t, int32_t, int32_t, int32_t) {}
+    static void outputMode(void* data, wl_output* wlOutput, uint32_t flags, int32_t width, int32_t height, int32_t)
+    {
+        auto* self = static_cast<Connection*>(data);
+        if (!(flags & WL_OUTPUT_MODE_CURRENT))
+            return;
+        for (Connection::Output& output : self->m_outputs) {
+            if (output.output == wlOutput)
+                output.pixelSize = {double(width), double(height)};
+        }
+    }
 
     // wl_output.done closes every update, xdg_output's included from its
     // version 3 on.
@@ -202,6 +227,22 @@ struct ConnectionListeners
     {
         if (ShellSurface* shell = shellSurfaceFor(surface))
             shell->delegate()->interactiveResize(active != 0);
+    }
+
+    static void workArea(void* data, cutefish_window_hints_v1*, const char* output, int32_t x, int32_t y,
+                         int32_t width, int32_t height, uint32_t primary)
+    {
+        auto* self = static_cast<Connection*>(data);
+        self->m_workAreas[output ? output : ""] = {{double(x), double(y), double(width), double(height)},
+                                                   primary != 0};
+        if (self->onOutputsChanged)
+            self->onOutputsChanged();
+    }
+
+    static void windowPosition(void*, cutefish_window_placement_v1*, wl_surface* surface, int32_t x, int32_t y)
+    {
+        if (ShellSurface* shell = shellSurfaceFor(surface))
+            shell->delegate()->screenPosition({double(x), double(y)});
     }
 
     static void ping(void*, xdg_wm_base* wmBase, uint32_t serial)
@@ -470,7 +511,8 @@ struct ConnectionListeners
                                                           xdgOutputName, xdgOutputDescription};
     static constexpr zwp_pointer_gesture_hold_v1_listener hold = {holdBegin, holdEnd};
     static constexpr xdg_wm_base_listener wmBase = {ping};
-    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize};
+    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize, workArea};
+    static constexpr cutefish_window_placement_v1_listener windowPlacement = {windowPosition};
     static constexpr wl_seat_listener seat = {capabilities, seatName};
     static constexpr wl_pointer_listener pointer = {
         pointerEnter,
@@ -528,8 +570,20 @@ std::unique_ptr<Connection> Connection::openFd(base::EventLoop& loop, int fd)
 std::vector<Connection::OutputInfo> Connection::outputs() const
 {
     std::vector<OutputInfo> list;
-    for (const Output& output : m_outputs)
-        list.push_back({output.outputName, output.position, output.logicalSize});
+    for (const Output& output : m_outputs) {
+        OutputInfo info {output.outputName, output.position, output.logicalSize,
+                         {output.position.x, output.position.y, output.logicalSize.width,
+                          output.logicalSize.height}};
+        // Either side of the output, whichever way it is turned.
+        const double logical = std::max(output.logicalSize.width, output.logicalSize.height);
+        if (logical > 0 && output.pixelSize.width > 0)
+            info.scale = std::max(output.pixelSize.width, output.pixelSize.height) / logical;
+        if (const auto area = m_workAreas.find(output.outputName); area != m_workAreas.end()) {
+            info.workArea = area->second.area;
+            info.primary = area->second.primary;
+        }
+        list.push_back(std::move(info));
+    }
     return list;
 }
 
@@ -537,6 +591,16 @@ Connection::Connection(base::EventLoop& loop, wl_display* display)
     : m_loop(loop)
     , m_display(display)
 {
+    s_connections.push_back(this);
+}
+
+Connection* Connection::withKeyboardFocus()
+{
+    for (Connection* connection : s_connections) {
+        if (connection->m_keyboard && connection->m_keyboard->focus())
+            return connection;
+    }
+    return nullptr;
 }
 
 void Connection::releaseOutput(const Output& output)
@@ -573,6 +637,7 @@ SizeF Connection::primaryOutputSize() const
 
 Connection::~Connection()
 {
+    std::erase(s_connections, this);
     if (m_watch)
         m_loop.unwatch(m_watch);
     if (m_hook)
@@ -605,8 +670,14 @@ Connection::~Connection()
         wl_seat_release(m_seat);
     if (m_windowHints)
         cutefish_window_hints_v1_destroy(m_windowHints);
+    if (m_windowPlacement)
+        cutefish_window_placement_v1_destroy(m_windowPlacement);
     if (m_surfaceBlur)
         cutefish_surface_blur_v1_destroy(m_surfaceBlur);
+    if (m_statusItems)
+        cutefish_status_item_manager_v1_destroy(m_statusItems);
+    if (m_mainMenus)
+        cutefish_main_menu_manager_v1_destroy(m_mainMenus);
     if (m_dialogManager)
         xdg_wm_dialog_v1_destroy(m_dialogManager);
     for (const auto& pending : m_activations)
@@ -670,12 +741,16 @@ bool Connection::initialize()
     // Reads without blocking: a drawing thread waiting on a queue of its own
     // may have read what woke the loop already.
     m_watch = m_loop.watch(wl_display_get_fd(m_display), EPOLLIN, [this](uint32_t) {
-        while (wl_display_prepare_read(m_display) != 0)
-            wl_display_dispatch_pending(m_display);
-        if (wl_display_read_events(m_display) < 0 || wl_display_dispatch_pending(m_display) < 0) {
-            fprintf(stderr, "cutefish-toolkit: lost the Wayland connection\n");
-            m_loop.quit(1);
+        // A failed display keeps its queued events, so preparing again
+        // would never succeed.
+        while (wl_display_prepare_read(m_display) != 0) {
+            if (wl_display_dispatch_pending(m_display) < 0) {
+                handleConnectionLost();
+                return;
+            }
         }
+        if (wl_display_read_events(m_display) < 0 || wl_display_dispatch_pending(m_display) < 0)
+            handleConnectionLost();
     });
     // Events another queue's reader left on ours would otherwise wait for
     // the next wake-up.
@@ -684,6 +759,19 @@ bool Connection::initialize()
         wl_display_flush(m_display);
     });
     return true;
+}
+
+// The descriptor of a closed connection stays readable for good: the loop
+// stops watching it, so the loss is reported once, and is asked to end.
+void Connection::handleConnectionLost()
+{
+    m_loop.unwatch(m_watch);
+    m_watch = 0;
+    m_loop.removePrepareHook(m_hook);
+    m_hook = 0;
+    m_lost = true;
+    fprintf(stderr, "cutefish-toolkit: lost the Wayland connection\n");
+    m_loop.quit(1);
 }
 
 uint32_t Connection::keyboardModifiers() const
@@ -752,6 +840,23 @@ void Connection::sync(std::function<void()> done)
     wl_callback* callback = wl_display_sync(m_display);
     wl_callback_add_listener(callback, &syncListener, new std::function<void()>(std::move(done)));
     flush();
+}
+
+std::shared_ptr<MainMenuMirror> Connection::mainMenu(Menu* menu)
+{
+    if (!m_mainMenus || !menu)
+        return nullptr;
+    std::weak_ptr<MainMenuMirror>& entry = m_mainMenuMirrors[menu];
+    std::shared_ptr<MainMenuMirror> mirror = entry.lock();
+    // A menu at the address of one destroyed since.
+    if (mirror && !mirror->isAlive())
+        mirror.reset();
+    if (!mirror) {
+        mirror = std::make_shared<MainMenuMirror>(*this, menu);
+        entry = mirror;
+    }
+    std::erase_if(m_mainMenuMirrors, [](const auto& e) { return e.second.expired(); });
+    return mirror;
 }
 
 static void tokenDone(void* data, xdg_activation_token_v1* token, const char* tokenString)

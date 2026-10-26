@@ -84,6 +84,9 @@ public:
     // Reads system() again after setlocale(); references to the previous
     // one stay valid.
     static void reloadSystem();
+    // setlocale(LC_ALL, "") with LC_NUMERIC kept at "C", as strtod() and the
+    // SVG parser expect a '.' decimal point; system() reads LC_NUMERIC itself.
+    static void setProcessLocale();
     // The system's default language for sessions, such as "en_SG" or
     // "sr_RS@latin", from LANG in /etc/default/locale or /etc/locale.conf;
     // "en_US" without one.

@@ -10,6 +10,7 @@
 #include <unicode/coll.h>
 #include <unicode/unistr.h>
 
+#include "base/application_bundle.h"
 #include "base/event_loop.h"
 #include "base/file.h"
 #include "base/paths.h"
@@ -17,6 +18,12 @@
 namespace cutefish::base {
 
 namespace fs = std::filesystem;
+
+static constexpr std::chrono::milliseconds kWatchRetry(2000);
+static constexpr std::chrono::milliseconds kWatchRetryLimit(60000);
+// How long a bundle outside ~/Applications, such as on a disk image, is
+// taken as read before it is checked again.
+static constexpr std::chrono::seconds kOtherBundleRecheck(2);
 
 static std::string normalized(std::string_view value)
 {
@@ -70,11 +77,39 @@ static bool isScript(const std::string& name)
     return false;
 }
 
-static std::vector<DesktopEntry> scan(const std::string& language)
+static bool opensBundles(const DesktopEntry& entry)
+{
+    return !entry.hidden && !entry.bundle && !entry.exec.empty()
+            && std::find(entry.mimeTypes.begin(), entry.mimeTypes.end(), bundle::kType) != entry.mimeTypes.end();
+}
+
+static std::vector<DesktopEntry> scanBundles(const std::string& directory, const DesktopEntry& handler)
+{
+    std::vector<std::string> paths;
+    std::error_code error;
+    for (auto it = fs::directory_iterator(directory, fs::directory_options::skip_permission_denied, error);
+         it != fs::directory_iterator(); it.increment(error)) {
+        if (error)
+            break;
+        if (!bundle::bundlePath(it->path().string()).empty() && it->is_directory(error))
+            paths.push_back(it->path().string());
+    }
+    std::sort(paths.begin(), paths.end());
+
+    std::vector<DesktopEntry> results;
+    for (const std::string& path : paths) {
+        if (std::optional<DesktopEntry> entry = bundle::read(path, handler))
+            results.push_back(std::move(*entry));
+    }
+    return results;
+}
+
+static std::vector<DesktopEntry> scan(const std::vector<std::string>& directories, const std::string& bundleDirectory,
+                                      const std::string& language)
 {
     std::vector<DesktopEntry> results;
     std::set<std::string> selectedIds;
-    for (const std::string& rootPath : ApplicationRegistry::desktopPaths()) {
+    for (const std::string& rootPath : directories) {
         std::error_code error;
         if (!fs::is_directory(rootPath, error))
             continue;
@@ -104,6 +139,12 @@ static std::vector<DesktopEntry> scan(const std::string& language)
             }
         }
     }
+
+    const auto handler = std::find_if(results.begin(), results.end(), opensBundles);
+    if (handler != results.end() && !bundleDirectory.empty()) {
+        std::vector<DesktopEntry> bundles = scanBundles(bundleDirectory, *handler);
+        std::move(bundles.begin(), bundles.end(), std::back_inserter(results));
+    }
     return results;
 }
 
@@ -116,19 +157,42 @@ ApplicationRegistry& ApplicationRegistry::instance(EventLoop* loop)
         loop = EventLoop::current();
     auto& registry = s_instances[loop];
     if (!registry) {
-        registry.reset(new ApplicationRegistry(*loop));
+        registry.reset(new ApplicationRegistry(*loop, desktopPaths(), bundle::applicationsDirectory()));
         loop->addDestroyHook([loop] { s_instances.erase(loop); });
     }
     return *registry;
 }
 
-ApplicationRegistry::ApplicationRegistry(EventLoop& loop)
+std::unique_ptr<ApplicationRegistry> ApplicationRegistry::create(EventLoop& loop, std::vector<std::string> directories,
+                                                                 std::string bundleDirectory)
+{
+    return std::unique_ptr<ApplicationRegistry>(
+            new ApplicationRegistry(loop, std::move(directories), std::move(bundleDirectory)));
+}
+
+ApplicationRegistry::ApplicationRegistry(EventLoop& loop, std::vector<std::string> directories,
+                                         std::string bundleDirectory)
     : m_loop(loop)
+    , m_directories(std::move(directories))
+    , m_bundleDirectory(std::move(bundleDirectory))
     , m_debounce(&loop)
+    , m_watchRetry(&loop)
+    , m_watchRetryDelay(kWatchRetry)
 {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(std::chrono::milliseconds(100));
     m_debounce.onTimeout = [this] { startScan(); };
+
+    m_watchRetry.setSingleShot(true);
+    m_watchRetry.onTimeout = [this] {
+        m_watchRetryDelay = std::min(m_watchRetryDelay * 2, kWatchRetryLimit);
+        const size_t watched = m_watches.size();
+        monitorPaths();
+        // What changed in a directory while it went unwatched is only seen
+        // by reading it again.
+        if (m_watches.size() > watched)
+            scheduleScan();
+    };
 
     if (dbus::Connection* bus = dbus::Connection::session(&loop)) {
         dbus::MatchRule rule;
@@ -170,8 +234,11 @@ void ApplicationRegistry::startScan()
     }
     m_loading = true;
     m_language = DesktopEntry::displayLanguage();
-    m_scan = runInThread([language = m_language] { return scan(language); },
-                         [this](std::vector<DesktopEntry> results) { applyScan(std::move(results)); });
+    m_scan = runInThread(
+            [directories = m_directories, bundleDirectory = m_bundleDirectory, language = m_language] {
+                return scan(directories, bundleDirectory, language);
+            },
+            [this](std::vector<DesktopEntry> results) { applyScan(std::move(results)); });
 }
 
 void ApplicationRegistry::applyScan(std::vector<DesktopEntry> results)
@@ -181,6 +248,7 @@ void ApplicationRegistry::applyScan(std::vector<DesktopEntry> results)
     m_byPath.clear();
     m_entries.clear();
     m_applications.clear();
+    m_bundleHandler = nullptr;
 
     const std::vector<std::string> desktops = DesktopEntry::currentDesktops();
     for (DesktopEntry& data : results) {
@@ -192,6 +260,15 @@ void ApplicationRegistry::applyScan(std::vector<DesktopEntry> results)
         if (entry->shouldShow(desktops))
             m_applications.push_back(entry);
     }
+    for (const auto& entry : m_entries) {
+        if (opensBundles(*entry)) {
+            m_bundleHandler = entry;
+            break;
+        }
+    }
+    // Their command is the handler's, which may have changed.
+    for (auto& [path, other] : m_otherBundles)
+        other.read.invalidate();
 
     UErrorCode status = U_ZERO_ERROR;
     std::string localeName = m_language;
@@ -219,13 +296,16 @@ void ApplicationRegistry::applyScan(std::vector<DesktopEntry> results)
 void ApplicationRegistry::monitorPaths()
 {
     m_watches.clear();
-    const auto watch = [this](const std::string& path) {
+    bool complete = true;
+    const auto watch = [this, &complete](const std::string& path) {
         FileWatch watch = FileWatch::directory(path, [this](const std::string&) { scheduleScan(); }, &m_loop);
         if (watch.isActive())
             m_watches.push_back(std::move(watch));
+        else
+            complete = false;
     };
 
-    for (const std::string& rootPath : desktopPaths()) {
+    for (const std::string& rootPath : m_directories) {
         std::error_code error;
         if (!fs::is_directory(rootPath, error)) {
             // The closest directory that exists sees the applications
@@ -246,13 +326,56 @@ void ApplicationRegistry::monitorPaths()
                 watch(it->path().string());
         }
     }
+
+    // Copies arrive in it whole, renamed into place, so its own entries are
+    // all there is to follow.
+    if (!m_bundleDirectory.empty()) {
+        std::error_code error;
+        if (fs::is_directory(m_bundleDirectory, error)) {
+            watch(m_bundleDirectory);
+        } else {
+            const fs::path directory(m_bundleDirectory);
+            const std::string name = directory.filename().string();
+            FileWatch parent = FileWatch::directory(
+                    directory.parent_path().string(),
+                    [this, name](const std::string& changed) {
+                        if (changed == name)
+                            scheduleScan();
+                    },
+                    &m_loop);
+            if (parent.isActive())
+                m_watches.push_back(std::move(parent));
+            else
+                complete = false;
+        }
+    }
+
+    if (complete) {
+        m_watchRetry.stop();
+        m_watchRetryDelay = kWatchRetry;
+    } else if (!m_watchRetry.isActive()) {
+        m_watchRetry.start(m_watchRetryDelay);
+    }
 }
 
 std::shared_ptr<const DesktopEntry> ApplicationRegistry::byId(const std::string& id) const
 {
+    if (std::shared_ptr<const DesktopEntry> entry = installedById(id))
+        return entry;
+    // A bundle's id is its path.
+    return id.starts_with('/') ? otherBundle(bundle::bundlePath(id)) : nullptr;
+}
+
+std::shared_ptr<const DesktopEntry> ApplicationRegistry::installedById(const std::string& id) const
+{
     const auto it = m_byId.find(id);
     if (it != m_byId.end())
         return it->second;
+    if (id.starts_with('/')) {
+        std::error_code error;
+        const auto found = m_byPath.find(fs::absolute(id, error).lexically_normal().string());
+        return found != m_byPath.end() ? found->second : nullptr;
+    }
     const std::string lower = normalized(id);
     for (const auto& [key, entry] : m_byId) {
         if (normalized(key) == lower)
@@ -267,7 +390,72 @@ std::shared_ptr<const DesktopEntry> ApplicationRegistry::byPath(const std::strin
         return nullptr;
     std::error_code error;
     const auto it = m_byPath.find(fs::absolute(path, error).lexically_normal().string());
-    return it == m_byPath.end() ? nullptr : it->second;
+    if (it != m_byPath.end())
+        return it->second;
+    return otherBundle(bundle::bundlePath(path));
+}
+
+std::shared_ptr<const DesktopEntry> ApplicationRegistry::readBundle(const std::string& path) const
+{
+    const std::string bundlePath = bundle::bundlePath(path);
+    if (bundlePath.empty() || !m_bundleHandler)
+        return nullptr;
+    if (const auto it = m_byPath.find(bundlePath); it != m_byPath.end())
+        return it->second;
+    std::optional<DesktopEntry> entry = bundle::read(bundlePath, *m_bundleHandler);
+    if (!entry)
+        return nullptr;
+    entry->noDisplay = true;
+    return std::make_shared<const DesktopEntry>(std::move(*entry));
+}
+
+std::shared_ptr<const DesktopEntry> ApplicationRegistry::otherBundle(const std::string& path) const
+{
+    if (path.empty() || !m_bundleHandler)
+        return nullptr;
+    if (const auto it = m_byPath.find(path); it != m_byPath.end())
+        return it->second;
+
+    // A disk image may hang, so its bundles are never read on this thread.
+    OtherBundle& other = m_otherBundles[path];
+    if (!other.job.isPending() && (!other.read.isValid() || other.read.hasExpired(kOtherBundleRecheck))) {
+        other.read.start();
+        auto* self = const_cast<ApplicationRegistry*>(this);
+        other.job = runInThread([path, handler = *m_bundleHandler] { return bundle::read(path, handler); },
+                                [self, path](std::optional<DesktopEntry> entry) {
+                                    self->otherBundleRead(path, std::move(entry));
+                                });
+    }
+    return other.entry;
+}
+
+void ApplicationRegistry::otherBundleRead(const std::string& path, std::optional<DesktopEntry> entry)
+{
+    OtherBundle& other = m_otherBundles[path];
+    // Kept out of menus: only ~/Applications holds installed applications.
+    if (entry)
+        entry->noDisplay = true;
+    const DesktopEntry* old = other.entry.get();
+    const bool same = (!old && !entry)
+            || (old && entry && old->name == entry->name && old->icon == entry->icon && old->exec == entry->exec);
+    if (entry && !other.watch.isActive()) {
+        // Made here once a read on a thread got through, so the folder answers.
+        other.watch = FileWatch::directory(
+                path,
+                [this, path](const std::string& name) {
+                    if (!name.empty() && name != "Contents")
+                        return;
+                    m_otherBundles[path].read.invalidate();
+                    otherBundle(path);
+                },
+                &m_loop);
+    } else if (!entry) {
+        other.watch.reset();
+    }
+    if (same)
+        return;
+    other.entry = entry ? std::make_shared<const DesktopEntry>(std::move(*entry)) : nullptr;
+    changed.emit();
 }
 
 std::shared_ptr<const DesktopEntry> ApplicationRegistry::resolveWindow(const std::string& appId,
@@ -275,6 +463,11 @@ std::shared_ptr<const DesktopEntry> ApplicationRegistry::resolveWindow(const std
                                                                        const std::string& executablePath,
                                                                        const std::string& executableName) const
 {
+    if (m_bundleHandler) {
+        if (const std::string bundlePath = bundle::bundleOfProgram(executablePath); !bundlePath.empty())
+            return byPath(bundlePath);
+    }
+
     const std::string wantedAppId = normalized(appId);
     const std::string wantedClass = normalized(windowClass);
     const std::string wantedExecutable = normalized(executablePath);
@@ -302,7 +495,7 @@ std::shared_ptr<const DesktopEntry> ApplicationRegistry::resolveWindow(const std
     int bestPreference = 0;
     // Menu visibility does not determine whether an entry owns windows.
     for (const auto& entry : m_entries) {
-        if (entry->hidden)
+        if (entry->hidden || entry->bundle)
             continue;
 
         const std::vector<std::string> command = entry->command();

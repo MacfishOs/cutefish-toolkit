@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -12,9 +13,12 @@
 
 #include "ui/event.h"
 
+struct cutefish_main_menu_manager_v1;
 struct cutefish_surface_blur_v1;
 struct cutefish_shell_v1;
+struct cutefish_status_item_manager_v1;
 struct cutefish_window_hints_v1;
+struct cutefish_window_placement_v1;
 struct wl_compositor;
 struct wl_subcompositor;
 struct wl_shm;
@@ -50,9 +54,14 @@ namespace cutefish::base {
 class EventLoop;
 }
 
+namespace cutefish::ui {
+class Menu;
+}
+
 namespace cutefish::ui::wayland {
 
 class DataDevice;
+class MainMenuMirror;
 class PrimarySelection;
 class Keyboard;
 class TextInput;
@@ -70,6 +79,10 @@ public:
     static std::unique_ptr<Connection> openFd(base::EventLoop& loop, int fd);
     ~Connection();
 
+    // The process's connection whose window has keyboard focus, if any. The
+    // compositor serves the selection only to the focused client.
+    static Connection* withKeyboardFocus();
+
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
 
@@ -82,12 +95,24 @@ public:
     xdg_toplevel_drag_manager_v1* toplevelDragManager() const { return m_toplevelDragManager; }
     // The keyboard's modifiers now, as KeyEvent has them.
     uint32_t keyboardModifiers() const;
+    // The compositor closed the connection, as when it exits or restarts.
+    bool isLost() const { return m_lost; }
+    base::EventLoop& loop() const { return m_loop; }
     xdg_wm_base* wmBase() const { return m_wmBase; }
     wp_viewporter* viewporter() const { return m_viewporter; }
     wp_fractional_scale_manager_v1* fractionalScaleManager() const { return m_fractionalScaleManager; }
     wp_presentation* presentation() const { return m_presentation; }
     cutefish_window_hints_v1* windowHints() const { return m_windowHints; }
+    // Null unless the compositor lets this client place its own windows.
+    cutefish_window_placement_v1* windowPlacement() const { return m_windowPlacement; }
     cutefish_surface_blur_v1* surfaceBlur() const { return m_surfaceBlur; }
+    // Null when the compositor has no status bar items.
+    cutefish_status_item_manager_v1* statusItems() const { return m_statusItems; }
+    // Null when the compositor shows no main menus.
+    cutefish_main_menu_manager_v1* mainMenus() const { return m_mainMenus; }
+    // The menu as a cutefish_menu_v1, one for all the windows showing it;
+    // null without mainMenus().
+    std::shared_ptr<MainMenuMirror> mainMenu(Menu* menu);
     xdg_wm_dialog_v1* dialogManager() const { return m_dialogManager; }
     zxdg_importer_v2* importer() const { return m_importer; }
     wl_seat* seat() const { return m_seat; }
@@ -139,6 +164,12 @@ public:
         std::string name;
         PointF position;
         SizeF logicalSize;
+        // In the same coordinates as the position; the whole output until
+        // the compositor tells.
+        RectF workArea;
+        // Device pixels per logical pixel.
+        double scale = 1;
+        bool primary = false;
     };
     std::vector<OutputInfo> outputs() const;
     // After an output came, went or changed.
@@ -156,6 +187,7 @@ private:
 
     Connection(base::EventLoop& loop, wl_display* display);
     bool initialize();
+    void handleConnectionLost();
 
     base::EventLoop& m_loop;
     wl_display* m_display = nullptr;
@@ -170,7 +202,11 @@ private:
     wp_presentation* m_presentation = nullptr;
     wp_cursor_shape_manager_v1* m_cursorShapeManager = nullptr;
     cutefish_window_hints_v1* m_windowHints = nullptr;
+    cutefish_window_placement_v1* m_windowPlacement = nullptr;
     cutefish_surface_blur_v1* m_surfaceBlur = nullptr;
+    cutefish_status_item_manager_v1* m_statusItems = nullptr;
+    cutefish_main_menu_manager_v1* m_mainMenus = nullptr;
+    std::map<Menu*, std::weak_ptr<MainMenuMirror>> m_mainMenuMirrors;
     cutefish_shell_v1* m_shell = nullptr;
     xdg_wm_dialog_v1* m_dialogManager = nullptr;
     xdg_activation_v1* m_activation = nullptr;
@@ -202,8 +238,17 @@ private:
         SizeF logicalSize;
         PointF position;
         std::string outputName;
+        // The current mode's.
+        SizeF pixelSize;
     };
     std::vector<Output> m_outputs;
+    struct WorkArea
+    {
+        RectF area;
+        bool primary = false;
+    };
+    // By output name, as cutefish_window_hints_v1.work_area tells.
+    std::map<std::string, WorkArea> m_workAreas;
     void watchOutput(Output& output);
     static void releaseOutput(const Output& output);
     wl_seat* m_seat = nullptr;
@@ -229,6 +274,7 @@ private:
     ScrollEvent m_scroll;
     bool m_scrollPending = false;
     int m_watch = 0;
+    bool m_lost = false;
     int m_hook = 0;
 };
 

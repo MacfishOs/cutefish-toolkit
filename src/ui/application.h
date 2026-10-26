@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/signal.h"
+#include "ui/geometry.h"
 
 namespace cutefish::base {
 class EventLoop;
@@ -24,6 +25,7 @@ class Connection;
 namespace cutefish::ui {
 
 class AppearanceWatcher;
+class Menu;
 class TextContext;
 class Window;
 
@@ -76,6 +78,9 @@ public:
 
     base::EventLoop& loop() const { return *m_loop; }
     bool hasConnection() const { return m_connection != nullptr; }
+    // The compositor closed the connection, as when it exits or restarts;
+    // the loop has been asked to quit with 1.
+    bool isConnectionLost() const;
     // Wayland only.
     wayland::Connection& connection() const { return *m_connection; }
     gpu::EglContext& gpu() const { return *m_gpu; }
@@ -86,6 +91,34 @@ public:
     // The loop's shared session bus connection, when there is one.
     base::dbus::Connection* sessionBus() const { return m_sessionBus; }
     const std::vector<Window*>& windows() const { return m_windows; }
+
+    // The main menu the status bar shows while one of the application's
+    // windows is active, unless the window has its own: its rows are the
+    // bar's entries, and the submenu with MenuRole::Application opens from
+    // the application's name. Not owned; it stays while it is the main menu.
+    void setMainMenu(Menu* menu);
+    Menu* mainMenu() const { return m_mainMenu; }
+
+    struct Screen
+    {
+        // The wl_output name.
+        std::string name;
+        // In the compositor's global logical coordinates, the ones
+        // Window::setScreenPosition takes.
+        RectF geometry;
+        // What windows are laid out in: the screen less the desktop's
+        // panels and dock; the whole screen until the compositor tells.
+        RectF workArea;
+        // Device pixels per logical pixel.
+        double scale = 1;
+        // The one with the status bar.
+        bool primary = false;
+    };
+    // The outputs, known from the start, before any window; none off
+    // Wayland.
+    std::vector<Screen> screens() const;
+    // A screen came, went or changed.
+    base::Signal<> screensChanged;
 
     int run();
     void quit(int exitCode = 0);
@@ -129,6 +162,7 @@ private:
     std::unique_ptr<base::SessionLanguage> m_languageWatch;
     base::Subscription m_languageChanged;
     std::vector<Window*> m_windows;
+    Menu* m_mainMenu = nullptr;
     bool m_activeUpdatePending = false;
 };
 

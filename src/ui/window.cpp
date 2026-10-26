@@ -144,6 +144,7 @@ Window::Window()
 {
     m_platform = PlatformWindow::create(this, nullptr, {}, false);
     m_platform->setAppId(Application::instance()->applicationId());
+    m_platform->setMainMenu(Application::instance()->mainMenu());
     Application::instance()->m_windows.push_back(this);
 }
 
@@ -152,6 +153,16 @@ Window::Window(TrustedConnection& connection)
     , m_self(std::make_shared<Window*>(this))
 {
     m_platform = std::make_unique<wayland::WaylandWindow>(this, *connection.m_connection, *connection.m_gpu);
+    m_platform->setAppId(Application::instance()->applicationId());
+    m_platform->setMainMenu(Application::instance()->mainMenu());
+    Application::instance()->m_windows.push_back(this);
+}
+
+Window::Window(StatusItemClient* statusItem)
+    : m_frameDamage(std::make_unique<FrameDamage>())
+    , m_self(std::make_shared<Window*>(this))
+{
+    m_platform = PlatformWindow::createStatusItem(this, statusItem);
     m_platform->setAppId(Application::instance()->applicationId());
     Application::instance()->m_windows.push_back(this);
 }
@@ -221,6 +232,19 @@ Window::~Window()
 void Window::setTitle(const std::string& title)
 {
     m_platform->setTitle(title);
+}
+
+void Window::setMainMenu(Menu* menu)
+{
+    m_mainMenu = menu;
+    m_platform->setMainMenu(mainMenu());
+}
+
+Menu* Window::mainMenu() const
+{
+    if (isPopup())
+        return nullptr;
+    return m_mainMenu ? m_mainMenu : Application::instance()->mainMenu();
 }
 
 void Window::setMinimumSize(SizeF size)
@@ -453,6 +477,45 @@ void Window::setAlwaysOnTop(bool onTop)
 void Window::setRestoreId(const std::string& id)
 {
     m_platform->setRestoreId(id);
+}
+
+void Window::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    m_platform->setPlacementAnchor(anchor);
+}
+
+void Window::setBodyShape(const Path& path)
+{
+    m_platform->setBodyShape(path);
+}
+
+void Window::setCastsShadow(bool castsShadow)
+{
+    m_platform->setCastsShadow(castsShadow);
+}
+
+void Window::setOpacity(double opacity)
+{
+    m_platform->setOpacity(opacity);
+}
+
+bool Window::setScreenPosition(PointF position)
+{
+    return m_platform->setScreenPosition(position);
+}
+
+void Window::handleScreenPosition(PointF position)
+{
+    if (m_screenPosition == position)
+        return;
+    m_screenPosition = position;
+    if (onScreenPositionChanged)
+        onScreenPositionChanged();
+}
+
+void Window::setUserResizable(bool resizable)
+{
+    m_platform->setUserResizable(resizable);
 }
 
 void Window::setHeaderDarkMode(std::optional<bool> dark)

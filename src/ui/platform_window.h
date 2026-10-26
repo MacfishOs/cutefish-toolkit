@@ -20,7 +20,22 @@ class SkCanvas;
 
 namespace cutefish::ui {
 
+class Menu;
 class Window;
+
+// What the bar says to a status item's window.
+class StatusItemClient
+{
+public:
+    virtual ~StatusItemClient() = default;
+    // The widest the item may be, ahead of the configure with the height.
+    virtual void statusItemLimits(int maxWidth) = 0;
+    // `foreground` is 0xAARRGGBB with straight alpha.
+    virtual void statusItemAppearance(bool dark, uint32_t foreground) = 0;
+    virtual void statusItemHighlight(bool highlighted) = 0;
+    // Global logical; empty while the item has no place.
+    virtual void statusItemPlaced(const RectF& rect) = 0;
+};
 
 // The window-system side of a Window: its surface, its buffers and the events
 // that come back. Window does layout, painting, pacing and input routing.
@@ -36,6 +51,11 @@ public:
     // For the application's platform; a popup when it has a parent.
     static std::unique_ptr<PlatformWindow> create(Window* window, PlatformWindow* parent,
                                                   const PopupPlacement& placement, bool grab);
+    // A status item in the compositor's bar; headless, one that stands alone
+    // at the size it asks for, and elsewhere one never shown.
+    static std::unique_ptr<PlatformWindow> createStatusItem(Window* window, StatusItemClient* client);
+    // Whether the compositor shows status items applications draw.
+    static bool statusItemsSupported();
 
     explicit PlatformWindow(Window* window)
         : m_window(window)
@@ -93,6 +113,20 @@ public:
     virtual void setSkipTaskbar(bool) {}
     virtual void setAlwaysOnTop(bool) {}
     virtual void setRestoreId(const std::string&) {}
+    virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
+    virtual void setBodyShape(const Path&) {}
+    virtual void setCastsShadow(bool) {}
+    virtual void setOpacity(double) {}
+    // A toplevel's top left in the compositor's global logical coordinates;
+    // false where the compositor places windows itself.
+    virtual bool setScreenPosition(PointF) { return false; }
+    virtual void setUserResizable(bool) {}
+    // Toplevels only: the main menu the status bar shows while the window is
+    // active, null for none.
+    virtual void setMainMenu(Menu*) {}
+    // A status item's identifier and highlight request.
+    virtual void setStatusItemIdentifier(const std::string&) {}
+    virtual void setStatusItemHighlight(bool) {}
     virtual void setForeignParent(const std::string&, bool) {}
     // On the trusted connection: cutefish_shell_v1's desktop role.
     virtual bool setDesktopRole(const std::string&) { return false; }
@@ -141,6 +175,7 @@ protected:
     void notifyDragLeave();
     uint32_t notifyDrop();
     void notifyWorkArea(const RectF& area);
+    void notifyScreenPosition(PointF position);
 
     Window* m_window;
 };

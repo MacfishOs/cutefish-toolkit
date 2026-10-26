@@ -1,6 +1,7 @@
 # The part of the toolkit that needs neither a display nor Skia, for
 # services and daemons as well as applications.
 set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
+    application_bundle.h
     application_registry.h
     auto_reset.h
     byte_stream.h
@@ -25,6 +26,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
     mime_database.h
     paths.h
     process.h
+    property_list.h
     region.h
     session_language.h
     settings.h
@@ -39,6 +41,7 @@ set(CUTEFISH_TOOLKIT_BASE_PUBLIC_HEADERS
 )
 
 add_library(cutefish-toolkit-base SHARED
+    application_bundle.cpp
     application_registry.cpp
     collator.cpp
     command_line.cpp
@@ -59,6 +62,7 @@ add_library(cutefish-toolkit-base SHARED
     mime_detection.cpp
     paths.cpp
     process.cpp
+    property_list.cpp
     region.cpp
     session_language.cpp
     settings.cpp

@@ -8,8 +8,10 @@
 #include <wayland-client.h>
 
 #include <cutefish-shell-v1-client-protocol.h>
+#include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
 #include <cutefish-window-hints-v1-client-protocol.h>
+#include <cutefish-window-placement-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <viewporter-client-protocol.h>
@@ -148,7 +150,42 @@ struct ShellSurfaceListeners
         static_cast<ShellSurface*>(data)->m_delegate->workArea({double(x), double(y), double(width), double(height)});
     }
 
+    static void statusItemConfigure(void* data, cutefish_status_item_v1*, uint32_t serial, int32_t height,
+                                    int32_t maxWidth)
+    {
+        auto* self = static_cast<ShellSurface*>(data);
+        self->m_configureSerial = serial;
+        self->m_configurePending = true;
+        self->m_delegate->statusItemLimits(maxWidth);
+        // An item never has the keyboard; its popups take it through their grab.
+        self->m_delegate->configure(0, height, WindowStates {});
+    }
+
+    static void statusItemAppearance(void* data, cutefish_status_item_v1*, uint32_t appearance, uint32_t foreground)
+    {
+        static_cast<ShellSurface*>(data)->m_delegate->statusItemAppearance(
+                appearance == CUTEFISH_STATUS_ITEM_V1_APPEARANCE_DARK, foreground);
+    }
+
+    static void statusItemHighlight(void* data, cutefish_status_item_v1*, uint32_t highlighted)
+    {
+        static_cast<ShellSurface*>(data)->m_delegate->statusItemHighlight(highlighted != 0);
+    }
+
+    static void statusItemPlaced(void* data, cutefish_status_item_v1*, int32_t x, int32_t y, int32_t width,
+                                 int32_t height)
+    {
+        static_cast<ShellSurface*>(data)->m_delegate->statusItemPlaced(
+                {double(x), double(y), double(width), double(height)});
+    }
+
     static constexpr cutefish_shell_surface_v1_listener shellSurface = {workArea};
+    static constexpr cutefish_status_item_v1_listener statusItem = {
+        statusItemConfigure,
+        statusItemAppearance,
+        statusItemHighlight,
+        statusItemPlaced,
+    };
     static constexpr wl_surface_listener surface = {surfaceEnter, surfaceLeave};
     static constexpr xdg_surface_listener xdgSurface = {surfaceConfigure};
     static constexpr xdg_toplevel_listener xdgToplevel = {
@@ -171,11 +208,37 @@ struct ShellSurfaceListeners
     };
 };
 
+// Path commands and wl_fixed points, as cutefish_surface_blur_v1 and
+// cutefish_window_hints_v1 take them; a close is implied by the fill.
+static std::vector<int32_t> pathValues(const Path& path)
+{
+    std::vector<int32_t> values;
+    for (const Path::Element& element : path.elements()) {
+        switch (element.type) {
+        case Path::Element::Type::MoveTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO);
+            break;
+        case Path::Element::Type::LineTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO);
+            break;
+        case Path::Element::Type::CurveTo:
+            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO);
+            break;
+        case Path::Element::Type::CurveToData:
+            break;
+        }
+        values.push_back(wl_fixed_from_double(element.x));
+        values.push_back(wl_fixed_from_double(element.y));
+    }
+    return values;
+}
+
 ShellSurface::ShellSurface(Connection& connection, Delegate* delegate)
     : m_connection(connection)
     , m_delegate(delegate)
 {
     createSurface();
+    createXdgSurface();
     m_xdgToplevel = xdg_surface_get_toplevel(m_xdgSurface);
     xdg_toplevel_add_listener(m_xdgToplevel, &ShellSurfaceListeners::xdgToplevel, this);
 
@@ -215,6 +278,15 @@ static xdg_positioner* createPositioner(Connection& connection, const PopupPlace
     return positioner;
 }
 
+ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, StatusItemRole)
+    : m_connection(connection)
+    , m_delegate(delegate)
+{
+    createSurface();
+    m_statusItem = cutefish_status_item_manager_v1_get_status_item(connection.statusItems(), m_surface);
+    cutefish_status_item_v1_add_listener(m_statusItem, &ShellSurfaceListeners::statusItem, this);
+}
+
 ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurface* parent,
                            const PopupPlacement& placement, int width, int height, bool grab)
     : m_connection(connection)
@@ -222,11 +294,17 @@ ShellSurface::ShellSurface(Connection& connection, Delegate* delegate, ShellSurf
     , m_parent(parent)
 {
     createSurface();
+    createXdgSurface();
 
     xdg_positioner* positioner = createPositioner(connection, placement, width, height);
-    m_xdgPopup = xdg_surface_get_popup(m_xdgSurface, parent->m_xdgSurface, positioner);
+    // A status item's popup has no xdg parent; the item adopts it, before the
+    // grab and the first commit.
+    m_xdgPopup = xdg_surface_get_popup(m_xdgSurface, parent->m_statusItem ? nullptr : parent->m_xdgSurface,
+                                       positioner);
     xdg_positioner_destroy(positioner);
     xdg_popup_add_listener(m_xdgPopup, &ShellSurfaceListeners::xdgPopup, this);
+    if (parent->m_statusItem)
+        cutefish_status_item_v1_get_popup(parent->m_statusItem, m_xdgPopup);
     if (grab)
         xdg_popup_grab(m_xdgPopup, connection.seat(), connection.inputSerial());
 }
@@ -255,7 +333,10 @@ void ShellSurface::createSurface()
         m_connection.fractionalScaleManager(), m_surface);
     wp_fractional_scale_v1_add_listener(m_fractionalScale, &ShellSurfaceListeners::fractionalScale,
                                         this);
+}
 
+void ShellSurface::createXdgSurface()
+{
     m_xdgSurface = xdg_wm_base_get_xdg_surface(m_connection.wmBase(), m_surface);
     xdg_surface_add_listener(m_xdgSurface, &ShellSurfaceListeners::xdgSurface, this);
 }
@@ -279,7 +360,10 @@ ShellSurface::~ShellSurface()
         xdg_popup_destroy(m_xdgPopup);
     if (m_xdgToplevel)
         xdg_toplevel_destroy(m_xdgToplevel);
-    xdg_surface_destroy(m_xdgSurface);
+    if (m_statusItem)
+        cutefish_status_item_v1_destroy(m_statusItem);
+    if (m_xdgSurface)
+        xdg_surface_destroy(m_xdgSurface);
     wp_fractional_scale_v1_destroy(m_fractionalScale);
     wp_viewport_destroy(m_viewport);
     wl_surface_destroy(m_surface);
@@ -444,27 +528,7 @@ void ShellSurface::setBlurShape(const Path& path)
         cutefish_surface_blur_v1_unset_shape(blur, m_surface);
         return;
     }
-    // Commands and wl_fixed points; a close is implied by the fill.
-    std::vector<int32_t> values;
-    const std::vector<Path::Element> elements = path.elements();
-    for (size_t i = 0; i < elements.size(); ++i) {
-        const Path::Element& element = elements[i];
-        switch (element.type) {
-        case Path::Element::Type::MoveTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_MOVE_TO);
-            break;
-        case Path::Element::Type::LineTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_LINE_TO);
-            break;
-        case Path::Element::Type::CurveTo:
-            values.push_back(CUTEFISH_SURFACE_BLUR_V1_PATH_COMMAND_CUBIC_TO);
-            break;
-        case Path::Element::Type::CurveToData:
-            break;
-        }
-        values.push_back(wl_fixed_from_double(element.x));
-        values.push_back(wl_fixed_from_double(element.y));
-    }
+    const std::vector<int32_t> values = pathValues(path);
     // The protocol's limit; a longer outline would be a protocol error.
     if (values.size() > 4096) {
         cutefish_surface_blur_v1_unset_shape(blur, m_surface);
@@ -478,6 +542,55 @@ void ShellSurface::setBlurShape(const Path& path)
         cutefish_surface_blur_v1_set_shape(blur, m_surface, &array);
     }
     wl_array_release(&array);
+}
+
+void ShellSurface::setServerResize(bool enabled)
+{
+    if (m_xdgToplevel && m_connection.windowHints())
+        cutefish_window_hints_v1_set_server_resize(m_connection.windowHints(), m_surface, enabled ? 1 : 0);
+}
+
+void ShellSurface::setBodyShape(const Path& path)
+{
+    cutefish_window_hints_v1* hints = m_connection.windowHints();
+    if (!hints)
+        return;
+    const std::vector<int32_t> values = pathValues(path);
+    if (path.isEmpty() || values.size() > 4096) {
+        cutefish_window_hints_v1_unset_body_shape(hints, m_surface);
+        return;
+    }
+    wl_array array;
+    wl_array_init(&array);
+    void* data = wl_array_add(&array, values.size() * sizeof(int32_t));
+    if (data) {
+        std::copy(values.begin(), values.end(), static_cast<int32_t*>(data));
+        cutefish_window_hints_v1_set_body_shape(hints, m_surface, &array);
+    }
+    wl_array_release(&array);
+}
+
+void ShellSurface::setCastsShadow(bool castsShadow)
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_set_shadow(m_connection.windowHints(), m_surface, castsShadow ? 1 : 0);
+}
+
+void ShellSurface::setOpacity(double opacity)
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_set_opacity(m_connection.windowHints(), m_surface,
+                                             wl_fixed_from_double(std::clamp(opacity, 0.0, 1.0)));
+}
+
+bool ShellSurface::setScreenPosition(PointF position)
+{
+    cutefish_window_placement_v1* placement = m_connection.windowPlacement();
+    if (!m_xdgToplevel || !placement)
+        return false;
+    cutefish_window_placement_v1_set_position(placement, m_surface, int(std::lround(position.x)),
+                                              int(std::lround(position.y)));
+    return true;
 }
 
 void ShellSurface::setGlass(const std::optional<GlassMaterial>& material)
@@ -533,6 +646,37 @@ void ShellSurface::setRestoreId(const std::string& id)
         cutefish_window_hints_v1_set_restore_id(m_connection.windowHints(), m_surface, id.c_str());
 }
 
+void ShellSurface::setPlacementAnchor(const std::optional<PlacementAnchor>& anchor)
+{
+    if (!m_xdgToplevel || !m_connection.windowHints())
+        return;
+    if (!anchor) {
+        cutefish_window_hints_v1_unset_placement_anchor(m_connection.windowHints(), m_surface);
+        return;
+    }
+    const RectF& rect = anchor->rect;
+    const int left = int(std::lround(rect.x));
+    const int top = int(std::lround(rect.y));
+    // The enums follow cutefish_window_hints_v1's placement edges.
+    cutefish_window_hints_v1_set_placement_anchor(
+            m_connection.windowHints(), m_surface, left, top,
+            std::max(0, int(std::lround(rect.x + rect.width)) - left),
+            std::max(0, int(std::lround(rect.y + rect.height)) - top), uint32_t(anchor->anchor),
+            uint32_t(anchor->gravity));
+}
+
+void ShellSurface::setStatusItemIdentifier(const std::string& identifier)
+{
+    if (m_statusItem)
+        cutefish_status_item_v1_set_identifier(m_statusItem, identifier.c_str());
+}
+
+void ShellSurface::setStatusItemHighlight(bool highlighted)
+{
+    if (m_statusItem)
+        cutefish_status_item_v1_set_highlight(m_statusItem, highlighted ? 1 : 0);
+}
+
 void ShellSurface::map()
 {
     wl_surface_commit(m_surface);
@@ -550,7 +694,10 @@ void ShellSurface::reposition(const PopupPlacement& placement, int width, int he
 void ShellSurface::prepareCommit(int width, int height, bool opaque)
 {
     if (m_configurePending) {
-        xdg_surface_ack_configure(m_xdgSurface, m_configureSerial);
+        if (m_statusItem)
+            cutefish_status_item_v1_ack_configure(m_statusItem, m_configureSerial);
+        else
+            xdg_surface_ack_configure(m_xdgSurface, m_configureSerial);
         m_configurePending = false;
     }
 

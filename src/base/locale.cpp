@@ -666,6 +666,12 @@ void Locale::reloadSystem()
     s_system.store(readSystem(), std::memory_order_release);
 }
 
+void Locale::setProcessLocale()
+{
+    setlocale(LC_ALL, "");
+    setlocale(LC_NUMERIC, "C");
+}
+
 std::string Locale::systemLanguage()
 {
     for (const char* path : {"/etc/default/locale", "/etc/locale.conf"}) {

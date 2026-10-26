@@ -19,6 +19,7 @@
 #include <wayland-client.h>
 #include <wayland-server.h>
 
+#include "cutefish-window-hints-v1-server-protocol.h"
 #include "fractional-scale-v1-server-protocol.h"
 #include "viewporter-server-protocol.h"
 #include "xdg-output-unstable-v1-server-protocol.h"
@@ -52,6 +53,7 @@ public:
         global(&wp_fractional_scale_manager_v1_interface, 1);
         wl_global_create(m_display, &wl_output_interface, 3, this, bindOutput);
         wl_global_create(m_display, &zxdg_output_manager_v1_interface, 3, this, bindOutputManager);
+        wl_global_create(m_display, &cutefish_window_hints_v1_interface, 1, this, bindWindowHints);
         wl_client_create(m_display, fds[0]);
         m_thread = std::thread([this] {
             wl_event_loop* loop = wl_display_get_event_loop(m_display);
@@ -84,6 +86,15 @@ public:
                 wl_output_send_scale(output, 1);
                 wl_output_send_done(output);
             }
+        });
+    }
+
+    // cutefish_window_hints_v1.work_area for the output.
+    void sendWorkArea(int x, int y, int width, int height, bool primary)
+    {
+        post([this, x, y, width, height, primary] {
+            for (wl_resource* hints : m_windowHints)
+                cutefish_window_hints_v1_send_work_area(hints, "eDP-1", x, y, width, height, primary ? 1 : 0);
         });
     }
 
@@ -137,6 +148,14 @@ private:
         return 0;
     }
 
+    static void bindWindowHints(wl_client* client, void* data, uint32_t version, uint32_t id)
+    {
+        auto* self = static_cast<FakeCompositor*>(data);
+        wl_resource* hints = wl_resource_create(client, &cutefish_window_hints_v1_interface, int(version), id);
+        wl_resource_set_dispatcher(hints, ignore, nullptr, nullptr, nullptr);
+        self->m_windowHints.push_back(hints);
+    }
+
     static void bindOutputManager(wl_client* client, void* data, uint32_t version, uint32_t id)
     {
         wl_resource* manager = wl_resource_create(client, &zxdg_output_manager_v1_interface, int(version), id);
@@ -177,6 +196,7 @@ private:
     std::vector<std::function<void()>> m_tasks;
     std::vector<wl_resource*> m_outputs;
     std::vector<wl_resource*> m_xdgOutputs;
+    std::vector<wl_resource*> m_windowHints;
     int m_width = 1080;
     int m_height = 720;
 };
@@ -208,6 +228,34 @@ TEST(OutputTest, ChangesAreReportedOnOutputDone)
         wl_display_roundtrip(connection->display());
     EXPECT_EQ(changes, 1);
     EXPECT_EQ(reported, (SizeF{2160, 1440}));
+}
+
+// An output's scale comes from its mode over its logical size, and its work
+// area and primary flag from the window hints, the whole output until then.
+TEST(OutputTest, ScaleAndWorkAreaReachTheOutputs)
+{
+    FakeCompositor compositor;
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+    wl_display_roundtrip(connection->display());
+    std::vector<wayland::Connection::OutputInfo> outputs = connection->outputs();
+    ASSERT_EQ(outputs.size(), 1u);
+    EXPECT_DOUBLE_EQ(outputs[0].scale, 2);
+    EXPECT_EQ(outputs[0].workArea, (RectF{0, 0, 1080, 720}));
+    EXPECT_FALSE(outputs[0].primary);
+
+    int changes = 0;
+    connection->onOutputsChanged = [&] {
+        ++changes;
+    };
+    compositor.sendWorkArea(0, 28, 1080, 692, true);
+    for (int i = 0; i < 100 && changes == 0; ++i)
+        wl_display_roundtrip(connection->display());
+    EXPECT_EQ(changes, 1);
+    outputs = connection->outputs();
+    EXPECT_EQ(outputs[0].workArea, (RectF{0, 28, 1080, 692}));
+    EXPECT_TRUE(outputs[0].primary);
 }
 
 // The adopted descriptor is close-on-exec: a program the trusted client

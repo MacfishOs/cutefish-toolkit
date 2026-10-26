@@ -19,11 +19,38 @@ class View;
 class Window;
 struct PopupPlacement;
 
+namespace wayland {
+class MainMenuMirror;
+}
+
+// What a submenu of a main menu is for: the status bar opens the
+// application's own menu from the application's name.
+enum class MenuRole
+{
+    None,
+    Application,
+    Windows,
+    Help,
+    Services,
+};
+
+// A row's check mark; mixed for a mix of on and off.
+enum class MenuItemState
+{
+    Off,
+    On,
+    Mixed,
+};
+
 // A desktop menu, or a combo box's drop-down: a popup of rows
 // over the compositor's blur, driven by the pointer or the keyboard.
 // Choosing a row, Escape or a press elsewhere closes it. Submenus open in
 // popups of their own beside their rows; only the root menu grabs, and keys
 // go to the innermost open menu.
+//
+// A menu is also a main menu, the one the status bar shows for the
+// application (Application::setMainMenu): its rows are the bar's entries and
+// their submenus open from them, onAboutToShow before each opens.
 class Menu
 {
 public:
@@ -46,6 +73,12 @@ public:
     void setItemVisible(size_t index, bool visible);
     // A checked row gives every row a leading column, so the labels line up.
     void setItemChecked(size_t index, bool checked);
+    // Mixed shows as unchecked in the menu's own popup.
+    void setItemState(size_t index, MenuItemState state);
+    // The key that chooses the row, a character or a key name (Return, F5),
+    // with ui::KeyModifier flags; shown as the row's shortcut. The program
+    // handles the key itself. An empty key for none.
+    void setItemKeyEquivalent(size_t index, std::string key, uint32_t modifiers);
     // An icon from the icon theme before the text.
     void setItemIcon(size_t index, std::string icon);
     // One of the toolkit's glyphs before the text, tinted like it.
@@ -54,6 +87,9 @@ public:
     void setItemFontFamily(size_t index, std::string family);
     // The row at most this wide, its text elided.
     void setItemMaximumWidth(size_t index, double width);
+    // What the menu is for as a submenu of a main menu; none by default.
+    void setRole(MenuRole role);
+    MenuRole role() const { return m_role; }
     // As for a drop-down, never narrower than what it hangs off.
     void setMinimumWidth(double width) { m_minimumWidth = width; }
     // A drop-down rather than a desktop menu: at most half the screen tall
@@ -110,11 +146,14 @@ private:
     class Surface;
     friend class Rows;
     friend class Surface;
+    friend class wayland::MainMenuMirror;
 
     struct Item
     {
         std::string text;
         std::string shortcut;
+        std::string keyEquivalent;
+        uint32_t keyModifiers = 0;
         std::string icon;
         std::string glyph;
         std::string fontFamily;
@@ -125,7 +164,11 @@ private:
         bool enabled = true;
         bool visible = true;
         bool checked = false;
+        bool mixed = false;
     };
+
+    // Tells a main menu showing this menu that its rows changed.
+    void changed();
 
     void open(Window* parent, const PopupPlacement& placement, bool fromKeyboard, bool grab = true);
     // The bubble as it is drawn at a size, its arrow at the position.
@@ -165,6 +208,9 @@ private:
     PointF m_arrowTarget;
     bool m_continuousCorners = false;
     std::optional<RectF> m_availableGeometry;
+    MenuRole m_role = MenuRole::None;
+    // Set while a main menu shows this menu.
+    std::function<void()> m_changed;
 };
 
 } // namespace cutefish::ui

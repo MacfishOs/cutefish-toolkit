@@ -83,6 +83,9 @@ public:
 
     int run();
     void quit(int exitCode = 0);
+    // For a loop run inside another one, which run() does not return from:
+    // quit() calls the handler, so the outer loop can end the program.
+    void setQuitHandler(std::function<void(int exitCode)> handler);
 
     // For a loop run inside another one, such as a host toolkit's loop: the
     // descriptor turns readable whenever there is work, timers and posted
@@ -128,6 +131,7 @@ private:
     int m_nextId = 1;
     bool m_running = false;
     int m_exitCode = 0;
+    std::function<void(int)> m_quitHandler;
     // Shared so a callback can unwatch itself while it runs.
     std::unordered_map<int, std::shared_ptr<Watch>> m_watches;
     std::unordered_map<int, std::shared_ptr<TimerEntry>> m_timers;

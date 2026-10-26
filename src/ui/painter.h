@@ -11,6 +11,7 @@
 #include "ui/path.h"
 
 class SkCanvas;
+class SkRegion;
 class SkImage;
 class SkPath;
 
@@ -63,6 +64,15 @@ public:
     double opacity() const { return m_opacity; }
     // Intersects the clip with the rect, edges on device pixels.
     void clip(const RectF& rect);
+    // The clip's bounds in logical coordinates from the offset: where
+    // anything drawn can still show.
+    RectF clipBounds() const;
+    // The separate parts of the clip a frame repaints, in the same
+    // coordinates; the clip's bounds when it is one part.
+    std::vector<RectF> clipRects() const;
+    // The device pixels this frame repaints, untransformed, which
+    // clipRects() splits the clip by.
+    void setDamage(const SkRegion* damage) { m_damage = damage; }
     // Intersects the clip with a rounded rect, antialiased, for content cut
     // to a card's or a thumbnail's corners; the rect snapped as a shape.
     void clipRoundedRect(const RectF& rect, double radius, Corners corners = Corners::Circular);
@@ -139,6 +149,7 @@ private:
     PointF m_offset;
     double m_opacity = 1;
     std::vector<State> m_saved;
+    const SkRegion* m_damage = nullptr;
 };
 
 } // namespace cutefish::ui

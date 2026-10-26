@@ -5,8 +5,10 @@
 
 #include "ui/header_button.h"
 #include "ui/layout.h"
+#include "ui/painter.h"
 #include "ui/path.h"
 #include "ui/scroll_bar.h"
+#include "ui/status_item.h"
 #include "ui/subsurface.h"
 #include "ui/test_input.h"
 #include "ui/theme.h"
@@ -58,6 +60,8 @@ TEST(WindowHintsTest, GlassAndShapeAreAcceptedEverywhere)
     window.setBackgroundGlass(std::nullopt);
     window.setResizeAroundCenter(true);
     window.setRestoreId("main");
+    window.setPlacementAnchor(PlacementAnchor{{700, 12, 0, 0}, PopupAnchor::Bottom, PopupAnchor::Bottom});
+    window.setPlacementAnchor(std::nullopt);
     EXPECT_GT(window.grab().width(), 0);
 }
 
@@ -155,4 +159,58 @@ TEST(WindowHintsTest, HeaderButtonGlyphColour)
     close->setGlyphColor(std::nullopt);
     const Color tint = window.grab().pixel(16, 16);
     EXPECT_LT(std::abs(int(tint.r) - int(tint.b)), 0x20);
+}
+
+namespace {
+
+// Fills itself in a colour, where the item's artwork would be.
+class Swatch final : public View
+{
+public:
+    Color color {0, 0, 0, 255};
+
+protected:
+    void paint(Painter& painter) override { painter.fillRect(localRect(), color); }
+};
+
+} // namespace
+
+// Headless, an item is a window of the size it asks for in a light bar; the
+// highlight it asks for is the highlight it has.
+TEST(StatusItemTest, HeadlessItemsDrawAtTheirSizeAndHighlightWhenAsked)
+{
+    EXPECT_FALSE(StatusItem::isSupported());
+    StatusItem item;
+    auto swatch = std::make_unique<Swatch>();
+    Swatch* content = swatch.get();
+    item.setContentView(std::move(swatch));
+    item.setWidth(57.4);
+    EXPECT_DOUBLE_EQ(57, item.width());
+    EXPECT_GT(item.height(), 0);
+    int highlights = 0;
+    item.onHighlightChanged = [&] { ++highlights; };
+    item.show();
+    EXPECT_FALSE(item.darkAppearance());
+    EXPECT_EQ((Color{0, 0, 0, 217}), item.foregroundColor());
+    EXPECT_EQ(0, item.screenRect().width);
+
+    content->color = item.foregroundColor();
+    const Image image = item.window().grab();
+    EXPECT_EQ(57, image.width());
+    EXPECT_EQ(int(item.height()), image.height());
+    EXPECT_EQ(217, image.pixel(28, image.height() / 2).a);
+
+    item.setHighlighted(true);
+    EXPECT_TRUE(item.isHighlighted());
+    EXPECT_EQ(1, highlights);
+    item.setHighlighted(false);
+    EXPECT_FALSE(item.isHighlighted());
+
+    // A popup hangs centred under the whole item and never flips above it.
+    const PopupPlacement placement = item.popupPlacement(4);
+    EXPECT_EQ((RectF{0, 0, 57, item.height()}), placement.anchorRect);
+    EXPECT_EQ(PopupAnchor::Bottom, placement.anchor);
+    EXPECT_EQ(PopupAnchor::Bottom, placement.gravity);
+    EXPECT_EQ((PointF{0, 4}), placement.offset);
+    EXPECT_FALSE(placement.flipY);
 }

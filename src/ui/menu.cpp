@@ -809,6 +809,7 @@ size_t Menu::addItem(std::string text, std::function<void()> action, std::string
     item.shortcut = std::move(shortcut);
     item.action = std::move(action);
     m_items.push_back(std::move(item));
+    changed();
     return m_items.size() - 1;
 }
 
@@ -817,6 +818,7 @@ void Menu::addSeparator()
     Item item;
     item.separator = true;
     m_items.push_back(std::move(item));
+    changed();
 }
 
 Menu* Menu::addSubmenu(std::string text)
@@ -826,6 +828,7 @@ Menu* Menu::addSubmenu(std::string text)
     item.submenu = std::make_unique<Menu>();
     item.submenu->m_parentMenu = this;
     m_items.push_back(std::move(item));
+    changed();
     return m_items.back().submenu.get();
 }
 
@@ -839,31 +842,98 @@ void Menu::setItemText(size_t index, std::string text)
     if (index < m_items.size()) {
         m_items[index].text = std::move(text);
         itemsChanged();
+        changed();
     }
 }
 
 void Menu::setItemEnabled(size_t index, bool enabled)
 {
-    if (index < m_items.size())
+    if (index < m_items.size() && m_items[index].enabled != enabled) {
         m_items[index].enabled = enabled;
+        changed();
+    }
 }
 
 void Menu::setItemVisible(size_t index, bool visible)
 {
-    if (index < m_items.size())
+    if (index < m_items.size() && m_items[index].visible != visible) {
         m_items[index].visible = visible;
+        changed();
+    }
 }
 
 void Menu::setItemChecked(size_t index, bool checked)
 {
-    if (index < m_items.size())
-        m_items[index].checked = checked;
+    setItemState(index, checked ? MenuItemState::On : MenuItemState::Off);
+}
+
+void Menu::setItemState(size_t index, MenuItemState state)
+{
+    if (index >= m_items.size())
+        return;
+    Item& item = m_items[index];
+    const bool checked = state == MenuItemState::On;
+    const bool mixed = state == MenuItemState::Mixed;
+    if (item.checked == checked && item.mixed == mixed)
+        return;
+    item.checked = checked;
+    item.mixed = mixed;
+    changed();
+}
+
+static std::string keyEquivalentText(const std::string& key, uint32_t modifiers)
+{
+    if (key.empty())
+        return {};
+    std::string text;
+    if (modifiers & ControlModifier)
+        text += "Ctrl+";
+    if (modifiers & AltModifier)
+        text += "Alt+";
+    if (modifiers & ShiftModifier)
+        text += "Shift+";
+    if (modifiers & SuperModifier)
+        text += "Super+";
+    if (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z')
+        text += char(key[0] - 'a' + 'A');
+    else
+        text += key;
+    return text;
+}
+
+void Menu::setItemKeyEquivalent(size_t index, std::string key, uint32_t modifiers)
+{
+    if (index >= m_items.size())
+        return;
+    Item& item = m_items[index];
+    if (item.keyEquivalent == key && item.keyModifiers == modifiers)
+        return;
+    item.shortcut = keyEquivalentText(key, modifiers);
+    item.keyEquivalent = std::move(key);
+    item.keyModifiers = modifiers;
+    changed();
 }
 
 void Menu::setItemIcon(size_t index, std::string icon)
 {
-    if (index < m_items.size())
+    if (index < m_items.size() && m_items[index].icon != icon) {
         m_items[index].icon = std::move(icon);
+        changed();
+    }
+}
+
+void Menu::setRole(MenuRole role)
+{
+    if (role == m_role)
+        return;
+    m_role = role;
+    changed();
+}
+
+void Menu::changed()
+{
+    if (m_changed)
+        m_changed();
 }
 
 void Menu::setItemGlyph(size_t index, std::string glyph)
@@ -970,6 +1040,7 @@ void Menu::clear()
 {
     closeSubmenu();
     m_items.clear();
+    changed();
 }
 
 void Menu::popup(Window* window, PointF position)

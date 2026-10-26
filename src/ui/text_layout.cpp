@@ -31,6 +31,7 @@
 #include "ui/line_breaks.h"
 #include "ui/painter.h"
 #include "ui/text_context.h"
+#include "ui/text_lines.h"
 #include "ui/theme.h"
 
 namespace cutefish::ui {
@@ -939,7 +940,7 @@ void TextLayout::draw(Painter& painter, PointF origin)
         paint.setAntiAlias(true);
         paint.setColor(SkColorSetARGB(uint8_t(std::lround(batch.color.a * opacity)), batch.color.r, batch.color.g,
                                       batch.color.b));
-        canvas->drawTextBlob(batch.blob, 0, 0, paint);
+        drawTextBlobForTarget(canvas, batch.blob, 0, 0, paint);
     }
     canvas->restore();
 }

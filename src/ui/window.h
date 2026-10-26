@@ -26,8 +26,11 @@ class DropOffer;
 struct DragSource;
 struct FrameDamage;
 class FrameClient;
+class Menu;
 class Path;
 class PlatformWindow;
+class StatusItem;
+class StatusItemClient;
 class TestInput;
 class TrustedConnection;
 class View;
@@ -59,6 +62,17 @@ struct PopupPlacement
     bool flipY = true;
     bool slide = true;
     bool resize = false;
+};
+
+// Where a toplevel opens: next to `rect`, in the compositor's global
+// logical coordinates, placed as a popup with this anchor and gravity is.
+struct PlacementAnchor
+{
+    RectF rect;
+    PopupAnchor anchor = PopupAnchor::Bottom;
+    PopupAnchor gravity = PopupAnchor::Bottom;
+
+    bool operator==(const PlacementAnchor&) const = default;
 };
 
 // What the compositor says about a toplevel.
@@ -181,8 +195,47 @@ public:
     // The compositor reopens the window where the last window of this
     // application with the same id was closed. Before show().
     void setRestoreId(const std::string& id);
+    // Opens next to a point or rectangle on the screen that came from the
+    // compositor, such as a status notifier item's activation point, each
+    // time it is shown; the compositor keeps it inside the work area. The
+    // user moves it freely afterwards. Before show(). Unset by default.
+    void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor);
+    // The outline a window draws its body in, inside a transparent window,
+    // such as a bubble with an arrow: the compositor then neither clips it to
+    // a rounded rectangle nor outlines it, and casts its shadow from this
+    // outline. Window coordinates; an empty path is the window's rectangle,
+    // the default. At once.
+    void setBodyShape(const Path& path);
+    // Whether the compositor casts the window's shadow (the default); off
+    // for a window that draws its own shadow, or wants none, in a
+    // transparent surface. At once.
+    void setCastsShadow(bool castsShadow);
+    // The whole window, frame and shadow included, at this opacity from 0
+    // to 1 (the default 1). At 0 it is unseen but still takes the pointer.
+    // At once.
+    void setOpacity(double opacity);
+    // Puts the window's top left at a point in the compositor's global
+    // logical coordinates (Application::screens()): before show() it opens
+    // there, afterwards it moves there; the compositor keeps it reachable.
+    // False where the compositor places windows itself, as it does for
+    // ordinary clients.
+    bool setScreenPosition(PointF position);
+    // Where the window's top left is on the screen, once it is shown, where
+    // the compositor tells; unset elsewhere.
+    const std::optional<PointF>& screenPosition() const { return m_screenPosition; }
+    // After screenPosition() changed, whoever moved the window.
+    std::function<void()> onScreenPositionChanged;
+    // Whether the user resizes the window by its edges (the default); off,
+    // the compositor offers no resize edges or cursors there.
+    void setUserResizable(bool resizable);
     // Kept out of the dock and the window switcher, as tool windows are.
     void setSkipTaskbar(bool skip);
+    // The main menu the status bar shows while this window is active, in
+    // place of the application's (Application::setMainMenu); null goes back
+    // to the application's. Not owned; it stays while the window shows it.
+    void setMainMenu(Menu* menu);
+    // The window's own main menu, else the application's; null for a popup.
+    Menu* mainMenu() const;
     // Above ordinary windows.
     void setAlwaysOnTop(bool onTop);
     // The header's colour mode for the window buttons, whatever the theme,
@@ -315,7 +368,11 @@ private:
     friend class FrameClient;
     friend class HeaderBackdrop;
     friend class PlatformWindow;
+    friend class StatusItem;
     friend class Subsurface;
+
+    // A status item's window, made by StatusItem.
+    explicit Window(StatusItemClient* statusItem);
     friend class TestInput;
     friend class View;
 
@@ -330,6 +387,7 @@ private:
     void handleConfigure(int width, int height, const WindowStates& states);
     void handleConfigureBounds(int width, int height);
     void handleWorkArea(const RectF& area);
+    void handleScreenPosition(PointF position);
     // A shown modal dialog of this window blocks its pointer.
     bool blockedByModal() const;
     void handleInteractiveResize(bool active);
@@ -409,6 +467,12 @@ private:
     // the window above it.
     void addDamage(const View* view, SkIRect rect, bool painted);
     void damageNow(const View* view);
+    void damageRect(const View* view, const RectF& rect);
+    // The rect, in the layered view's coordinates, in its texture.
+    void damageLayer(View* view, const RectF& rect);
+    // Queues a move of the layered view's texture content and moves its
+    // damage along; false when the texture cannot be moved.
+    bool scrollLayer(View* view, const RectF& rect, double dx, double dy);
     void collectDamage(View* view, PointF origin);
     // Theme and scale changes: the window and every texture.
     void damageAll();
@@ -436,7 +500,10 @@ private:
     void saveMaximized();
 
     std::unique_ptr<PlatformWindow> m_platform;
+    // The window's own main menu; null for the application's.
+    Menu* m_mainMenu = nullptr;
     SizeF m_screenSize;
+    std::optional<PointF> m_screenPosition;
     std::unique_ptr<FrameDamage> m_frameDamage;
     Window* m_parent = nullptr;
     // Popups keep no keyboard focus of their own: the root window's keys go

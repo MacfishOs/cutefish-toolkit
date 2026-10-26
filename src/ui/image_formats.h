@@ -34,8 +34,10 @@ RawImage decodeXbm(std::string_view data);
 // signature: `path` ends in ".tga", or the file ends with the TGA 2 footer.
 bool isTga(std::string_view data, std::string_view path);
 RawImage decodeTga(std::string_view data);
-// ICNS icon files: the largest PNG inside, for Skia to decode.
+// ICNS icon files: the PNG inside for Skia to decode, the smallest at least
+// `pixels` wide, else the largest; the largest for 0. Empty when there is
+// none. A view into data.
 bool isIcns(std::string_view data);
-std::optional<std::string> largestIcnsPng(std::string_view data);
+std::string_view icnsPng(std::string_view data, int pixels = 0);
 
 } // namespace cutefish::ui::image_formats

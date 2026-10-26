@@ -21,6 +21,7 @@
 #include "ui/label.h"
 #include "ui/menu.h"
 #include "ui/painter.h"
+#include "ui/scroll_view.h"
 #include "ui/text_context.h"
 #include "ui/text_lines.h"
 #include "ui/theme.h"
@@ -33,6 +34,7 @@ namespace cutefish::ui {
 
 // A coarse timer of half the cursor flash time fires up to 5% early.
 static constexpr auto kBlinkInterval = std::chrono::milliseconds(475);
+static constexpr auto kAutoScrollInterval = std::chrono::milliseconds(30);
 // Wide enough that nothing wraps.
 static constexpr double kUnboundedWidth = 1e6;
 // The background: a field width when the area has no text.
@@ -95,6 +97,9 @@ struct TextArea::Private
     bool caretVisible = true;
     int blinkTimer = 0;
     bool selecting = false;
+    // Where the selecting pointer last was, in window coordinates.
+    PointF selectingPointer;
+    int autoScrollTimer = 0;
     int granularity = 1;
     std::pair<size_t, size_t> anchorRange;
     std::shared_ptr<TextArea*> self;
@@ -276,6 +281,7 @@ TextArea::~TextArea()
 {
     if (d->blinkTimer)
         Application::instance()->loop().stopTimer(d->blinkTimer);
+    stopAutoScroll();
 }
 
 const std::string& TextArea::text() const
@@ -496,6 +502,15 @@ static double currentScale(const View* view)
     return view->textLayoutMode().scale;
 }
 
+static ScrollView* enclosingScrollView(const View* view)
+{
+    for (View* ancestor = view->parent(); ancestor; ancestor = ancestor->parent()) {
+        if (auto* scrollView = dynamic_cast<ScrollView*>(ancestor); scrollView && scrollView->contentView())
+            return scrollView;
+    }
+    return nullptr;
+}
+
 SizeF TextArea::sizeHint() const
 {
     // T.TextArea: the content, the background's width and the placeholder,
@@ -688,7 +703,22 @@ void TextArea::pointerMove(const PointerEvent& event)
 {
     if (!d->selecting)
         return;
-    const size_t offset = offsetAt(event.position);
+    extendSelection(event.position);
+    d->selectingPointer = mapToWindow(event.position);
+    const RectF visible = visibleRect();
+    const bool outside = event.position.x < visible.x || event.position.x > visible.right()
+                         || event.position.y < visible.y || event.position.y > visible.bottom();
+    if (!outside)
+        stopAutoScroll();
+    else if (!d->autoScrollTimer)
+        d->autoScrollTimer = Application::instance()->loop().startTimer(kAutoScrollInterval, true, [this] {
+            autoScroll();
+        });
+}
+
+void TextArea::extendSelection(PointF position)
+{
+    const size_t offset = offsetAt(position);
     if (d->granularity == 1) {
         d->edit.setCursor(offset, true);
     } else {
@@ -701,10 +731,59 @@ void TextArea::pointerMove(const PointerEvent& event)
     moved();
 }
 
+// The part of the area its scroll view shows, or else its own bounds.
+RectF TextArea::visibleRect() const
+{
+    if (ScrollView* scrollView = enclosingScrollView(this)) {
+        const PointF topLeft = mapFromWindow(scrollView->mapToWindow({0, 0}));
+        return {topLeft.x, topLeft.y, scrollView->geometry().width, scrollView->geometry().height};
+    }
+    return localRect();
+}
+
+// Dragging a selection past an edge scrolls, faster the further out.
+void TextArea::autoScroll()
+{
+    const PointF position = mapFromWindow(d->selectingPointer);
+    const RectF visible = visibleRect();
+    double dx = 0;
+    double dy = 0;
+    if (position.x < visible.x)
+        dx = position.x - visible.x;
+    else if (position.x > visible.right())
+        dx = position.x - visible.right();
+    if (position.y < visible.y)
+        dy = position.y - visible.y;
+    else if (position.y > visible.bottom())
+        dy = position.y - visible.bottom();
+    if (!d->selecting || (dx == 0 && dy == 0)) {
+        stopAutoScroll();
+        return;
+    }
+    if (ScrollView* scrollView = enclosingScrollView(this)) {
+        const PointF scrolled = scrollView->scrollPosition();
+        scrollView->setScrollPosition({scrolled.x + dx / 2, scrolled.y + dy / 2});
+    } else {
+        const double height = std::max(0.0, geometry().height - d->padding.vertical());
+        d->scrollY = std::clamp(d->scrollY + dy / 2, 0.0, std::max(0.0, d->textHeight() - height));
+    }
+    // The content moved under a still pointer.
+    extendSelection(mapFromWindow(d->selectingPointer));
+}
+
+void TextArea::stopAutoScroll()
+{
+    if (!d->autoScrollTimer)
+        return;
+    Application::instance()->loop().stopTimer(d->autoScrollTimer);
+    d->autoScrollTimer = 0;
+}
+
 void TextArea::pointerRelease(const PointerEvent& event)
 {
     const bool selected = d->selecting;
     d->selecting = false;
+    stopAutoScroll();
     // A mouse selection goes to the primary selection, and a
     // middle click pastes it where it lands.
     if (event.button == MouseButton::Left && selected) {
@@ -731,6 +810,8 @@ void TextArea::focusIn(FocusReason)
 
 void TextArea::focusOut()
 {
+    d->selecting = false;
+    stopAutoScroll();
     if (d->blinkTimer) {
         Application::instance()->loop().stopTimer(d->blinkTimer);
         d->blinkTimer = 0;

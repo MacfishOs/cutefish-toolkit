@@ -11,6 +11,7 @@
 
 #include "base/dbus.h"
 #include "base/event_loop.h"
+#include "base/locale.h"
 #include "base/session_language.h"
 #include "gpu/egl_context.h"
 #include "ui/appearance.h"
@@ -30,7 +31,7 @@ Application::Application(int argc, char** argv, Platform platform)
     , m_platform(platform)
 {
     s_instance = this;
-    std::setlocale(LC_ALL, "");
+    base::Locale::setProcessLocale();
     i18n::bindDomain(kTranslationDomain);
     std::error_code error;
     m_applicationId = std::filesystem::read_symlink("/proc/self/exe", error).filename();
@@ -68,6 +69,9 @@ Application::Application(int argc, char** argv, Platform platform)
         if (!m_connection)
             std::exit(1);
         m_gpu = gpu::EglContext::createInBackground(m_connection->display());
+        m_connection->onOutputsChanged = [this] {
+            screensChanged();
+        };
         if (m_appearance)
             m_appearance->advance();
     }
@@ -127,6 +131,15 @@ int Application::run()
     return m_loop->run();
 }
 
+void Application::setMainMenu(Menu* menu)
+{
+    m_mainMenu = menu;
+    for (Window* window : m_windows) {
+        if (!window->m_mainMenu && !window->isPopup())
+            window->m_platform->setMainMenu(menu);
+    }
+}
+
 void Application::setApplicationId(std::string applicationId)
 {
     m_applicationId = std::move(applicationId);
@@ -178,6 +191,25 @@ void Application::scheduleActiveUpdate()
         m_connection->sync(update);
     else
         update();
+}
+
+std::vector<Application::Screen> Application::screens() const
+{
+    std::vector<Screen> screens;
+    if (!m_connection)
+        return screens;
+    for (const wayland::Connection::OutputInfo& output : m_connection->outputs()) {
+        screens.push_back({output.name,
+                           {output.position.x, output.position.y, output.logicalSize.width,
+                            output.logicalSize.height},
+                           output.workArea, output.scale, output.primary});
+    }
+    return screens;
+}
+
+bool Application::isConnectionLost() const
+{
+    return m_connection && m_connection->isLost();
 }
 
 void Application::quit(int exitCode)
