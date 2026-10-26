@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "base/application_bundle.h"
 #include "base/application_registry.h"
 #include "base/desktop_entry.h"
 #include "base/file.h"
@@ -210,11 +211,13 @@ static bool opensFiles(const DesktopEntry& entry)
     return !entry.hidden && !entry.terminal;
 }
 
+// A bundle that is no longer installed opens nothing, even where a list
+// still names it.
 static std::shared_ptr<const DesktopEntry> entryForDesktopId(std::string desktopId)
 {
     if (desktopId.ends_with(".desktop"))
         desktopId.resize(desktopId.size() - 8);
-    std::shared_ptr<const DesktopEntry> entry = ApplicationRegistry::instance().byId(desktopId);
+    std::shared_ptr<const DesktopEntry> entry = ApplicationRegistry::instance().installedById(desktopId);
     return entry && opensFiles(*entry) ? entry : nullptr;
 }
 
@@ -237,6 +240,11 @@ static bool makeParentDirectory(const std::string& path)
     std::error_code error;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
     return !error;
+}
+
+std::string listedId(const DesktopEntry& entry)
+{
+    return entry.bundle ? entry.path : entry.id + ".desktop";
 }
 
 std::string userListPath()
@@ -374,10 +382,15 @@ std::vector<std::string> applications(const std::string& mimeType, const std::ve
 
         std::vector<std::shared_ptr<const DesktopEntry>> matches;
         for (const std::shared_ptr<const DesktopEntry>& entry : entries) {
-            if (!opensFiles(*entry) || contains(removed, std::filesystem::path(entry->path).filename().string()))
+            const std::string listed = entry->bundle ? entry->path
+                                                     : std::filesystem::path(entry->path).filename().string();
+            if (!opensFiles(*entry) || contains(removed, listed))
                 continue;
-            if (std::any_of(entry->mimeTypes.begin(), entry->mimeTypes.end(),
-                            [&names](const std::string& name) { return contains(names, name); }))
+            // A bundle opens the descendants of its types too, so it matches
+            // the first generation or none.
+            if (entry->bundle ? bundle::opensType(*entry, type)
+                              : std::any_of(entry->mimeTypes.begin(), entry->mimeTypes.end(),
+                                            [&names](const std::string& name) { return contains(names, name); }))
                 matches.push_back(entry);
         }
 

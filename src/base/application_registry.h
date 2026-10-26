@@ -43,6 +43,8 @@ public:
 
     // An exact id first, then one that differs only in case.
     std::shared_ptr<const DesktopEntry> byId(const std::string& id) const;
+    // As byId, but never a bundle outside ~/Applications.
+    std::shared_ptr<const DesktopEntry> installedById(const std::string& id) const;
     // A bundle outside ~/Applications is read on a thread: null until then,
     // and checked again when asked for later.
     std::shared_ptr<const DesktopEntry> byPath(const std::string& path) const;

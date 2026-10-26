@@ -91,6 +91,9 @@ TEST(ApplicationBundleTest, ReadsABundleAsAnEntry)
     EXPECT_EQ(entry->name, "Editor 100%");
     EXPECT_EQ(entry->icon, path + "/Contents/Resources/AppIcon.icns");
     EXPECT_EQ(entry->command(), (std::vector<std::string>{"runner", "--open", path}));
+    EXPECT_EQ(entry->commandForArguments({"/a/b.txt", "/a/c d.txt"}),
+              (std::vector<std::string>{"runner", "--open", path, "/a/b.txt", "/a/c d.txt"}));
+    EXPECT_TRUE(entry->mimeTypes.empty());
     EXPECT_TRUE(entry->shouldShow());
 
     // A missing icon is none, and a bundle without a list is no application.
@@ -98,6 +101,87 @@ TEST(ApplicationBundleTest, ReadsABundleAsAnEntry)
     EXPECT_EQ(bundle::read(path, *handler)->icon, "");
     fs::remove(path + "/Contents/Info.plist");
     EXPECT_FALSE(bundle::read(path, *handler));
+}
+
+TEST(ApplicationBundleTest, OpensItsDocumentTypes)
+{
+    file::TemporaryDirectory directory(fs::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(directory.isValid());
+    const std::string path = directory.path() + "/Viewer.app";
+    ASSERT_TRUE(makeBundle(path, "Viewer"));
+    ASSERT_TRUE(file::writeAtomically(path + "/Contents/Info.plist", R"(<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Viewer</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>public.image</string>
+				<string>public.data</string>
+				<string>org.example.sketch</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array><string>csv</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array><string>pdf</string><string>*</string></array>
+			<key>CFBundleTypeMIMETypes</key>
+			<string>application/x-pdf</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array><string>public.audio</string></array>
+		</dict>
+		<dict>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>CFBundleTypeExtensions</key>
+			<array><string>zip</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.example.sketch</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string><string>public.text</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>md</string><string>zip</string></array>
+				<key>public.mime-type</key>
+				<string>application/x-no-such-type</string>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
+)"));
+
+    const auto handler = DesktopEntry::parse("runner", "/x/runner.desktop", kHandler, "en_US");
+    ASSERT_TRUE(handler);
+    const auto entry = bundle::read(path, *handler);
+    ASSERT_TRUE(entry);
+    // shared-mime-info has these on every system the desktop runs on.
+    EXPECT_EQ(entry->mimeTypes,
+              (std::vector<std::string>{"text/plain", "image/*", "text/markdown", "text/csv", "application/pdf"}));
+
+    EXPECT_TRUE(bundle::opensType(*entry, "text/plain"));
+    EXPECT_TRUE(bundle::opensType(*entry, "text/x-csrc"));
+    EXPECT_TRUE(bundle::opensType(*entry, "image/png"));
+    EXPECT_TRUE(bundle::opensType(*entry, "application/x-pdf"));
+    EXPECT_FALSE(bundle::opensType(*entry, "audio/mpeg"));
+    EXPECT_FALSE(bundle::opensType(*entry, "application/zip"));
+    EXPECT_FALSE(bundle::opensType(*entry, "application/octet-stream"));
+    EXPECT_FALSE(bundle::opensType(*entry, "imagex/png"));
 }
 
 TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
@@ -121,6 +205,7 @@ TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
     const auto entry = registry->applications().front();
     EXPECT_EQ(entry->path, installed);
     EXPECT_EQ(registry->byId(installed), entry);
+    EXPECT_EQ(registry->installedById(installed), entry);
     EXPECT_EQ(registry->byPath(installed + "/"), entry);
 
     // Its program is the bundle's, whatever the window calls itself, and no
@@ -133,6 +218,14 @@ TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
     ASSERT_TRUE(waitForChange(loop, *registry, 5s));
     ASSERT_EQ(registry->applications().size(), 1u);
     EXPECT_EQ(registry->applications().front()->path, bundles.path() + "/Renamed.app");
+    EXPECT_FALSE(registry->installedById(installed));
+
+    // Taken out of ~/Applications, as into the Trash, it is installed no more.
+    fs::rename(bundles.path() + "/Renamed.app", applications.path() + "/Renamed.app");
+    ASSERT_TRUE(waitForChange(loop, *registry, 5s));
+    EXPECT_TRUE(registry->applications().empty());
+    EXPECT_FALSE(registry->installedById(bundles.path() + "/Renamed.app"));
+    EXPECT_FALSE(registry->installedById(applications.path() + "/Renamed.app"));
 }
 
 TEST(ApplicationBundleTest, ReadsOtherBundlesOnAThread)
@@ -158,6 +251,7 @@ TEST(ApplicationBundleTest, ReadsOtherBundlesOnAThread)
     EXPECT_EQ(entry->path, other);
     EXPECT_TRUE(entry->noDisplay);
     EXPECT_EQ(registry->byId(other), entry);
+    EXPECT_FALSE(registry->installedById(other));
     EXPECT_TRUE(registry->applications().empty());
 
     // Read now when asked to; gone once it is, which the registry sees.

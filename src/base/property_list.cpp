@@ -10,6 +10,9 @@ namespace cutefish::base::plist {
 
 using Strings = std::map<std::string, std::string>;
 
+static constexpr int kMaximumDepth = 64;
+static constexpr size_t kMaximumValues = 1 << 20;
+
 static void appendUtf8(std::string* out, uint32_t code)
 {
     if (code < 0x80) {
@@ -200,42 +203,81 @@ private:
     size_t m_position = 0;
 };
 
-static std::optional<Strings> readXml(std::string_view data)
+// The element the tag opened, which the reader is just past.
+static std::optional<Value> readXmlValue(XmlReader& reader, const XmlReader::Tag& opened, int depth, size_t* budget)
+{
+    if (depth > kMaximumDepth || *budget == 0)
+        return std::nullopt;
+    --*budget;
+
+    Value value;
+    if (opened.name == "string") {
+        std::optional<std::string> text = opened.empty ? std::string() : reader.text("string");
+        if (!text)
+            return std::nullopt;
+        value.type = Value::Type::String;
+        value.text = std::move(*text);
+        return value;
+    }
+
+    if (opened.name == "array") {
+        value.type = Value::Type::Array;
+        if (opened.empty)
+            return value;
+        while (true) {
+            const std::optional<XmlReader::Tag> tag = reader.nextTag();
+            if (!tag)
+                return std::nullopt;
+            if (tag->closing)
+                return tag->name == "array" ? std::optional<Value>(std::move(value)) : std::nullopt;
+            std::optional<Value> element = readXmlValue(reader, *tag, depth + 1, budget);
+            if (!element)
+                return std::nullopt;
+            value.array.push_back(std::move(*element));
+        }
+    }
+
+    if (opened.name == "dict") {
+        value.type = Value::Type::Dictionary;
+        if (opened.empty)
+            return value;
+        while (true) {
+            const std::optional<XmlReader::Tag> key = reader.nextTag();
+            if (!key)
+                return std::nullopt;
+            if (key->closing && key->name == "dict")
+                return value;
+            if (key->closing || key->name != "key")
+                return std::nullopt;
+            std::optional<std::string> name = key->empty ? std::string() : reader.text("key");
+            if (!name)
+                return std::nullopt;
+
+            const std::optional<XmlReader::Tag> tag = reader.nextTag();
+            if (!tag || tag->closing)
+                return std::nullopt;
+            std::optional<Value> member = readXmlValue(reader, *tag, depth + 1, budget);
+            if (!member)
+                return std::nullopt;
+            value.members.emplace_back(std::move(*name), std::move(*member));
+        }
+    }
+
+    if (!reader.skipElement(opened))
+        return std::nullopt;
+    return value;
+}
+
+static std::optional<Value> readXml(std::string_view data)
 {
     XmlReader reader(data);
     std::optional<XmlReader::Tag> root = reader.nextTag();
     if (root && root->name == "plist" && !root->closing && !root->empty)
         root = reader.nextTag();
-    if (!root || root->name != "dict" || root->closing)
+    if (!root || root->closing)
         return std::nullopt;
-
-    Strings result;
-    if (root->empty)
-        return result;
-    while (true) {
-        const std::optional<XmlReader::Tag> key = reader.nextTag();
-        if (!key)
-            return std::nullopt;
-        if (key->closing && key->name == "dict")
-            return result;
-        if (key->closing || key->name != "key")
-            return std::nullopt;
-        std::optional<std::string> name = key->empty ? std::string() : reader.text("key");
-        if (!name)
-            return std::nullopt;
-
-        const std::optional<XmlReader::Tag> value = reader.nextTag();
-        if (!value || value->closing)
-            return std::nullopt;
-        if (value->name == "string") {
-            std::optional<std::string> text = value->empty ? std::string() : reader.text("string");
-            if (!text)
-                return std::nullopt;
-            result.emplace(std::move(*name), std::move(*text));
-        } else if (!reader.skipElement(*value)) {
-            return std::nullopt;
-        }
-    }
+    size_t budget = kMaximumValues;
+    return readXmlValue(reader, *root, 0, &budget);
 }
 
 class BinaryReader
@@ -246,7 +288,7 @@ public:
     {
     }
 
-    std::optional<Strings> read()
+    std::optional<Value> read()
     {
         if (m_data.size() < 8 + 32)
             return std::nullopt;
@@ -260,28 +302,65 @@ public:
             || m_offsetTable >= trailer || m_objectCount > (trailer - m_offsetTable) / m_offsetSize)
             return std::nullopt;
 
-        const std::optional<size_t> root = objectOffset(top);
-        if (!root || (uint8_t(m_data[*root]) >> 4) != 0xd)
+        std::optional<Value> root = value(top, 0);
+        if (!root || m_exhausted)
             return std::nullopt;
+        return root;
+    }
+
+private:
+    // Nothing for an object that cannot be read.
+    std::optional<Value> value(uint64_t object, int depth)
+    {
+        if (depth > kMaximumDepth || m_budget == 0) {
+            m_exhausted = true;
+            return std::nullopt;
+        }
+        --m_budget;
+
+        const std::optional<size_t> offset = objectOffset(object);
+        if (!offset)
+            return std::nullopt;
+        const uint8_t type = uint8_t(m_data[*offset]) >> 4;
+        Value result;
+        if (type == 0x5 || type == 0x6) {
+            std::optional<std::string> text = string(object);
+            if (!text)
+                return std::nullopt;
+            result.type = Value::Type::String;
+            result.text = std::move(*text);
+            return result;
+        }
+        if (type != 0xa && type != 0xd)
+            return result;
+
         size_t start = 0;
-        const std::optional<uint64_t> count = length(*root, &start);
-        if (!count || *count > (m_data.size() - start) / (2 * m_referenceSize))
+        const std::optional<uint64_t> count = length(*offset, &start);
+        const uint64_t references = type == 0xd ? 2 : 1;
+        if (!count || *count > (m_offsetTable - start) / (references * m_referenceSize))
             return std::nullopt;
 
-        Strings result;
-        for (uint64_t i = 0; i < *count; ++i) {
-            const uint64_t keyReference = number(start + i * m_referenceSize, m_referenceSize);
-            const uint64_t valueReference = number(start + (*count + i) * m_referenceSize, m_referenceSize);
-            std::optional<std::string> key = string(keyReference);
+        if (type == 0xa) {
+            result.type = Value::Type::Array;
+            for (uint64_t i = 0; i < *count && !m_exhausted; ++i) {
+                std::optional<Value> element = value(number(start + i * m_referenceSize, m_referenceSize), depth + 1);
+                result.array.push_back(element ? std::move(*element) : Value());
+            }
+            return result;
+        }
+
+        result.type = Value::Type::Dictionary;
+        for (uint64_t i = 0; i < *count && !m_exhausted; ++i) {
+            std::optional<std::string> key = string(number(start + i * m_referenceSize, m_referenceSize));
             if (!key)
                 return std::nullopt;
-            if (std::optional<std::string> value = string(valueReference))
-                result.emplace(std::move(*key), std::move(*value));
+            const uint64_t reference = number(start + (*count + i) * m_referenceSize, m_referenceSize);
+            std::optional<Value> member = value(reference, depth + 1);
+            result.members.emplace_back(std::move(*key), member ? std::move(*member) : Value());
         }
         return result;
     }
 
-private:
     uint64_t number(size_t position, size_t size) const
     {
         uint64_t value = 0;
@@ -368,13 +447,55 @@ private:
     size_t m_referenceSize = 0;
     uint64_t m_objectCount = 0;
     uint64_t m_offsetTable = 0;
+    size_t m_budget = kMaximumValues;
+    bool m_exhausted = false;
 };
 
-std::optional<Strings> rootStrings(std::string_view data)
+const Value* Value::find(std::string_view key) const
+{
+    for (const auto& [name, member] : members) {
+        if (name == key)
+            return &member;
+    }
+    return nullptr;
+}
+
+std::string Value::string(std::string_view key) const
+{
+    const Value* member = find(key);
+    return member && member->type == Type::String ? member->text : std::string();
+}
+
+std::vector<std::string> Value::strings() const
+{
+    if (type == Type::String)
+        return {text};
+    std::vector<std::string> result;
+    for (const Value& element : array) {
+        if (element.type == Type::String)
+            result.push_back(element.text);
+    }
+    return result;
+}
+
+std::optional<Value> read(std::string_view data)
 {
     if (data.starts_with("bplist00"))
         return BinaryReader(data).read();
     return readXml(data);
+}
+
+std::optional<Strings> rootStrings(std::string_view data)
+{
+    const std::optional<Value> root = read(data);
+    if (!root || root->type != Value::Type::Dictionary)
+        return std::nullopt;
+    Strings result;
+    for (const auto& [key, member] : root->members) {
+        if (member.type == Value::Type::String)
+            result.emplace(key, member.text);
+    }
+    return result;
 }
 
 } // namespace cutefish::base::plist

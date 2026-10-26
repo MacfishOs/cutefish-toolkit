@@ -360,12 +360,22 @@ void ApplicationRegistry::monitorPaths()
 
 std::shared_ptr<const DesktopEntry> ApplicationRegistry::byId(const std::string& id) const
 {
+    if (std::shared_ptr<const DesktopEntry> entry = installedById(id))
+        return entry;
+    // A bundle's id is its path.
+    return id.starts_with('/') ? otherBundle(bundle::bundlePath(id)) : nullptr;
+}
+
+std::shared_ptr<const DesktopEntry> ApplicationRegistry::installedById(const std::string& id) const
+{
     const auto it = m_byId.find(id);
     if (it != m_byId.end())
         return it->second;
-    // A bundle's id is its path.
-    if (id.starts_with('/'))
-        return byPath(id);
+    if (id.starts_with('/')) {
+        std::error_code error;
+        const auto found = m_byPath.find(fs::absolute(id, error).lexically_normal().string());
+        return found != m_byPath.end() ? found->second : nullptr;
+    }
     const std::string lower = normalized(id);
     for (const auto& [key, entry] : m_byId) {
         if (normalized(key) == lower)

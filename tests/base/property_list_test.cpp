@@ -145,3 +145,111 @@ TEST(PropertyListTest, RefusesWhatIsNoDictionary)
     data[data.size() - 1] = char(0xff);
     EXPECT_FALSE(plist::rootStrings(data));
 }
+
+// A binary property list of the objects given whole, one-byte references,
+// the first object the root.
+static std::string binaryObjects(const std::vector<std::string>& objects)
+{
+    std::string data = "bplist00";
+    std::vector<size_t> offsets;
+    for (const std::string& object : objects) {
+        offsets.push_back(data.size());
+        data += object;
+    }
+    const size_t table = data.size();
+    for (const size_t offset : offsets)
+        putNumber(&data, offset, 2);
+    data += std::string(6, '\0');
+    data += char(2);
+    data += char(1);
+    putNumber(&data, objects.size(), 8);
+    putNumber(&data, 0, 8);
+    putNumber(&data, table, 8);
+    return data;
+}
+
+TEST(PropertyListTest, ReadsNestedValuesOfXml)
+{
+    const auto info = plist::read(R"(<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.plain-text</string>
+				<integer>4</integer>
+				<string>public.html</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<string>txt</string>
+		</dict>
+		<array/>
+	</array>
+	<key>LSRequiresNativeExecution</key>
+	<true/>
+</dict>
+</plist>
+)");
+    ASSERT_TRUE(info);
+    ASSERT_EQ(info->type, plist::Value::Type::Dictionary);
+    const plist::Value* documents = info->find("CFBundleDocumentTypes");
+    ASSERT_TRUE(documents);
+    ASSERT_EQ(documents->array.size(), 2u);
+    const plist::Value& document = documents->array[0];
+    EXPECT_EQ(document.string("CFBundleTypeRole"), "Editor");
+    EXPECT_EQ(document.find("LSItemContentTypes")->strings(),
+              (std::vector<std::string>{"public.plain-text", "public.html"}));
+    EXPECT_EQ(document.find("CFBundleTypeExtensions")->strings(), std::vector<std::string>{"txt"});
+    EXPECT_EQ(documents->array[1].type, plist::Value::Type::Array);
+    EXPECT_EQ(info->find("LSRequiresNativeExecution")->type, plist::Value::Type::Other);
+    EXPECT_EQ(info->string("LSRequiresNativeExecution"), "");
+    EXPECT_FALSE(info->find("Missing"));
+    EXPECT_FALSE(documents->find("CFBundleTypeRole"));
+
+    EXPECT_FALSE(plist::read("<plist><dict><key>a</key><array><string>b</string></dict></plist>"));
+}
+
+TEST(PropertyListTest, ReadsNestedValuesOfABinaryList)
+{
+    const auto info = plist::read(binaryObjects({
+            std::string("\xd1\x01\x02", 3),
+            "\x55Types",
+            std::string("\xa3\x03\x04\x07", 4),
+            "\x5bpublic.text",
+            std::string("\x10\x05", 2),
+            "\x51x",
+            "\x51y",
+            std::string("\xd1\x05\x06", 3),
+    }));
+    ASSERT_TRUE(info);
+    const plist::Value* types = info->find("Types");
+    ASSERT_TRUE(types);
+    ASSERT_EQ(types->array.size(), 3u);
+    EXPECT_EQ(types->strings(), std::vector<std::string>{"public.text"});
+    EXPECT_EQ(types->array[1].type, plist::Value::Type::Other);
+    EXPECT_EQ(types->array[2].string("x"), "y");
+
+    // A reference past the objects is Other; the list still reads.
+    const auto dangling = plist::read(binaryObjects({std::string("\xd1\x01\x09", 3), "\x51x"}));
+    ASSERT_TRUE(dangling);
+    EXPECT_EQ(dangling->find("x")->type, plist::Value::Type::Other);
+}
+
+TEST(PropertyListTest, RefusesBinaryListsWithoutEnd)
+{
+    // A dictionary that holds itself.
+    EXPECT_FALSE(plist::read(binaryObjects({std::string("\xd1\x01\x00", 3), "\x51x"})));
+    EXPECT_FALSE(plist::rootStrings(binaryObjects({std::string("\xd1\x01\x00", 3), "\x51x"})));
+
+    // Forty arrays, each holding the next twice: 2^40 values, though only
+    // forty objects and forty levels deep.
+    std::vector<std::string> objects;
+    for (int i = 0; i < 40; ++i)
+        objects.push_back(std::string{char(0xa2), char(i + 1), char(i + 1)});
+    objects.push_back("\x51x");
+    EXPECT_FALSE(plist::read(binaryObjects(objects)));
+}

@@ -77,6 +77,23 @@ TEST_F(MimeAppsTest, SetsDefaultAndUpdatesAssociations)
     EXPECT_FALSE(fs::exists(list + ".lock"));
 }
 
+TEST_F(MimeAppsTest, NamesBundlesByPath)
+{
+    DesktopEntry entry;
+    entry.id = "org.example.editor";
+    entry.path = "/usr/share/applications/org.example.editor.desktop";
+    EXPECT_EQ(mimeapps::listedId(entry), "org.example.editor.desktop");
+
+    entry.id = entry.path = "/home/user/Applications/Editor.app";
+    entry.bundle = true;
+    EXPECT_EQ(mimeapps::listedId(entry), "/home/user/Applications/Editor.app");
+
+    const std::string list = path("mimeapps.list");
+    ASSERT_TRUE(mimeapps::setDefault(list, "text/plain", mimeapps::listedId(entry)));
+    EXPECT_EQ(mimeapps::associations(list, "Default Applications", "text/plain"),
+              std::vector<std::string>{"/home/user/Applications/Editor.app"});
+}
+
 TEST_F(MimeAppsTest, KeepsTheTerminalList)
 {
     const std::string list = path("xdg-terminals.list");

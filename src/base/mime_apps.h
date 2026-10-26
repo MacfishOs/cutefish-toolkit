@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "base/desktop_entry.h"
+
 // The user's mimeapps.list and xdg-terminals.list, edited line by line so
 // comments and entries this code does not touch survive; a port of
 // cutefish-framework's MimeApps. Desktop entries come from
@@ -20,6 +22,10 @@ std::string userTerminalsListPath();
 // directories, then the applications directories, each with the current
 // desktops' own list before the plain one.
 std::vector<std::string> listPaths();
+
+// How the lists name an entry: its desktop file id, or a bundle's path, which
+// names it only while it is installed.
+std::string listedId(const DesktopEntry& entry);
 
 std::vector<std::string> associations(const std::string& path, const std::string& group,
                                       const std::string& mimeType);

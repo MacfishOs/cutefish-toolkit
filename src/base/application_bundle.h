@@ -25,10 +25,14 @@ std::string bundlePath(const std::string& path);
 // empty for any other program.
 std::string bundleOfProgram(const std::string& program);
 
-// The bundle at path as an application that handler starts with the path:
-// named by CFBundleDisplayName, CFBundleName or the folder's own name, its
-// icon Contents/Resources/<CFBundleIconFile>. Nothing when the folder holds
-// no Info.plist that can be read.
+// The bundle at path as an application that handler starts with the path,
+// the documents to open after it: named by CFBundleDisplayName, CFBundleName
+// or the folder's own name, its icon Contents/Resources/<CFBundleIconFile>,
+// its MIME types those of its document types, "group/*" standing for a
+// whole group. Nothing when the folder holds no Info.plist that can be read.
 std::optional<DesktopEntry> read(const std::string& path, const DesktopEntry& handler);
+// Whether a bundle's entry opens files of the type: the type is one of its
+// MIME types or descends from one, or is in a group it opens.
+bool opensType(const DesktopEntry& entry, const std::string& type);
 
 } // namespace cutefish::base::bundle
