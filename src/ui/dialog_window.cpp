@@ -364,7 +364,8 @@ void ConfirmDialog::setText(std::string text)
     }
 }
 
-// The dialog's content with the window's close button over its corner.
+// The dialog's content, with the window's close button over its corner
+// when there is no Cancel button to do its work.
 class ConfirmContent final : public View
 {
 public:
@@ -372,8 +373,10 @@ public:
         : m_content(content.get())
     {
         addChild(std::move(content));
-        m_close = addChild<HeaderButton>("close", kButton);
-        m_close->onClicked = std::move(close);
+        if (close) {
+            m_close = addChild<HeaderButton>("close", kButton);
+            m_close->onClicked = std::move(close);
+        }
     }
 
     SizeF sizeHint() const override { return m_content->sizeHint(); }
@@ -385,7 +388,8 @@ protected:
     {
         const RectF bounds = localRect();
         m_content->setGeometry(bounds);
-        m_close->setGeometry({bounds.width - kButtonMargin - kButton, kButtonMargin, kButton, kButton});
+        if (m_close)
+            m_close->setGeometry({bounds.width - kButtonMargin - kButton, kButtonMargin, kButton, kButton});
     }
 
     // The empty parts of the window move it.
@@ -397,7 +401,7 @@ protected:
 
 private:
     View* m_content;
-    HeaderButton* m_close;
+    HeaderButton* m_close = nullptr;
 };
 
 void ConfirmDialog::show()
@@ -414,9 +418,10 @@ void ConfirmDialog::show()
 
     auto* texts = column->addChild<Column>();
     texts->setSpacing(4);
-    // Clear of the close corner of the window.
     texts->setLayoutHints({.fillWidth = true});
-    texts->setMargins({0, 0, 32, 0});
+    // Clear of the close corner of the window.
+    if (!m_cancelVisible)
+        texts->setMargins({0, 0, 32, 0});
     Label* title = texts->addChild<Label>(m_title);
     m_titleLabel = title;
     title->setFontSize(kTitleSize);
@@ -454,7 +459,10 @@ void ConfirmDialog::show()
     // Measured as the window will lay the buttons out, before they are in it.
     column->setTextLayoutMode(m_window->textLayoutMode());
     const double width = std::max(kConfirmMinimumWidth, actions->sizeHint().width + 2 * kContentPadding);
-    m_window->setContentView(std::make_unique<ConfirmContent>(std::move(column), [this] { finish(false); }));
+    std::function<void()> close;
+    if (!m_cancelVisible)
+        close = [this] { finish(false); };
+    m_window->setContentView(std::make_unique<ConfirmContent>(std::move(column), std::move(close)));
     m_window->resize({width, 0});
     m_window->setFitsContentHeight(true);
     // A destructive action waits for a deliberate choice.

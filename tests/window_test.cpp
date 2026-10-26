@@ -324,7 +324,6 @@ TEST(WindowTest, ConfirmDialogTextChangesWhileShown)
     window->grab();
     EXPECT_GT(window->size().height, height);
     dialog.setTitle("Pairing with the keyboard");
-    // The content under the close button.
     const View* column = window->contentView()->children().front().get();
     const View* texts = column->children().front().get();
     EXPECT_EQ(static_cast<const Label*>(texts->children().front().get())->text(), "Pairing with the keyboard");
@@ -539,21 +538,24 @@ TEST(WindowTest, ToastShowsOverTheContent)
     EXPECT_GT(changed, 0);
 }
 
-TEST(WindowTest, ConfirmDialogClosesFromItsCorner)
+TEST(WindowTest, ConfirmDialogClosesFromItsCornerOnlyWithoutCancel)
 {
     Window parent;
     parent.resize({400, 300});
     parent.setContentView(std::make_unique<View>());
     parent.show();
-    ConfirmDialog dialog(&parent, "Close the window?");
-    bool rejected = false;
-    dialog.onRejected = [&] { rejected = true; };
-    dialog.show();
-    Window* window = dialog.window();
-    window->grab();
-    // The window's close button: 8 from the top and the end.
-    TestInput::click(*window, {window->size().width - 8 - 16, 8 + 16});
-    EXPECT_TRUE(rejected);
+    for (const bool cancel : {true, false}) {
+        ConfirmDialog dialog(&parent, "Close the window?");
+        dialog.setCancelVisible(cancel);
+        bool rejected = false;
+        dialog.onRejected = [&] { rejected = true; };
+        dialog.show();
+        Window* window = dialog.window();
+        window->grab();
+        // Where the window's close button is: 8 from the top and the end.
+        TestInput::click(*window, {window->size().width - 8 - 16, 8 + 16});
+        EXPECT_EQ(rejected, !cancel);
+    }
 }
 
 namespace {
