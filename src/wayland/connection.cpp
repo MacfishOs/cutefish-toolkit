@@ -40,6 +40,8 @@
 
 namespace cutefish::ui::wayland {
 
+static std::vector<Connection*> s_connections;
+
 static ShellSurface* shellSurfaceFor(wl_surface* surface)
 {
     // Null when the surface was destroyed while the event was in flight.
@@ -584,6 +586,16 @@ Connection::Connection(base::EventLoop& loop, wl_display* display)
     : m_loop(loop)
     , m_display(display)
 {
+    s_connections.push_back(this);
+}
+
+Connection* Connection::withKeyboardFocus()
+{
+    for (Connection* connection : s_connections) {
+        if (connection->m_keyboard && connection->m_keyboard->focus())
+            return connection;
+    }
+    return nullptr;
 }
 
 void Connection::releaseOutput(const Output& output)
@@ -620,6 +632,7 @@ SizeF Connection::primaryOutputSize() const
 
 Connection::~Connection()
 {
+    std::erase(s_connections, this);
     if (m_watch)
         m_loop.unwatch(m_watch);
     if (m_hook)

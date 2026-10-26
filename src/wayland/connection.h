@@ -73,6 +73,10 @@ public:
     static std::unique_ptr<Connection> openFd(base::EventLoop& loop, int fd);
     ~Connection();
 
+    // The process's connection whose window has keyboard focus, if any. The
+    // compositor serves the selection only to the focused client.
+    static Connection* withKeyboardFocus();
+
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
 

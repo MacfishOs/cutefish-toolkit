@@ -93,9 +93,12 @@ static wayland::Selection* selectionFor(ClipboardMode mode)
     Application* application = Application::instance();
     if (!application->hasConnection())
         return nullptr;
+    wayland::Connection* connection = wayland::Connection::withKeyboardFocus();
+    if (!connection)
+        connection = &application->connection();
     if (mode == ClipboardMode::Selection)
-        return application->connection().primarySelection();
-    return application->connection().dataDevice();
+        return connection->primarySelection();
+    return connection->dataDevice();
 }
 
 static bool headless()
