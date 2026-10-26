@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Reion Wong <reionwong@gmail.com>
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <chrono>
+
 #include <gtest/gtest.h>
 
+#include "base/event_loop.h"
+#include "ui/application.h"
 #include "ui/clipboard.h"
 #include "ui/keys.h"
 #include "ui/layout.h"
+#include "ui/scroll_view.h"
 #include "ui/test_input.h"
 #include "ui/text_area.h"
 #include "ui/window.h"
@@ -27,6 +32,37 @@ struct Hosted
         window.setContentView(std::move(root));
         window.resize({300, 300});
         window.setScale(scale);
+        window.show();
+        window.grab();
+        TestInput::setKeyboardFocus(window, true);
+        area->setFocus();
+    }
+};
+
+// An area as tall as its text, in a scroll view of 100 by 100.
+struct Scrolled
+{
+    Window window;
+    ScrollView* scroll = nullptr;
+    TextArea* area = nullptr;
+
+    explicit Scrolled(bool readOnly)
+    {
+        auto root = std::make_unique<Column>();
+        scroll = root->addChild<ScrollView>();
+        scroll->setLayoutHints({.preferredWidth = 100, .preferredHeight = 100});
+        scroll->setScrollDirections(true, true);
+        area = scroll->setContent<TextArea>();
+        area->setReadOnly(readOnly);
+        area->setWrapMode(TextArea::WrapMode::NoWrap);
+        std::string text;
+        for (int i = 0; i < 40; ++i)
+            text += "Line " + std::to_string(i) + " with enough words to run past the right edge\n";
+        area->setText(text);
+        area->setCursorPosition(0);
+        window.setContentView(std::move(root));
+        window.resize({300, 300});
+        window.setScale(1.5);
         window.show();
         window.grab();
         TestInput::setKeyboardFocus(window, true);
@@ -188,4 +224,25 @@ TEST(TextAreaTest, CentresTextForAnInlineEditor)
     EXPECT_NEAR((top + bottom) / 2.0, 30, 2);
     // Grows with the text: the height for a width includes the padding.
     EXPECT_GT(area->heightForWidth(40), area->heightForWidth(200));
+}
+
+TEST(TextAreaTest, SelectingPastAnEdgeKeepsScrolling)
+{
+    Scrolled scrolled(true);
+    const RectF box = scrolled.scroll->geometry();
+    TestInput::press(scrolled.window, {box.x + 10, box.y + 10});
+    TestInput::movePointer(scrolled.window, {box.right() + 40, box.y + 10});
+    const double first = scrolled.scroll->scrollPosition().x;
+    cutefish::base::EventLoop& loop = Application::instance()->loop();
+    loop.startTimer(std::chrono::milliseconds(200), false, [&loop] { loop.quit(); });
+    loop.run();
+    // The pointer stood still; the view went on towards it.
+    EXPECT_GT(scrolled.scroll->scrollPosition().x, first);
+    EXPECT_EQ(scrolled.scroll->scrollPosition().y, 0);
+    EXPECT_GT(scrolled.area->selectedText().size(), 20u);
+    TestInput::release(scrolled.window, {box.right() + 40, box.y + 10});
+    const double stopped = scrolled.scroll->scrollPosition().x;
+    loop.startTimer(std::chrono::milliseconds(100), false, [&loop] { loop.quit(); });
+    loop.run();
+    EXPECT_EQ(scrolled.scroll->scrollPosition().x, stopped);
 }

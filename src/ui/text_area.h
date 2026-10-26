@@ -109,6 +109,10 @@ private:
     size_t offsetAt(PointF position) const;
     void showContextMenu(PointF position);
     void edited();
+    void extendSelection(PointF position);
+    RectF visibleRect() const;
+    void autoScroll();
+    void stopAutoScroll();
     void moved();
     void startBlinking();
 
