@@ -991,7 +991,7 @@ TextGeometry textGeometry(textlayout::Paragraph* paragraph, const LineGlyphs& li
         line.start = starts(metrics[l].fStartIndex);
         line.end = ends(metrics[l].fEndIndex);
         // A line's start excludes the spaces a soft break left; keep them.
-        if (l > 0)
+        if (l > 0 && geometry.lines.back().end < text.size() && text[geometry.lines.back().end] != '\n')
             line.start = std::min(line.start, geometry.lines.back().end);
         double pen = 0;
         if (l < glyphs.size() && !glyphs[l].runs.empty()) {
