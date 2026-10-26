@@ -223,6 +223,48 @@ TEST(ImageFormatsTest, DecodesTga)
     EXPECT_EQ(image.pixels[1], 0x80800000u);
 }
 
+// The signature and an IHDR chunk naming the width, which is all icnsPng reads.
+static std::string pngOfWidth(uint32_t width)
+{
+    std::string png("\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR", 16);
+    for (int shift = 24; shift >= 0; shift -= 8)
+        png += char((width >> shift) & 0xFF);
+    return png + std::string(9, '\0');
+}
+
+static std::string icnsMember(const std::string& type, const std::string& data)
+{
+    std::string member = type;
+    const uint32_t length = uint32_t(data.size() + 8);
+    for (int shift = 24; shift >= 0; shift -= 8)
+        member += char((length >> shift) & 0xFF);
+    return member + data;
+}
+
+TEST(ImageFormatsTest, PicksTheIcnsPngForTheSize)
+{
+    const std::string small = pngOfWidth(32);
+    const std::string medium = pngOfWidth(256);
+    const std::string large = pngOfWidth(1024);
+    std::string body = icnsMember("ic10", large) + icnsMember("ic05", "not a png") + icnsMember("ic08", medium)
+            + icnsMember("ic11", small);
+    std::string data = "icns";
+    const uint32_t length = uint32_t(body.size() + 8);
+    for (int shift = 24; shift >= 0; shift -= 8)
+        data += char((length >> shift) & 0xFF);
+    data += body;
+
+    ASSERT_TRUE(image_formats::isIcns(data));
+    EXPECT_EQ(image_formats::icnsPng(data), large);
+    EXPECT_EQ(image_formats::icnsPng(data, 16), small);
+    EXPECT_EQ(image_formats::icnsPng(data, 64), medium);
+    EXPECT_EQ(image_formats::icnsPng(data, 256), medium);
+    EXPECT_EQ(image_formats::icnsPng(data, 2048), large);
+    // A member running past the end stops the walk.
+    EXPECT_EQ(image_formats::icnsPng(data.substr(0, data.size() - 1), 16), medium);
+    EXPECT_EQ(image_formats::icnsPng("icns\0\0\0\x08"), "");
+}
+
 TEST(AnimatedImageTest, PlaysGifFramesOnTheFrameClock)
 {
     const std::string data = gif(2, 2, {{0, 0, 2, 2, {0, 0, 0, 0}, 5}, {0, 0, 2, 2, {1, 1, 1, 1}, 5}}, 0);

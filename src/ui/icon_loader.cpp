@@ -37,6 +37,7 @@
 #include "base/file.h"
 #include "base/thread_pool.h"
 #include "ui/embedded_files.h"
+#include "ui/image_formats.h"
 #include "ui/theme.h"
 
 namespace cutefish::ui {
@@ -840,9 +841,25 @@ std::string IconLoader::themeIconPath(const std::string& name, int size, double 
     return path;
 }
 
-sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Color* tint)
+// An ICNS file's picture for the size, as a desktop entry's Icon may name
+// one; any other file as it is.
+static sk_sp<SkData> iconFileData(const std::string& path, int pixels)
 {
     sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
+    if (!data)
+        return nullptr;
+    const std::string_view bytes(static_cast<const char*>(data->data()), data->size());
+    if (!image_formats::isIcns(bytes))
+        return data;
+    const std::string_view png = image_formats::icnsPng(bytes, pixels);
+    if (png.empty())
+        return nullptr;
+    return SkData::MakeSubset(data.get(), size_t(png.data() - bytes.data()), png.size());
+}
+
+sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Color* tint)
+{
+    sk_sp<SkData> data = iconFileData(path, size);
     if (!data)
         return nullptr;
     if (path.ends_with(".svg"))
@@ -918,7 +935,7 @@ sk_sp<SkImage> IconLoader::pixmap(const std::string& name, int pixels)
     sk_sp<SkImage> image;
     if (path.ends_with(".svg")) {
         image = rasterise(path, pixels, nullptr);
-    } else if (sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str())) {
+    } else if (sk_sp<SkData> data = iconFileData(path, pixels)) {
         // A larger picture is scaled down and a smaller one left as it is.
         if (std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data))) {
             auto [decoded, result] = codec->getImage();

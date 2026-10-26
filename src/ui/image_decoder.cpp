@@ -453,8 +453,9 @@ DecodedImage decodeImage(const ImageRequest& request)
     } else if (image_formats::isPnm(*data)) {
         source = fromRaw(image_formats::decodePnm(*data));
     } else if (image_formats::isIcns(*data)) {
-        if (const std::optional<std::string> png = image_formats::largestIcnsPng(*data))
-            source = decodeWithSkia(SkData::MakeWithCopy(png->data(), png->size()), request.width, request.height);
+        const std::string_view png = image_formats::icnsPng(*data, std::max(request.width, request.height));
+        if (!png.empty())
+            source = decodeWithSkia(SkData::MakeWithCopy(png.data(), png.size()), request.width, request.height);
     } else if (image_formats::isXbm(*data)) {
         source = fromRaw(image_formats::decodeXbm(*data));
     } else if (image_formats::isTga(*data, request.path)) {

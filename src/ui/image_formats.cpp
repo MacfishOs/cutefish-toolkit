@@ -362,28 +362,39 @@ bool isIcns(std::string_view data)
     return data.size() >= 8 && data.starts_with("icns");
 }
 
-std::optional<std::string> largestIcnsPng(std::string_view data)
+std::string_view icnsPng(std::string_view data, int pixels)
 {
     if (!isIcns(data))
-        return std::nullopt;
-    const auto u32 = [&](size_t i) {
-        return uint32_t(uint8_t(data[i])) << 24 | uint32_t(uint8_t(data[i + 1])) << 16
-                | uint32_t(uint8_t(data[i + 2])) << 8 | uint32_t(uint8_t(data[i + 3]));
+        return {};
+    const auto u32 = [](std::string_view bytes, size_t i) {
+        return uint32_t(uint8_t(bytes[i])) << 24 | uint32_t(uint8_t(bytes[i + 1])) << 16
+                | uint32_t(uint8_t(bytes[i + 2])) << 8 | uint32_t(uint8_t(bytes[i + 3]));
     };
-    std::string_view best;
+    std::string_view fitting;
+    uint32_t fittingWidth = 0;
+    std::string_view largest;
+    uint32_t largestWidth = 0;
     size_t position = 8;
     while (position + 8 <= data.size()) {
-        const uint32_t length = u32(position + 4);
-        if (length < 8 || position + length > data.size())
+        const uint32_t length = u32(data, position + 4);
+        if (length < 8 || length > data.size() - position)
             break;
         const std::string_view chunk = data.substr(position + 8, length - 8);
-        if (chunk.starts_with("\x89PNG") && chunk.size() > best.size())
-            best = chunk;
         position += length;
+        // The width is the first field of the IHDR chunk after the signature.
+        if (chunk.size() < 24 || !chunk.starts_with("\x89PNG\r\n\x1a\n") || chunk.substr(12, 4) != "IHDR")
+            continue;
+        const uint32_t width = u32(chunk, 16);
+        if (width > largestWidth) {
+            largest = chunk;
+            largestWidth = width;
+        }
+        if (pixels > 0 && width >= uint32_t(pixels) && (fitting.empty() || width < fittingWidth)) {
+            fitting = chunk;
+            fittingWidth = width;
+        }
     }
-    if (best.empty())
-        return std::nullopt;
-    return std::string(best);
+    return fitting.empty() ? largest : fitting;
 }
 
 } // namespace cutefish::ui::image_formats
