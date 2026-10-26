@@ -25,6 +25,7 @@ class Connection;
 namespace cutefish::ui {
 
 class AppearanceWatcher;
+class Menu;
 class TextContext;
 class Window;
 
@@ -91,6 +92,13 @@ public:
     base::dbus::Connection* sessionBus() const { return m_sessionBus; }
     const std::vector<Window*>& windows() const { return m_windows; }
 
+    // The main menu the status bar shows while one of the application's
+    // windows is active, unless the window has its own: its rows are the
+    // bar's entries, and the submenu with MenuRole::Application opens from
+    // the application's name. Not owned; it stays while it is the main menu.
+    void setMainMenu(Menu* menu);
+    Menu* mainMenu() const { return m_mainMenu; }
+
     struct Screen
     {
         // The wl_output name.
@@ -153,6 +161,7 @@ private:
     std::unique_ptr<base::SessionLanguage> m_languageWatch;
     base::Subscription m_languageChanged;
     std::vector<Window*> m_windows;
+    Menu* m_mainMenu = nullptr;
     bool m_activeUpdatePending = false;
 };
 

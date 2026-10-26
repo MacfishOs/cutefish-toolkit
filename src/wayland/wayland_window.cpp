@@ -8,6 +8,8 @@
 #include <cmath>
 #include <wayland-egl.h>
 
+#include <cutefish-main-menu-v1-client-protocol.h>
+
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/ganesh/GrBackendSurface.h"
@@ -21,6 +23,7 @@
 #include "ui/text_context.h"
 #include "wayland/connection.h"
 #include "wayland/data_device.h"
+#include "wayland/main_menu.h"
 #include "wayland/text_input.h"
 
 namespace cutefish::ui::wayland {
@@ -398,6 +401,18 @@ void WaylandWindow::setUserResizable(bool resizable)
 {
     if (m_shell)
         m_shell->setServerResize(resizable);
+}
+
+void WaylandWindow::setMainMenu(Menu* menu)
+{
+    if (!m_shell || !m_shell->toplevel() || !m_connection->mainMenus())
+        return;
+    std::shared_ptr<MainMenuMirror> mirror = m_connection->mainMenu(menu);
+    if (mirror == m_mainMenu)
+        return;
+    m_mainMenu = std::move(mirror);
+    cutefish_main_menu_manager_v1_set_main_menu(m_connection->mainMenus(), m_shell->surface(),
+                                                m_mainMenu ? m_mainMenu->proxy() : nullptr);
 }
 
 void WaylandWindow::setStatusItemIdentifier(const std::string& identifier)

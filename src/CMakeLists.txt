@@ -50,6 +50,8 @@ cutefish_wayland_protocol(cutefish-surface-blur-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-surface-blur-v1.xml)
 cutefish_wayland_protocol(cutefish-shell-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-shell-v1.xml)
+cutefish_wayland_protocol(cutefish-main-menu-v1
+    ${PROJECT_SOURCE_DIR}/protocols/cutefish-main-menu-v1.xml)
 cutefish_wayland_protocol(cutefish-status-item-v1
     ${PROJECT_SOURCE_DIR}/protocols/cutefish-status-item-v1.xml)
 cutefish_wayland_protocol(cutefish-window-placement-v1
@@ -137,6 +139,7 @@ add_library(cutefish-toolkit SHARED
     wayland/primary_selection.cpp
     wayland/selection.cpp
     wayland/keyboard.cpp
+    wayland/main_menu.cpp
     wayland/text_input.cpp
     wayland/shell_surface.cpp
     wayland/wayland_window.cpp
@@ -242,6 +245,7 @@ add_library(cutefish-toolkit SHARED
     ${cutefish-window-hints-v1_SOURCES}
     ${cutefish-surface-blur-v1_SOURCES}
     ${cutefish-shell-v1_SOURCES}
+    ${cutefish-main-menu-v1_SOURCES}
     ${cutefish-status-item-v1_SOURCES}
     ${cutefish-window-placement-v1_SOURCES}
 )

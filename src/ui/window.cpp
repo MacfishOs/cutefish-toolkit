@@ -144,6 +144,7 @@ Window::Window()
 {
     m_platform = PlatformWindow::create(this, nullptr, {}, false);
     m_platform->setAppId(Application::instance()->applicationId());
+    m_platform->setMainMenu(Application::instance()->mainMenu());
     Application::instance()->m_windows.push_back(this);
 }
 
@@ -153,6 +154,7 @@ Window::Window(TrustedConnection& connection)
 {
     m_platform = std::make_unique<wayland::WaylandWindow>(this, *connection.m_connection, *connection.m_gpu);
     m_platform->setAppId(Application::instance()->applicationId());
+    m_platform->setMainMenu(Application::instance()->mainMenu());
     Application::instance()->m_windows.push_back(this);
 }
 
@@ -230,6 +232,19 @@ Window::~Window()
 void Window::setTitle(const std::string& title)
 {
     m_platform->setTitle(title);
+}
+
+void Window::setMainMenu(Menu* menu)
+{
+    m_mainMenu = menu;
+    m_platform->setMainMenu(mainMenu());
+}
+
+Menu* Window::mainMenu() const
+{
+    if (isPopup())
+        return nullptr;
+    return m_mainMenu ? m_mainMenu : Application::instance()->mainMenu();
 }
 
 void Window::setMinimumSize(SizeF size)

@@ -13,6 +13,7 @@
 #include <wayland-client.h>
 
 #include <cursor-shape-v1-client-protocol.h>
+#include <cutefish-main-menu-v1-client-protocol.h>
 #include <cutefish-shell-v1-client-protocol.h>
 #include <cutefish-status-item-v1-client-protocol.h>
 #include <cutefish-surface-blur-v1-client-protocol.h>
@@ -34,6 +35,7 @@
 #include "base/event_loop.h"
 #include "wayland/data_device.h"
 #include "wayland/keyboard.h"
+#include "wayland/main_menu.h"
 #include "wayland/primary_selection.h"
 #include "wayland/text_input.h"
 #include "wayland/shell_surface.h"
@@ -128,6 +130,9 @@ struct ConnectionListeners
         } else if (strcmp(interface, cutefish_status_item_manager_v1_interface.name) == 0) {
             self->m_statusItems = bind<cutefish_status_item_manager_v1>(
                 registry, name, &cutefish_status_item_manager_v1_interface, version, 1);
+        } else if (strcmp(interface, cutefish_main_menu_manager_v1_interface.name) == 0) {
+            self->m_mainMenus = bind<cutefish_main_menu_manager_v1>(
+                registry, name, &cutefish_main_menu_manager_v1_interface, version, 1);
         } else if (strcmp(interface, cutefish_shell_v1_interface.name) == 0) {
             self->m_shell = bind<cutefish_shell_v1>(registry, name, &cutefish_shell_v1_interface, version, 1);
         } else if (strcmp(interface, wl_shm_interface.name) == 0) {
@@ -671,6 +676,8 @@ Connection::~Connection()
         cutefish_surface_blur_v1_destroy(m_surfaceBlur);
     if (m_statusItems)
         cutefish_status_item_manager_v1_destroy(m_statusItems);
+    if (m_mainMenus)
+        cutefish_main_menu_manager_v1_destroy(m_mainMenus);
     if (m_dialogManager)
         xdg_wm_dialog_v1_destroy(m_dialogManager);
     for (const auto& pending : m_activations)
@@ -833,6 +840,23 @@ void Connection::sync(std::function<void()> done)
     wl_callback* callback = wl_display_sync(m_display);
     wl_callback_add_listener(callback, &syncListener, new std::function<void()>(std::move(done)));
     flush();
+}
+
+std::shared_ptr<MainMenuMirror> Connection::mainMenu(Menu* menu)
+{
+    if (!m_mainMenus || !menu)
+        return nullptr;
+    std::weak_ptr<MainMenuMirror>& entry = m_mainMenuMirrors[menu];
+    std::shared_ptr<MainMenuMirror> mirror = entry.lock();
+    // A menu at the address of one destroyed since.
+    if (mirror && !mirror->isAlive())
+        mirror.reset();
+    if (!mirror) {
+        mirror = std::make_shared<MainMenuMirror>(*this, menu);
+        entry = mirror;
+    }
+    std::erase_if(m_mainMenuMirrors, [](const auto& e) { return e.second.expired(); });
+    return mirror;
 }
 
 static void tokenDone(void* data, xdg_activation_token_v1* token, const char* tokenString)

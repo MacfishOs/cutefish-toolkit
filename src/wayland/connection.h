@@ -13,6 +13,7 @@
 
 #include "ui/event.h"
 
+struct cutefish_main_menu_manager_v1;
 struct cutefish_surface_blur_v1;
 struct cutefish_shell_v1;
 struct cutefish_status_item_manager_v1;
@@ -53,9 +54,14 @@ namespace cutefish::base {
 class EventLoop;
 }
 
+namespace cutefish::ui {
+class Menu;
+}
+
 namespace cutefish::ui::wayland {
 
 class DataDevice;
+class MainMenuMirror;
 class PrimarySelection;
 class Keyboard;
 class TextInput;
@@ -91,6 +97,7 @@ public:
     uint32_t keyboardModifiers() const;
     // The compositor closed the connection, as when it exits or restarts.
     bool isLost() const { return m_lost; }
+    base::EventLoop& loop() const { return m_loop; }
     xdg_wm_base* wmBase() const { return m_wmBase; }
     wp_viewporter* viewporter() const { return m_viewporter; }
     wp_fractional_scale_manager_v1* fractionalScaleManager() const { return m_fractionalScaleManager; }
@@ -101,6 +108,11 @@ public:
     cutefish_surface_blur_v1* surfaceBlur() const { return m_surfaceBlur; }
     // Null when the compositor has no status bar items.
     cutefish_status_item_manager_v1* statusItems() const { return m_statusItems; }
+    // Null when the compositor shows no main menus.
+    cutefish_main_menu_manager_v1* mainMenus() const { return m_mainMenus; }
+    // The menu as a cutefish_menu_v1, one for all the windows showing it;
+    // null without mainMenus().
+    std::shared_ptr<MainMenuMirror> mainMenu(Menu* menu);
     xdg_wm_dialog_v1* dialogManager() const { return m_dialogManager; }
     zxdg_importer_v2* importer() const { return m_importer; }
     wl_seat* seat() const { return m_seat; }
@@ -193,6 +205,8 @@ private:
     cutefish_window_placement_v1* m_windowPlacement = nullptr;
     cutefish_surface_blur_v1* m_surfaceBlur = nullptr;
     cutefish_status_item_manager_v1* m_statusItems = nullptr;
+    cutefish_main_menu_manager_v1* m_mainMenus = nullptr;
+    std::map<Menu*, std::weak_ptr<MainMenuMirror>> m_mainMenuMirrors;
     cutefish_shell_v1* m_shell = nullptr;
     xdg_wm_dialog_v1* m_dialogManager = nullptr;
     xdg_activation_v1* m_activation = nullptr;

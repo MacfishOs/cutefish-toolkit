@@ -126,7 +126,8 @@ foreach(xml
     list(APPEND TEST_PROTOCOL_SOURCES ${code} ${header})
 endforeach()
 # The project's own protocols, for a compositor that records their requests.
-foreach(name cutefish-window-hints-v1 cutefish-window-placement-v1 cutefish-status-item-v1)
+foreach(name cutefish-window-hints-v1 cutefish-window-placement-v1 cutefish-status-item-v1
+        cutefish-main-menu-v1)
     set(code ${TEST_PROTOCOL_DIR}/${name}-protocol.c)
     set(header ${TEST_PROTOCOL_DIR}/${name}-server-protocol.h)
     set(xml ${PROJECT_SOURCE_DIR}/protocols/${name}.xml)
@@ -142,6 +143,7 @@ endforeach()
 add_executable(cutefish-toolkit-wayland-tests
     wayland/connection_test.cpp
     wayland/data_device_test.cpp
+    wayland/main_menu_test.cpp
     wayland/output_test.cpp
     wayland/seat_test.cpp
     wayland/selection_test.cpp

@@ -20,6 +20,7 @@ class SkCanvas;
 
 namespace cutefish::ui {
 
+class Menu;
 class Window;
 
 // What the bar says to a status item's window.
@@ -120,6 +121,9 @@ public:
     // false where the compositor places windows itself.
     virtual bool setScreenPosition(PointF) { return false; }
     virtual void setUserResizable(bool) {}
+    // Toplevels only: the main menu the status bar shows while the window is
+    // active, null for none.
+    virtual void setMainMenu(Menu*) {}
     // A status item's identifier and highlight request.
     virtual void setStatusItemIdentifier(const std::string&) {}
     virtual void setStatusItemHighlight(bool) {}

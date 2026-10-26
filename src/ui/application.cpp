@@ -131,6 +131,15 @@ int Application::run()
     return m_loop->run();
 }
 
+void Application::setMainMenu(Menu* menu)
+{
+    m_mainMenu = menu;
+    for (Window* window : m_windows) {
+        if (!window->m_mainMenu && !window->isPopup())
+            window->m_platform->setMainMenu(menu);
+    }
+}
+
 void Application::setApplicationId(std::string applicationId)
 {
     m_applicationId = std::move(applicationId);

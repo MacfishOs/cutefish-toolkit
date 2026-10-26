@@ -26,6 +26,7 @@ class DropOffer;
 struct DragSource;
 struct FrameDamage;
 class FrameClient;
+class Menu;
 class Path;
 class PlatformWindow;
 class StatusItem;
@@ -229,6 +230,12 @@ public:
     void setUserResizable(bool resizable);
     // Kept out of the dock and the window switcher, as tool windows are.
     void setSkipTaskbar(bool skip);
+    // The main menu the status bar shows while this window is active, in
+    // place of the application's (Application::setMainMenu); null goes back
+    // to the application's. Not owned; it stays while the window shows it.
+    void setMainMenu(Menu* menu);
+    // The window's own main menu, else the application's; null for a popup.
+    Menu* mainMenu() const;
     // Above ordinary windows.
     void setAlwaysOnTop(bool onTop);
     // The header's colour mode for the window buttons, whatever the theme,
@@ -493,6 +500,8 @@ private:
     void saveMaximized();
 
     std::unique_ptr<PlatformWindow> m_platform;
+    // The window's own main menu; null for the application's.
+    Menu* m_mainMenu = nullptr;
     SizeF m_screenSize;
     std::optional<PointF> m_screenPosition;
     std::unique_ptr<FrameDamage> m_frameDamage;

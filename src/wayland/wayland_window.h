@@ -23,6 +23,7 @@ class EglContext;
 namespace cutefish::ui::wayland {
 
 class Connection;
+class MainMenuMirror;
 
 // A child surface that hears of the window's commits.
 class SubsurfaceClient
@@ -82,6 +83,7 @@ public:
     void setOpacity(double opacity) override;
     bool setScreenPosition(PointF position) override;
     void setUserResizable(bool resizable) override;
+    void setMainMenu(Menu* menu) override;
     void setStatusItemIdentifier(const std::string& identifier) override;
     void setStatusItemHighlight(bool highlighted) override;
     void setForeignParent(const std::string& handle, bool modal) override;
@@ -148,6 +150,7 @@ private:
     std::optional<GlassMaterial> m_glass;
     double m_opacity = 1;
     std::vector<SubsurfaceClient*> m_subsurfaces;
+    std::shared_ptr<MainMenuMirror> m_mainMenu;
     wl_egl_window* m_eglWindow = nullptr;
     EGLSurface m_eglSurface = EGL_NO_SURFACE;
     sk_sp<SkSurface> m_surface;
