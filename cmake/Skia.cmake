@@ -62,7 +62,7 @@ ExternalProject_Add(skia-build
         skia modules/svg modules/skresources modules/skparagraph modules/skshaper
         modules/skunicode
     INSTALL_COMMAND ""
-    BUILD_ALWAYS ON
+    BUILD_ALWAYS OFF
     BUILD_BYPRODUCTS ${SKIA_LIBRARIES}
     USES_TERMINAL_BUILD ON
 )

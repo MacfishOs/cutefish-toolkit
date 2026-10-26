@@ -19,6 +19,7 @@ class WindowHeader : public View
 {
 public:
     explicit WindowHeader(double height = 40);
+    ~WindowHeader() override;
 
     // Fills the bar before the buttons.
     void setContentView(std::unique_ptr<View> view);
@@ -40,6 +41,9 @@ public:
     // The buttons centred in the bar's height, with no top margin, keeping the
     // end margin.
     void setButtonsCentered(bool centered);
+
+    void showTilingMenu();
+    void hideTilingMenu(bool force = false);
 
     SizeF sizeHint() const override { return {0, m_height}; }
     bool acceptsPointer() const override { return true; }

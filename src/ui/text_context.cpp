@@ -482,11 +482,40 @@ skia::textlayout::TextStyle TextContext::style(double fontSize, int weight, Colo
     const Theme& theme = Theme::current();
     const std::string& themeFamily = theme.fontFamily.empty() ? m_family : theme.fontFamily;
     skia::textlayout::TextStyle style;
-    if (family.empty())
-        style.setFontFamilies({SkString(themeFamily.c_str())});
-    else
-        style.setFontFamilies({SkString(family.c_str()), SkString(themeFamily.c_str())});
-    style.setFontSize(SkScalar(pixelSize(fontSize > 0 ? fontSize : theme.fontSize())));
+
+    std::vector<SkString> fontFamilies;
+    if (!family.empty())
+        fontFamilies.push_back(SkString(family.c_str()));
+    if (!themeFamily.empty() && themeFamily != family)
+        fontFamilies.push_back(SkString(themeFamily.c_str()));
+
+    // Apple / macOS typography fallback priority
+    for (const char* f : {"SF Pro Text", "SF Pro Display", "SF Pro", "-apple-system", "Inter", "system-ui", "Cantarell", "Noto Sans"}) {
+        fontFamilies.push_back(SkString(f));
+    }
+    style.setFontFamilies(fontFamilies);
+
+    const double px = pixelSize(fontSize > 0 ? fontSize : theme.fontSize());
+    style.setFontSize(SkScalar(px));
+
+    // Apple Dynamic Tracking (letter spacing):
+    // Small text has subtle positive letter spacing; body has ~0; headers have negative letter spacing
+    double tracking = 0.0;
+    if (px <= 11.0) {
+        tracking = 0.15;
+    } else if (px <= 13.0) {
+        tracking = 0.05;
+    } else if (px <= 15.0) {
+        tracking = -0.05;
+    } else if (px <= 18.0) {
+        tracking = -0.15;
+    } else if (px <= 24.0) {
+        tracking = -0.30;
+    } else {
+        tracking = -0.45;
+    }
+    style.setLetterSpacing(SkScalar(tracking));
+
     style.setFontStyle(SkFontStyle(weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
     style.setColor(color.argb());
     style.setFontEdging(m_edging);
@@ -507,6 +536,13 @@ sk_sp<SkTypeface> TextContext::typeface(int weight, const std::string& family) c
         typefaces = m_fontCollection->findTypefaces({SkString(family.c_str())}, style);
     if (typefaces.empty())
         typefaces = m_fontCollection->findTypefaces({SkString(themeFamily.c_str())}, style);
+    if (typefaces.empty()) {
+        for (const char* f : {"SF Pro Text", "SF Pro Display", "SF Pro", "Inter", "Cantarell", "Noto Sans"}) {
+            typefaces = m_fontCollection->findTypefaces({SkString(f)}, style);
+            if (!typefaces.empty())
+                break;
+        }
+    }
     if (typefaces.empty())
         typefaces = m_fontCollection->findTypefaces({SkString(m_family.c_str())}, SkFontStyle());
     return typefaces.empty() ? nullptr : typefaces.front();
