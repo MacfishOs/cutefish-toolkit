@@ -52,7 +52,9 @@ std::string runtimeDirectory()
 
 std::vector<std::string> dataDirectories()
 {
-    return {"/usr/local/share", "/usr/share"};
+    // Where Flatpak exports its installed applications' entries and icons,
+    // ahead of the system's as Flatpak orders them.
+    return {dataHome() + "/flatpak/exports/share", "/var/lib/flatpak/exports/share", "/usr/local/share", "/usr/share"};
 }
 
 std::vector<std::string> configDirectories()

@@ -15,9 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <pwd.h>
 #include <sstream>
-#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 
@@ -35,6 +33,7 @@
 #include "modules/svg/include/SkSVGSVG.h"
 
 #include "base/file.h"
+#include "base/paths.h"
 #include "base/thread_pool.h"
 #include "ui/embedded_files.h"
 #include "ui/image_formats.h"
@@ -46,24 +45,12 @@ namespace cutefish::ui {
 static constexpr size_t kCacheLimit = 512;
 static const char* const kExtensions[] = {".png", ".svg"};
 
-static std::string homeDirectory()
-{
-    if (const passwd* entry = getpwuid(getuid()); entry && entry->pw_dir)
-        return entry->pw_dir;
-    return {};
-}
-
 // Where icon themes live, first match first.
 static std::vector<std::string> iconBases()
 {
-    std::vector<std::string> bases;
-    const std::string home = homeDirectory();
-    if (!home.empty()) {
-        bases.push_back(home + "/.icons");
-        bases.push_back(home + "/.local/share/icons");
-    }
-    bases.push_back("/usr/local/share/icons");
-    bases.push_back("/usr/share/icons");
+    std::vector<std::string> bases{base::paths::home() + "/.icons", base::paths::dataHome() + "/icons"};
+    for (const std::string& directory : base::paths::dataDirectories())
+        bases.push_back(directory + "/icons");
     return bases;
 }
 
@@ -629,8 +616,16 @@ std::vector<IconLoader::GtkCache::Image> IconLoader::GtkCache::lookup(const std:
 IconLoader::IconTheme& IconLoader::theme(const std::string& name)
 {
     IconTheme& theme = m_themes[name];
-    if (theme.loaded)
-        return theme;
+    if (theme.loaded) {
+        // Installing the first Flatpak application creates its icon directory.
+        const bool appeared = std::any_of(theme.missing.begin(), theme.missing.end(), [](const std::string& root) {
+            return std::filesystem::is_directory(root);
+        });
+        if (!appeared)
+            return theme;
+        theme = IconTheme();
+        m_paths.clear();
+    }
     theme.loaded = true;
 
     for (const std::string& base : iconBases()) {
@@ -638,6 +633,8 @@ IconLoader::IconTheme& IconLoader::theme(const std::string& name)
         if (std::filesystem::is_directory(root)) {
             theme.bases.push_back(root);
             theme.caches.push_back(std::make_shared<GtkCache>(root));
+        } else {
+            theme.missing.push_back(root);
         }
     }
     std::ifstream index;

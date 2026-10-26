@@ -100,6 +100,8 @@ private:
         std::vector<std::shared_ptr<GtkCache>> caches;
         std::vector<Directory> directories;
         std::vector<std::string> parents;
+        // Where the theme may still appear.
+        std::vector<std::string> missing;
         bool loaded = false;
         bool found = false;
     };
