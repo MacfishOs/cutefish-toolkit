@@ -3,6 +3,7 @@ include(GoogleTest)
 
 # Linked against the base library alone, which proves it needs no display.
 add_executable(cutefish-toolkit-base-tests
+    base/application_bundle_test.cpp
     base/collator_test.cpp
     base/dbus_test.cpp
     base/desktop_entry_test.cpp
@@ -18,6 +19,7 @@ add_executable(cutefish-toolkit-base-tests
     base/logging_test.cpp
     base/mime_test.cpp
     base/process_test.cpp
+    base/property_list_test.cpp
     base/region_test.cpp
     base/settings_test.cpp
     base/signal_test.cpp

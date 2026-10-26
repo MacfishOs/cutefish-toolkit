@@ -42,6 +42,9 @@ struct DesktopEntry
     bool noDisplay = false;
     bool hidden = false;
     bool dbusActivatable = false;
+    // An application bundle rather than a .desktop file: path and id are the
+    // bundle's folder.
+    bool bundle = false;
 
     // The XDG display rules for this desktop: Hidden, NoDisplay, TryExec,
     // OnlyShowIn and NotShowIn.
