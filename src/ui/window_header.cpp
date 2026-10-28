@@ -418,28 +418,62 @@ public:
 
         const bool pressed = m_pressed || m_checked;
         const bool groupHovered = (isGroupHovered && isGroupHovered()) || m_hovered || pressed;
-        const double opacity = (active || groupHovered) ? 1.0 : 0.35;
         Color color = m_plateColor;
-        if (pressed) color = color.darker(1.25);
+        if (pressed) color = color.darker(1.20);
 
-        // Subtle macOS outer rim border for depth
-        const Color rimColor = color.darker(1.25).withAlpha(std::min(1.0, opacity * 0.85));
+        // Crisp 1px outer border for pixel-perfect clarity
+        const Color rimColor = Color(0, 0, 0, 64);
 
-        // Draw plate with smooth border
-        painter.drawSmoothRectangle(logical, size / 2.0, color.withAlpha(opacity), 0.75, rimColor);
+        // Draw solid vibrant circle plate with crisp border
+        painter.drawSmoothRectangle(logical, size / 2.0, color, 1.0, rimColor);
 
-        // If hovered, draw icon (glyph)
+        // If hovered, draw crisp vector glyphs (macOS style)
         if (groupHovered) {
             const std::string artworkName = currentArtwork();
             if (artworkName.empty()) return;
             Color glyphInk = m_glyphColor;
             if (pressed) glyphInk = glyphInk.darker(1.2);
 
-            const int devSize = std::lround(size * painter.scale());
-            sk_sp<SkImage> image = IconLoader::instance().glyph("window-" + artworkName, devSize, glyphInk, painter.scale());
-            if (image) {
-                const Rect icon = painter.snappedRect(logical);
-                painter.drawImage(image.get(), icon.x, icon.y);
+            const double cx = logical.x + logical.width / 2.0;
+            const double cy = logical.y + logical.height / 2.0;
+
+            if (artworkName == "close") {
+                // Diagonal cross
+                painter.drawLine({cx - 3.2, cy - 3.2}, {cx + 3.2, cy + 3.2}, glyphInk, 1.6);
+                painter.drawLine({cx + 3.2, cy - 3.2}, {cx - 3.2, cy + 3.2}, glyphInk, 1.6);
+            } else if (artworkName == "minimize") {
+                // Horizontal minus line
+                painter.drawLine({cx - 3.6, cy}, {cx + 3.6, cy}, glyphInk, 1.6);
+            } else if (artworkName == "maximize") {
+                // Opposing diagonal triangles
+                Path tr;
+                tr.moveTo(cx - 0.5, cy - 3.2);
+                tr.lineTo(cx + 3.2, cy - 3.2);
+                tr.lineTo(cx + 3.2, cy + 0.5);
+                tr.close();
+                painter.fillPath(tr, glyphInk);
+
+                Path bl;
+                bl.moveTo(cx - 3.2, cy - 0.5);
+                bl.lineTo(cx - 3.2, cy + 3.2);
+                bl.lineTo(cx + 0.5, cy + 3.2);
+                bl.close();
+                painter.fillPath(bl, glyphInk);
+            } else if (artworkName == "restore") {
+                // Inward diagonal triangles
+                Path tr;
+                tr.moveTo(cx + 0.5, cy - 3.2);
+                tr.lineTo(cx + 0.5, cy + 0.5);
+                tr.lineTo(cx + 3.2, cy + 0.5);
+                tr.close();
+                painter.fillPath(tr, glyphInk);
+
+                Path bl;
+                bl.moveTo(cx - 0.5, cy + 3.2);
+                bl.lineTo(cx - 0.5, cy - 0.5);
+                bl.lineTo(cx - 3.2, cy - 0.5);
+                bl.close();
+                painter.fillPath(bl, glyphInk);
             }
         }
     }
