@@ -30,6 +30,7 @@ struct wl_pointer;
 struct wl_touch;
 struct wl_registry;
 struct wl_seat;
+struct wl_buffer;
 struct wl_surface;
 struct wp_cursor_shape_device_v1;
 struct wp_cursor_shape_manager_v1;
@@ -44,6 +45,7 @@ struct zxdg_exporter_v2;
 struct zxdg_importer_v2;
 struct xdg_wm_dialog_v1;
 struct zwp_pointer_gesture_hold_v1;
+struct zwp_pointer_gesture_pinch_v1;
 struct zwp_pointer_gestures_v1;
 struct zwp_text_input_manager_v3;
 struct zwp_primary_selection_device_manager_v1;
@@ -55,6 +57,7 @@ class EventLoop;
 }
 
 namespace cutefish::ui {
+class Bitmap;
 class Menu;
 }
 
@@ -106,7 +109,7 @@ public:
     // Null unless the compositor lets this client place its own windows.
     cutefish_window_placement_v1* windowPlacement() const { return m_windowPlacement; }
     cutefish_surface_blur_v1* surfaceBlur() const { return m_surfaceBlur; }
-    // Null when the compositor has no status bar items.
+    // Null when the compositor has no menu bar items.
     cutefish_status_item_manager_v1* statusItems() const { return m_statusItems; }
     // Null when the compositor shows no main menus.
     cutefish_main_menu_manager_v1* mainMenus() const { return m_mainMenus; }
@@ -122,6 +125,9 @@ public:
     uint32_t buttonSerial() const { return m_buttonSerial; }
     // The serial of the last key or button press, for the clipboard.
     uint32_t inputSerial() const { return m_inputSerial; }
+    // Input the compositor reports outside the seat's devices, such as a
+    // choice in a menu it draws.
+    void setInputSerial(uint32_t serial) { m_inputSerial = serial; }
 
     DataDevice* dataDevice() const { return m_dataDevice.get(); }
     // Null when the compositor has no primary selection.
@@ -148,6 +154,9 @@ public:
 
     // Applies while the pointer is over the window's surface.
     void setCursorShape(ShellSurface* shell, CursorShape shape);
+    // A picture of `scale` device pixels per point as the pointer, its hot
+    // spot in points.
+    void setCursorImage(ShellSurface* shell, const Bitmap& image, int scale, double hotX, double hotY);
     // A window going away loses pointer and keyboard focus.
     void forget(ShellSurface* shell);
 
@@ -256,6 +265,7 @@ private:
     wp_cursor_shape_device_v1* m_cursorShapeDevice = nullptr;
     zwp_pointer_gestures_v1* m_pointerGestures = nullptr;
     zwp_pointer_gesture_hold_v1* m_hold = nullptr;
+    zwp_pointer_gesture_pinch_v1* m_pinch = nullptr;
     wl_touch* m_touch = nullptr;
     std::unique_ptr<Keyboard> m_keyboard;
     wl_data_device_manager* m_dataDeviceManager = nullptr;
@@ -268,6 +278,8 @@ private:
     // The surface each touch point went down on; up and motion do not name it.
     std::vector<std::pair<int32_t, ShellSurface*>> m_touchFocus;
     uint32_t m_enterSerial = 0;
+    wl_surface* m_cursorSurface = nullptr;
+    wl_buffer* m_cursorBuffer = nullptr;
     uint32_t m_buttonSerial = 0;
     uint32_t m_inputSerial = 0;
     // Axis events gather until the pointer frame that ends them.

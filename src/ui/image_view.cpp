@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include <sys/stat.h>
+
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
@@ -181,6 +183,16 @@ static void store(const std::string& key, std::shared_ptr<const ImageView::Pictu
     }
 }
 
+// Changes when the file is written over or replaced under the same name.
+static std::string fileStamp(const std::string& path)
+{
+    struct stat info;
+    if (path.empty() || stat(path.c_str(), &info) != 0)
+        return {};
+    return std::to_string(info.st_ino) + ":" + std::to_string(info.st_size) + ":"
+            + std::to_string(info.st_mtim.tv_sec) + "." + std::to_string(info.st_mtim.tv_nsec);
+}
+
 static base::ThreadPool& decodePool()
 {
     // Two threads: scrolling a grid queues many.
@@ -204,10 +216,20 @@ void ImageView::reset()
 
 void ImageView::setSource(std::string path)
 {
-    if (path == m_source && m_status != Status::Null)
+    std::string stamp = fileStamp(path);
+    if (path == m_source && m_status != Status::Null) {
+        // Written over: decoded again, the picture it has showing meanwhile.
+        if (stamp != m_stamp) {
+            m_stamp = std::move(stamp);
+            m_loading.reset();
+            m_requested.clear();
+            requestLayout();
+        }
         return;
+    }
     reset();
     m_source = std::move(path);
+    m_stamp = std::move(stamp);
     setStatus(m_source.empty() ? Status::Null : Status::Loading);
     requestLayout();
 }
@@ -270,6 +292,16 @@ void ImageView::setSourceSize(SizeF size)
         return;
     m_sourceSize = size;
     requestLayout();
+}
+
+void ImageView::setQuarterTurns(int turns)
+{
+    turns = ((turns % 4) + 4) % 4;
+    if (turns == m_quarterTurns)
+        return;
+    m_quarterTurns = uint8_t(turns);
+    requestLayout();
+    requestPaint();
 }
 
 void ImageView::setAutoTransform(bool autoTransform)
@@ -344,7 +376,9 @@ void ImageView::load(double scale)
     int height = 0;
     ImageScaling scaling = ImageScaling::Fit;
     if (m_fillMode != FillMode::Pad) {
-        const SizeF size = m_sourceSize.width > 0 && m_sourceSize.height > 0 ? m_sourceSize : geometry().size();
+        SizeF size = m_sourceSize.width > 0 && m_sourceSize.height > 0 ? m_sourceSize : geometry().size();
+        if (m_quarterTurns % 2 && !(m_sourceSize.width > 0 && m_sourceSize.height > 0))
+            size = {size.height, size.width};
         width = int(std::lround(size.width * scale));
         height = int(std::lround(size.height * scale));
         if (width <= 0 || height <= 0)
@@ -357,9 +391,7 @@ void ImageView::load(double scale)
             scaling = ImageScaling::Stretch;
     }
 
-    // Cached by name and size: a file changed under the same name
-    // shows again once its entry is gone.
-    const std::string key = std::string(m_thumbnail ? "thumbnail:" : "file:") + m_source + "|"
+    const std::string key = std::string(m_thumbnail ? "thumbnail:" : "file:") + m_source + "|" + m_stamp + "|"
             + std::to_string(width) + "x" + std::to_string(height) + "|" + std::to_string(int(scaling))
             + (m_autoTransform ? "|turned" : "");
     if (key == m_requested)
@@ -443,9 +475,15 @@ void ImageView::paint(Painter& painter)
         return;
     }
     const SkImage* image = m_picture->image.get();
-    const Rect box = painter.deviceRect(localRect());
-    if (box.width <= 0 || box.height <= 0)
+    const Rect rect = painter.deviceRect(localRect());
+    if (rect.width <= 0 || rect.height <= 0)
         return;
+    // A picture turned a quarter is drawn upright into the rect turned
+    // about its centre, then turned with the canvas.
+    Rect box = rect;
+    if (m_quarterTurns % 2)
+        box = {rect.x + (rect.width - rect.height) / 2, rect.y + (rect.height - rect.width) / 2, rect.height,
+               rect.width};
 
     // The picture's aspect, from its own size: a decoded copy may be rounded.
     const double aspectWidth = m_picture->width > 0 ? m_picture->width : image->width();
@@ -479,6 +517,9 @@ void ImageView::paint(Painter& painter)
         painter.clipRoundedRect(localRect(), m_radius, m_corners);
     else
         painter.clip(localRect());
+    if (m_quarterTurns)
+        painter.canvas()->rotate(SkScalar(90 * m_quarterTurns), SkScalar(rect.x + rect.width / 2.0),
+                                 SkScalar(rect.y + rect.height / 2.0));
     SkPaint paint;
     paint.setAlphaf(float(painter.opacity()));
     const bool shrinks = width < image->width() || height < image->height();

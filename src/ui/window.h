@@ -127,6 +127,38 @@ struct FrameStatistics
     uint64_t discarded = 0;
 };
 
+// What a blur behind part of a window lays over the blurred backdrop: a
+// tint, then a colour blended over that by one of the W3C compositing modes
+// (None for no fill). Straight colours, 0 to 1.
+struct BackdropFill
+{
+    enum class Blend {
+        None,
+        Normal,
+        Multiply,
+        Screen,
+        Overlay,
+        Darken,
+        Lighten,
+        ColorDodge,
+        ColorBurn,
+        HardLight,
+        SoftLight,
+        Difference,
+        Exclusion,
+        Hue,
+        Saturation,
+        Color,
+        Luminosity,
+    };
+
+    double tint[4] = {0, 0, 0, 0};
+    Blend blend = Blend::None;
+    double color[4] = {0, 0, 0, 0};
+
+    bool operator==(const BackdropFill&) const = default;
+};
+
 // A top-level window drawing its own frame, or a popup of one. It renders on
 // the UI thread, once per frame callback, and a configure is answered by the
 // next commit with a buffer of the new size.
@@ -184,6 +216,21 @@ public:
     // a bubble's, as cutefish_surface_blur_v1.set_shape; empty for none.
     // Several subpaths blur several areas; the blur rect must cover them.
     void setBackgroundBlurShape(const Path& path);
+    // A rounded rect the compositor blurs over the subsurfaces placed below
+    // the window (a GPU-drawn video or document under translucent content),
+    // together with what is behind the window, before the window's own
+    // pixels; an empty rect for none. Wayland only; applies with the next
+    // frame.
+    void setSubsurfaceBlur(const RectF& rect, double radius);
+    // The outline masking that blur instead of its rounded rect, clipped to
+    // it; several subpaths blur several areas. Empty for none. Wayland only;
+    // applies with the next frame.
+    void setSubsurfaceBlurShape(const Path& path);
+    // What that blur lays over what it blurred, before the window's pixels:
+    // a tint, then a colour blended over that, as a translucent panel whose
+    // content blends with what shows behind it. Wayland only; applies with
+    // the next frame.
+    void setSubsurfaceBlurFill(const BackdropFill& fill);
     // Glass instead of the plain blur over the blur rect, or the plain blur
     // again without one. Wayland only; applies with the next frame.
     void setBackgroundGlass(const std::optional<GlassMaterial>& material);
@@ -214,6 +261,20 @@ public:
     // to 1 (the default 1). At 0 it is unseen but still takes the pointer.
     // At once.
     void setOpacity(double opacity);
+    // While full screen: the bars the window draws along its top, `height`
+    // logical pixels tall. While the panel along the top of the screen is
+    // over the window the pointer on them keeps it there, and with `push`
+    // the compositor moves the whole window down under the panel. At once.
+    void setFullScreenBars(int height, bool push);
+    // While full screen: called as the panel along the top of the screen
+    // starts to slide over the window, reaching `offset` logical pixels into
+    // it, or away when `offset` is 0; the slide takes `durationMs` and eases
+    // out.
+    void setFullScreenRevealHandler(std::function<void(int offset, int durationMs)> handler);
+    // Called for every frame the window renders, after its frame clients
+    // ticked and before it lays out: what the handler changes in the tree
+    // lands in that frame.
+    void setPrepareFrameHandler(std::function<void()> handler);
     // Puts the window's top left at a point in the compositor's global
     // logical coordinates (Application::screens()): before show() it opens
     // there, afterwards it moves there; the compositor keeps it reachable.
@@ -230,12 +291,18 @@ public:
     void setUserResizable(bool resizable);
     // Kept out of the dock and the window switcher, as tool windows are.
     void setSkipTaskbar(bool skip);
-    // The main menu the status bar shows while this window is active, in
-    // place of the application's (Application::setMainMenu); null goes back
-    // to the application's. Not owned; it stays while the window shows it.
+    // The main menu the menu bar shows while this window is active, in
+    // place of the transient parent's or the application's
+    // (Application::setMainMenu); null goes back to those. Not owned; it
+    // stays while the window shows it.
     void setMainMenu(Menu* menu);
-    // The window's own main menu, else the application's; null for a popup.
+    // The window's own main menu, else its transient parent's, else the
+    // application's; null for a popup.
     Menu* mainMenu() const;
+    // The picture the pointer shows over views asking for
+    // CursorShape::Image: `image` in device pixels at `scale` per point,
+    // the hot spot in points from its top left.
+    void setCursorImage(const Bitmap& image, int scale, const PointF& hotSpot);
     // Above ordinary windows.
     void setAlwaysOnTop(bool onTop);
     // The header's colour mode for the window buttons, whatever the theme,
@@ -264,6 +331,8 @@ public:
     void setMaximized(bool maximized);
     void setFullScreen(bool fullScreen);
     void minimize();
+    // Hides every window of the application, as the menu bar's Hide does.
+    void hideApplication();
     // Kept above the parent window and opened over it; a modal one blocks it.
     void setTransientParent(Window* parent, bool modal);
     // The same for another process's window, by the handle it exported
@@ -362,6 +431,11 @@ private:
     friend class Application;
     // Repaints and notifies when isActive() differs from what was notified.
     void updateActive();
+    // Hands mainMenu() to the platform, here and in the transient children
+    // without a menu of their own.
+    void updateMainMenu();
+    // Hands Application::dockMenu() to the platform.
+    void updateDockMenu();
     Color backgroundColor() const;
 
     friend class EmbeddedWindow;
@@ -428,7 +502,8 @@ private:
     void scheduleRender();
     void postRender();
     void render();
-    void prepareFrame(uint64_t frameTimeNs);
+    // False when the window was destroyed by a frame client's tick.
+    bool prepareFrame(uint64_t frameTimeNs);
     // Lays the views out when something asked for it; false when nothing did.
     bool layoutIfNeeded();
     // Lays everything out again and reports the views whose geometry the
@@ -441,6 +516,7 @@ private:
     void paintContent(SkCanvas* canvas, const SkRegion* region);
     void updateHover();
     void updateHoverChain();
+    void deferHover();
     void updateCursor();
     void scheduleToolTip(View* view);
     void showToolTip(View* view, const RectF& rect, const std::string& text);
@@ -452,11 +528,14 @@ private:
     bool pressMovesWindow() const;
 
     void scheduleFrame();
+    void answerConfigureLater();
     // A layout pass for the views marked as needing one, which may be none.
     void scheduleLayout();
     // `prepared`: prepareFrame() already ran at this frame time.
     bool renderFrame(uint64_t frameTimeNs, bool prepared = false);
     std::vector<Rect> paintFrame(SkCanvas* canvas, int bufferAge);
+    // Whether the frame being prepared changes any pixel.
+    bool hasPendingDamage() const;
     // Device pixels the view and its children cover, untransformed below the
     // view itself; `painted` asks how they were last painted, not will be.
     SkIRect subtreeRect(const View* view, PointF origin, bool painted) const;
@@ -545,6 +624,13 @@ private:
     bool m_framePending = false;
     bool m_renderPosted = false;
     bool m_rendering = false;
+    // A configure not yet answered by a frame, and whether a frame since the
+    // last frame callback answered one.
+    bool m_configureUnanswered = false;
+    bool m_configureAnswered = false;
+    // The frame callback waited for came with a commit that drew nothing.
+    bool m_framePendingUnchanged = false;
+    int m_configureTimer = 0;
     FrameStatistics m_statistics;
     uint64_t m_frameTimeNs = 0;
     uint64_t m_refreshNs = 16666667;
@@ -552,6 +638,10 @@ private:
     PointF m_pointer;
     // Layout passes re-hover only a pointer still over the window.
     bool m_pointerInside = false;
+    // Set by FrameClient::deferHover() in this frame's ticks.
+    bool m_hoverDeferred = false;
+    // A deferred frame skipped a hover update; frames keep coming until one makes it.
+    bool m_hoverStale = false;
     View* m_hovered = nullptr;
     // The views tracking hover that the pointer is within, deepest first.
     std::vector<View*> m_hoverChain;

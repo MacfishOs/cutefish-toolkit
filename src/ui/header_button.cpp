@@ -14,6 +14,7 @@
 #include "ui/painter.h"
 #include "ui/theme.h"
 #include "ui/window.h"
+#include "ui/window_controls.h"
 
 namespace cutefish::ui {
 
@@ -71,8 +72,92 @@ void HeaderButton::setGlyphColor(std::optional<Color> color)
     requestPaint();
 }
 
+void HeaderButton::setWindowControl(bool windowControl)
+{
+    if (m_windowControl == windowControl)
+        return;
+    m_windowControl = windowControl;
+    requestPaint();
+}
+
+void HeaderButton::setGroupHovered(bool hovered)
+{
+    if (m_groupHovered == hovered)
+        return;
+    m_groupHovered = hovered;
+    requestPaint();
+}
+
+void HeaderButton::setSegment(bool segment)
+{
+    if (m_segment == segment)
+        return;
+    m_segment = segment;
+    requestPaint();
+}
+
+RectF HeaderButton::visualRect() const
+{
+    if (!m_windowControl)
+        return View::visualRect();
+    window_controls::State state;
+    state.artwork = currentArtwork();
+    state.colored = Theme::current().coloredWindowControls;
+    return window_controls::visualRect(localRect(), state);
+}
+
+void HeaderButton::paintWindowControl(Painter& painter)
+{
+    const Window* window = this->window();
+    window_controls::State state;
+    state.artwork = currentArtwork();
+    state.dark = window ? window->headerDarkMode() : Theme::current().darkMode;
+    state.active = window && window->isActive();
+    state.enabled = isEnabled();
+    state.colored = Theme::current().coloredWindowControls;
+    state.hovered = m_hovered || (state.colored && m_groupHovered);
+    state.pressed = m_pressed || m_checked;
+    window_controls::paint(painter, localRect(), state);
+}
+
+void HeaderButton::paintSegment(Painter& painter)
+{
+    const Window* window = this->window();
+    const bool dark = window ? window->headerDarkMode() : Theme::current().darkMode;
+    const bool pressed = m_pressed || m_checked;
+    if (isEnabled() && (pressed || m_hovered || m_highlighted) && parent()) {
+        const RectF group = parent()->localRect();
+        const RectF plate {group.x - geometry().x, group.y - geometry().y, group.width, group.height};
+        painter.save();
+        painter.clipRoundedRect(plate, plate.height / 2);
+        const Color overlay = dark ? Color::rgb(0xFFFFFF) : Color::rgb(0x000000);
+        painter.fillRect(localRect(), overlay.withAlpha(pressed ? 0.08 : 0.04));
+        painter.restore();
+    }
+    if (m_glyph.empty())
+        return;
+    const RectF bounds = localRect();
+    const Rect icon = painter.snappedRect({std::round((bounds.width - m_glyphSize) / 2),
+                                          std::round((bounds.height - m_glyphSize) / 2), m_glyphSize, m_glyphSize});
+    const bool active = window && window->isActive();
+    const Color ink = window_controls::inkColor(dark, active || m_hovered);
+    sk_sp<SkImage> image = IconLoader::instance().glyph(m_glyph, icon.width, ink);
+    painter.save();
+    painter.multiplyOpacity(isEnabled() ? 1.0 : 0.35);
+    painter.drawImage(image.get(), icon.x, icon.y);
+    painter.restore();
+}
+
 void HeaderButton::paint(Painter& painter)
 {
+    if (m_windowControl) {
+        paintWindowControl(painter);
+        return;
+    }
+    if (m_segment) {
+        paintSegment(painter);
+        return;
+    }
     const Window* window = this->window();
     // The header's mode, which a window may set apart from the theme.
     const bool dark = window ? window->headerDarkMode() : Theme::current().darkMode;

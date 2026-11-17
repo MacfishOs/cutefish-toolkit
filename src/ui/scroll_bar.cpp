@@ -15,7 +15,6 @@
 
 namespace cutefish::ui {
 
-static constexpr double kPadding = 1;
 // Two lines of the default font, so long content keeps a handle to grab.
 static constexpr double kMinimumHandleLength = 32;
 static constexpr auto kFadeDuration = std::chrono::milliseconds(250);
@@ -23,8 +22,8 @@ static constexpr auto kHideDelay = std::chrono::milliseconds(1000);
 
 ScrollBar::ScrollBar(Orientation orientation)
     : m_orientation(orientation)
-    , m_startPadding(kPadding)
-    , m_endPadding(kPadding)
+    , m_startPadding(inset)
+    , m_endPadding(inset)
 {
 }
 
@@ -51,6 +50,11 @@ void ScrollBar::setPadding(double start, double end)
     m_startPadding = start;
     m_endPadding = end;
     requestPaint();
+}
+
+double ScrollBar::cornerPadding(double radius)
+{
+    return std::max(inset, radius - thickness / 2 + inset);
 }
 
 void ScrollBar::setAlwaysShown(bool shown)
@@ -108,12 +112,12 @@ void ScrollBar::paint(Painter& painter)
     const ColorProvider& colors = ColorProvider::forMode(m_darkMode.value_or(theme.darkMode));
     const Color thumb = colors.get(m_dragging ? ColorId::ScrollBarThumbDragging : ColorId::ScrollBarThumb);
     const Color color = thumb.withAlpha(thumb.a / 255.0 * m_opacity);
-    const double width = thickness - 2 * kPadding;
+    const double width = thickness - 2 * inset;
     RectF handle;
     if (m_orientation == Orientation::Vertical)
-        handle = {kPadding, handleStart(), width, handleLength()};
+        handle = {inset, handleStart(), width, handleLength()};
     else
-        handle = {handleStart(), kPadding, handleLength(), width};
+        handle = {handleStart(), inset, handleLength(), width};
     painter.drawSmoothRectangle(handle, theme.smallRadius, color);
 }
 

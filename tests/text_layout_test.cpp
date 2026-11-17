@@ -162,6 +162,30 @@ TEST(TextLayoutTest, DrawsFormatsInTheirColours)
     EXPECT_TRUE(green);
 }
 
+// A heart asked for as emoji (U+2764 U+FE0F) comes from the colour emoji
+// font, though text fonts have a plain black heart.
+TEST(TextLayoutTest, VariationSelectorAsksForEmoji)
+{
+    // Also where the character follows text the text font draws.
+    TextLayout layout("a\u2764\uFE0Fb", {"Inter", 24, false, false});
+    layout.setDefaultColor(Color::rgb(0x000000));
+    layOut(layout, 0);
+    Window window;
+    window.resize({100, 40});
+    window.setBackgroundColor(Color::rgb(0xFFFFFF));
+    window.setContentView(std::make_unique<Canvas>([&](Painter& painter) { layout.draw(painter, {2, 4}); }));
+    window.show();
+    const Image image = window.grab();
+    bool red = false;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const Color c = image.pixel(x, y);
+            red = red || (c.r > 180 && c.g < 80 && c.b < 80);
+        }
+    }
+    EXPECT_TRUE(red);
+}
+
 TEST(TextLayoutTest, CodeLinesLayOutQuickly)
 {
     std::string line = "    for (std::size_t index = 0; index < values.size(); ++index) { total += values[index]; } // sum";

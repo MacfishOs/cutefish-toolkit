@@ -81,6 +81,14 @@ TEST(ApplicationBundleTest, ReadsABundleAsAnEntry)
     const std::string path = directory.path() + "/My Editor.app";
     ASSERT_TRUE(makeBundle(path, "Editor 100%"));
 
+    // With nothing to run it, it keeps its name and icon and has no command.
+    const auto unhandled = bundle::read(path, DesktopEntry());
+    ASSERT_TRUE(unhandled);
+    EXPECT_EQ(unhandled->name, "Editor 100%");
+    EXPECT_EQ(unhandled->icon, path + "/Contents/Resources/AppIcon.icns");
+    EXPECT_EQ(unhandled->exec, "");
+    EXPECT_FALSE(unhandled->shouldShow({}));
+
     const auto handler = DesktopEntry::parse("runner", "/x/runner.desktop", kHandler, "en_US");
     ASSERT_TRUE(handler);
     const auto entry = bundle::read(path + "/", *handler);
@@ -95,6 +103,19 @@ TEST(ApplicationBundleTest, ReadsABundleAsAnEntry)
               (std::vector<std::string>{"runner", "--open", path, "/a/b.txt", "/a/c d.txt"}));
     EXPECT_TRUE(entry->mimeTypes.empty());
     EXPECT_TRUE(entry->shouldShow());
+    EXPECT_TRUE(entry->startupNotify);
+
+    // An agent application starts without launch feedback.
+    ASSERT_TRUE(file::writeAtomically(path + "/Contents/Info.plist", R"(<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Agent</string>
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
+)"));
+    EXPECT_FALSE(bundle::read(path, *handler)->startupNotify);
 
     // A missing icon is none, and a bundle without a list is no application.
     ASSERT_TRUE(makeBundle(path, "Editor", "Missing.icns"));
@@ -182,6 +203,40 @@ TEST(ApplicationBundleTest, OpensItsDocumentTypes)
     EXPECT_FALSE(bundle::opensType(*entry, "application/zip"));
     EXPECT_FALSE(bundle::opensType(*entry, "application/octet-stream"));
     EXPECT_FALSE(bundle::opensType(*entry, "imagex/png"));
+    EXPECT_TRUE(entry->categories.empty());
+}
+
+TEST(ApplicationBundleTest, IsATerminalWithTheShellRole)
+{
+    file::TemporaryDirectory directory(fs::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(directory.isValid());
+    const std::string path = directory.path() + "/Shell.app";
+    ASSERT_TRUE(makeBundle(path, "Shell"));
+    ASSERT_TRUE(file::writeAtomically(path + "/Contents/Info.plist", R"(<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Shell</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Shell</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array><string>public.unix-executable</string></array>
+		</dict>
+	</array>
+</dict>
+</plist>
+)"));
+
+    const auto handler = DesktopEntry::parse("runner", "/x/runner.desktop", kHandler, "en_US");
+    ASSERT_TRUE(handler);
+    const auto entry = bundle::read(path, *handler);
+    ASSERT_TRUE(entry);
+    EXPECT_EQ(entry->categories, (std::vector<std::string>{"TerminalEmulator"}));
 }
 
 TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
@@ -195,9 +250,17 @@ TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
 
     EventLoop loop;
     std::unique_ptr<ApplicationRegistry> registry =
-            ApplicationRegistry::create(loop, {applications.path()}, bundles.path());
+            ApplicationRegistry::create(loop, {applications.path()}, {bundles.path()});
     ASSERT_TRUE(waitForChange(loop, *registry, 5s));
-    EXPECT_TRUE(registry->entries().empty());
+    // Known by name and icon, as to what shows a pinned one, yet no
+    // application to run.
+    EXPECT_TRUE(registry->applications().empty());
+    ASSERT_TRUE(registry->byPath(installed));
+    EXPECT_EQ(registry->byPath(installed)->name, "Editor");
+    EXPECT_EQ(registry->byPath(installed)->exec, "");
+    // One still running is its window's application all the same.
+    EXPECT_EQ(registry->resolveWindow("org.example.Editor", "", installed + "/Contents/MacOS/Editor", "Editor"),
+              registry->byPath(installed));
 
     ASSERT_TRUE(file::writeAtomically(applications.path() + "/runner.desktop", kHandler));
     ASSERT_TRUE(waitForChange(loop, *registry, 5s));
@@ -220,12 +283,47 @@ TEST(ApplicationBundleTest, ListsInstalledBundlesWhenAnEntryRunsThem)
     EXPECT_EQ(registry->applications().front()->path, bundles.path() + "/Renamed.app");
     EXPECT_FALSE(registry->installedById(installed));
 
-    // Taken out of ~/Applications, as into the Trash, it is installed no more.
+    // Taken out of the Applications folders, as into the Trash, it is
+    // installed no more.
     fs::rename(bundles.path() + "/Renamed.app", applications.path() + "/Renamed.app");
     ASSERT_TRUE(waitForChange(loop, *registry, 5s));
     EXPECT_TRUE(registry->applications().empty());
     EXPECT_FALSE(registry->installedById(bundles.path() + "/Renamed.app"));
     EXPECT_FALSE(registry->installedById(applications.path() + "/Renamed.app"));
+}
+
+TEST(ApplicationBundleTest, ListsBundlesOfEveryApplicationsFolder)
+{
+    file::TemporaryDirectory applications(fs::temp_directory_path().string(), "cutefish-test-");
+    file::TemporaryDirectory user(fs::temp_directory_path().string(), "cutefish-test-");
+    file::TemporaryDirectory system(fs::temp_directory_path().string(), "cutefish-test-");
+    ASSERT_TRUE(applications.isValid() && user.isValid() && system.isValid());
+    ASSERT_TRUE(file::writeAtomically(applications.path() + "/runner.desktop", kHandler));
+    ASSERT_TRUE(makeBundle(user.path() + "/Editor.app", "Editor"));
+    ASSERT_TRUE(makeBundle(system.path() + "/Staged/Editor.app", "Editor"));
+    ASSERT_TRUE(makeBundle(system.path() + "/Staged/Viewer.app", "Viewer"));
+
+    EventLoop loop;
+    std::unique_ptr<ApplicationRegistry> registry =
+            ApplicationRegistry::create(loop, {applications.path()}, {user.path(), system.path() + "/Later"});
+    ASSERT_TRUE(waitForChange(loop, *registry, 5s));
+    ASSERT_EQ(registry->applications().size(), 1u);
+    EXPECT_EQ(registry->applications().front()->path, user.path() + "/Editor.app");
+
+    // A folder made later is seen.
+    fs::rename(system.path() + "/Staged", system.path() + "/Later");
+    ASSERT_TRUE(waitForChange(loop, *registry, 5s));
+
+    // Each copy is an application of its own, the user's first.
+    std::vector<std::string> paths;
+    for (const auto& entry : registry->entries()) {
+        if (entry->bundle)
+            paths.push_back(entry->path);
+    }
+    EXPECT_EQ(paths, (std::vector<std::string>{user.path() + "/Editor.app", system.path() + "/Later/Editor.app",
+                                                system.path() + "/Later/Viewer.app"}));
+    EXPECT_EQ(registry->applications().size(), 3u);
+    EXPECT_TRUE(registry->installedById(system.path() + "/Later/Viewer.app"));
 }
 
 TEST(ApplicationBundleTest, ReadsOtherBundlesOnAThread)
@@ -239,7 +337,7 @@ TEST(ApplicationBundleTest, ReadsOtherBundlesOnAThread)
 
     EventLoop loop;
     std::unique_ptr<ApplicationRegistry> registry =
-            ApplicationRegistry::create(loop, {applications.path()}, elsewhere.path() + "/Applications");
+            ApplicationRegistry::create(loop, {applications.path()}, {elsewhere.path() + "/Applications"});
     ASSERT_TRUE(waitForChange(loop, *registry, 5s));
     EXPECT_TRUE(registry->applications().empty());
 

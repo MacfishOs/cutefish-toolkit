@@ -145,11 +145,31 @@ public:
     // nothing it or its children paint reaches outside.
     bool hasOpaqueLayer() const { return m_opaqueLayer; }
     void setOpaqueLayer(bool opaque);
+    // A layered view that asks itself for the parts a change of its size
+    // changes keeps its texture when it grows or shrinks about its top
+    // left: only what the new size uncovers is painted then, with whatever
+    // it asked for. Otherwise a change of size paints it whole.
+    bool keepsLayerOnResize() const { return m_keepsLayerOnResize; }
+    void setKeepsLayerOnResize(bool keeps) { m_keepsLayerOnResize = keeps; }
     // Moves what the view last painted inside the rect, in its coordinates,
     // by (dx, dy) and paints only what that uncovers, along with whatever was
     // waiting to be painted there, moved with it. A view without a layer, or
     // a move that is not whole device pixels, paints the rect again.
     void scrollPainted(const RectF& rect, double dx, double dy);
+    // A layered view's backdrop: in each rounded rect, in the view's
+    // coordinates, what the window composites under the view is blurred by
+    // `blur` logical pixels and its saturation multiplied before the view's
+    // texture goes over it, as a material that shows what lies under it
+    // while that changes. No areas, the default, composite the texture
+    // alone.
+    struct BackdropArea
+    {
+        RectF rect;
+        double radius = 0;
+
+        bool operator==(const BackdropArea&) const = default;
+    };
+    void setBackdrop(const std::vector<BackdropArea>& areas, double blur, double saturation = 1);
 
     // Everything the view paints, in its own coordinates: its rect, and more
     // where shadows or focus rings reach out.
@@ -212,6 +232,9 @@ public:
     // pixels at the scale (the window's when 0), transparent around them.
     // Layers are drawn flat, without their transforms.
     Bitmap grab(double scale = 0);
+    // Drawn moved by a shift in logical pixels, such as a fraction of a
+    // device pixel to land text on the rows it takes in place.
+    Bitmap grab(double scale, PointF shift);
 
     PointF mapFromWindow(PointF point) const;
     PointF mapToWindow(PointF point) const;
@@ -289,6 +312,8 @@ private:
 
     // Every view's measurements, in every window.
     static void invalidateMeasurements();
+    // The backdrop a layered view had, kept apart from it, goes with it.
+    static void forgetBackdrop(const View* view);
     // The view and every view under it lay out again, and measure again too
     // unless told otherwise.
     void invalidateSubtree(bool remeasure = true);
@@ -341,6 +366,7 @@ private:
     bool m_layered = false;
     // In the padding before m_layer, as m_cursorShape is.
     bool m_opaqueLayer = false;
+    bool m_keepsLayerOnResize = false;
     std::unique_ptr<Layer> m_layer;
     bool m_dirty = false;
     bool m_compositeDirty = false;

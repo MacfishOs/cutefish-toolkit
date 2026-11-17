@@ -19,6 +19,7 @@
 #include <wayland-client.h>
 #include <wayland-server.h>
 
+#include "cutefish-surface-blur-v1-server-protocol.h"
 #include "cutefish-window-hints-v1-server-protocol.h"
 #include "cutefish-window-placement-v1-server-protocol.h"
 #include "fractional-scale-v1-server-protocol.h"
@@ -61,6 +62,7 @@ public:
         global(&wp_viewporter_interface, 1);
         global(&wp_fractional_scale_manager_v1_interface, 1);
         global(&cutefish_window_hints_v1_interface, 1);
+        global(&cutefish_surface_blur_v1_interface, 1);
         if (placement)
             global(&cutefish_window_placement_v1_interface, 1);
         m_client = wl_client_create(m_display, fds[0]);
@@ -97,6 +99,19 @@ public:
     {
         std::lock_guard lock(m_mutex);
         return m_hints;
+    }
+
+    // The wl_surface requests, by name.
+    std::vector<std::string> surfaceRequests()
+    {
+        std::lock_guard lock(m_mutex);
+        return m_surfaceRequests;
+    }
+
+    // An xdg_surface.configure for the surface made last.
+    void sendConfigure()
+    {
+        post([this] { xdg_surface_send_configure(m_xdgSurfaces.back(), wl_display_next_serial(m_display)); });
     }
 
     // cutefish_window_placement_v1.position for the surface made last.
@@ -137,6 +152,8 @@ private:
             m_placements.push_back(resource);
         else if (&interface == &wl_surface_interface)
             m_surfaces.push_back(resource);
+        else if (&interface == &xdg_surface_interface)
+            m_xdgSurfaces.push_back(resource);
     }
 
     static int dispatch(const void*, void* object, uint32_t, const wl_message* message, wl_argument* arguments)
@@ -144,7 +161,8 @@ private:
         auto* resource = static_cast<wl_resource*>(object);
         auto* self = static_cast<FakeCompositor*>(wl_resource_get_user_data(resource));
         const bool hints = wl_resource_instance_of(resource, &cutefish_window_hints_v1_interface, nullptr)
-                           || wl_resource_instance_of(resource, &cutefish_window_placement_v1_interface, nullptr);
+                           || wl_resource_instance_of(resource, &cutefish_window_placement_v1_interface, nullptr)
+                           || wl_resource_instance_of(resource, &cutefish_surface_blur_v1_interface, nullptr);
         Request request{message->name, {}};
         int index = 0;
         for (const char* c = message->signature; *c; ++c) {
@@ -163,6 +181,9 @@ private:
         if (hints) {
             std::lock_guard lock(self->m_mutex);
             self->m_hints.push_back(std::move(request));
+        } else if (wl_resource_instance_of(resource, &wl_surface_interface, nullptr)) {
+            std::lock_guard lock(self->m_mutex);
+            self->m_surfaceRequests.push_back(request.name);
         }
         return 0;
     }
@@ -194,6 +215,8 @@ private:
     std::vector<Request> m_hints;
     std::vector<wl_resource*> m_placements;
     std::vector<wl_resource*> m_surfaces;
+    std::vector<wl_resource*> m_xdgSurfaces;
+    std::vector<std::string> m_surfaceRequests;
 };
 
 class Target final : public wayland::ShellSurface::Delegate
@@ -229,6 +252,9 @@ void settle(FakeCompositor& compositor, wl_display* display)
     compositor.post([done] { *done = true; });
     for (int i = 0; i < 100 && !*done; ++i)
         wl_display_roundtrip(display);
+    // The handlers of the events read here may send requests; the second
+    // roundtrip has the compositor read them.
+    wl_display_roundtrip(display);
     wl_display_roundtrip(display);
 }
 
@@ -308,6 +334,51 @@ TEST(WindowHintsProtocolTest, BodyShapeIsSentAndUnset)
     EXPECT_EQ(hints[1].name, "unset_body_shape");
 }
 
+// The blur over the subsurfaces below goes out rounded to whole logical
+// pixels, apart from the background blur, and an empty rect unsets it; its
+// shape goes out as its own request.
+TEST(WindowHintsProtocolTest, SubsurfaceBlurIsSentAndUnset)
+{
+    FakeCompositor compositor;
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+
+    Target target;
+    auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+    shell->setSubsurfaceBlur({10.4, 20.6, 200, 99.8}, 12.2);
+    // Two areas in it.
+    Path areas;
+    areas.addRect({10, 21, 200, 30});
+    areas.addRect({10, 80, 200, 30});
+    shell->setSubsurfaceBlurShape(areas);
+    shell->setSubsurfaceBlurShape(Path());
+    BackdropFill fill;
+    fill.tint[3] = 0.5;
+    fill.blend = BackdropFill::Blend::Color;
+    fill.color[0] = 1;
+    fill.color[3] = 1;
+    shell->setSubsurfaceBlurFill(fill);
+    shell->setSubsurfaceBlur({}, 0);
+    connection->flush();
+    settle(compositor, connection->display());
+
+    std::vector<FakeCompositor::Request> requests = compositor.hints();
+    std::erase_if(requests, [](const FakeCompositor::Request& request) {
+        return request.name.find("over_subsurfaces") == std::string::npos;
+    });
+    ASSERT_EQ(requests.size(), 5u);
+    EXPECT_EQ(requests[0].name, "set_over_subsurfaces");
+    EXPECT_EQ(requests[0].arguments, (std::vector<int64_t>{10, 21, 200, 99, 12}));
+    EXPECT_EQ(requests[1].name, "set_over_subsurfaces_shape");
+    EXPECT_EQ(requests[2].name, "unset_over_subsurfaces_shape");
+    EXPECT_EQ(requests[3].name, "set_over_subsurfaces_fill");
+    EXPECT_EQ(requests[3].arguments,
+              (std::vector<int64_t>{0, 0, 0, wl_fixed_from_double(0.5), CUTEFISH_SURFACE_BLUR_V1_BACKDROP_BLEND_COLOR,
+                                    wl_fixed_from_double(1), 0, 0, wl_fixed_from_double(1)}));
+    EXPECT_EQ(requests[4].name, "unset_over_subsurfaces");
+}
+
 // Opacity goes out as the hint; a toplevel places itself only where the
 // compositor offers placement, rounded to whole logical pixels, and hears
 // where it went.
@@ -351,4 +422,40 @@ TEST(WindowHintsProtocolTest, OpacityAndScreenPositionAreSent)
         wl_display_roundtrip(connection->display());
     ASSERT_EQ(target.positions.size(), 1u);
     EXPECT_EQ(target.positions[0], (PointF{30, 40}));
+}
+
+// A frame that changes nothing commits without a buffer or damage, only while
+// that answers everything: a configure, a new size or a new opaque region
+// waits for a frame with a buffer.
+TEST(WindowHintsProtocolTest, UnchangedFrameCommitsWithoutBuffer)
+{
+    FakeCompositor compositor;
+    base::EventLoop loop;
+    std::unique_ptr<wayland::Connection> connection = wayland::Connection::openFd(loop, compositor.clientFd);
+    ASSERT_TRUE(connection);
+
+    Target target;
+    auto shell = std::make_unique<wayland::ShellSurface>(*connection, &target);
+    shell->prepareCommit(200, 100, true);
+    wl_surface_commit(shell->surface());
+    EXPECT_TRUE(shell->canCommitUnchanged(200, 100, true));
+    EXPECT_FALSE(shell->canCommitUnchanged(201, 100, true));
+    EXPECT_FALSE(shell->canCommitUnchanged(200, 100, false));
+    connection->flush();
+    settle(compositor, connection->display());
+    const size_t before = compositor.surfaceRequests().size();
+
+    shell->commitUnchanged();
+    connection->flush();
+    settle(compositor, connection->display());
+    std::vector<std::string> requests = compositor.surfaceRequests();
+    requests.erase(requests.begin(), requests.begin() + std::ptrdiff_t(before));
+    // The frame callback asked for by the first commit is still out.
+    EXPECT_EQ(requests, (std::vector<std::string>{"commit"}));
+
+    compositor.sendConfigure();
+    settle(compositor, connection->display());
+    EXPECT_FALSE(shell->canCommitUnchanged(200, 100, true));
+    shell->prepareCommit(200, 100, true);
+    EXPECT_TRUE(shell->canCommitUnchanged(200, 100, true));
 }

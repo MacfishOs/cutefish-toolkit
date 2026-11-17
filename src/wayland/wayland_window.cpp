@@ -118,6 +118,12 @@ void WaylandWindow::minimize()
         m_shell->minimize();
 }
 
+void WaylandWindow::hideApplication()
+{
+    if (m_shell)
+        m_shell->hideApplication();
+}
+
 void WaylandWindow::activate()
 {
     if (m_shell)
@@ -173,6 +179,12 @@ void WaylandWindow::show(int width, int height)
         m_shell->setBlur(m_blurRect, m_blurRadius);
         if (!m_blurShape.isEmpty())
             m_shell->setBlurShape(m_blurShape);
+        if (m_subsurfaceBlurRect.width > 0 && m_subsurfaceBlurRect.height > 0)
+            m_shell->setSubsurfaceBlur(m_subsurfaceBlurRect, m_subsurfaceBlurRadius);
+        if (!m_subsurfaceBlurShape.isEmpty())
+            m_shell->setSubsurfaceBlurShape(m_subsurfaceBlurShape);
+        if (m_subsurfaceBlurFill.blend != BackdropFill::Blend::None)
+            m_shell->setSubsurfaceBlurFill(m_subsurfaceBlurFill);
         if (m_glass)
             m_shell->setGlass(m_glass);
         if (m_opacity < 1)
@@ -203,6 +215,34 @@ void WaylandWindow::setBlurShape(const Path& path)
     m_blurShape = path;
     if (m_shell)
         m_shell->setBlurShape(path);
+}
+
+void WaylandWindow::setSubsurfaceBlur(const RectF& rect, double radius)
+{
+    if (rect == m_subsurfaceBlurRect && radius == m_subsurfaceBlurRadius)
+        return;
+    m_subsurfaceBlurRect = rect;
+    m_subsurfaceBlurRadius = radius;
+    if (m_shell)
+        m_shell->setSubsurfaceBlur(rect, radius);
+}
+
+void WaylandWindow::setSubsurfaceBlurShape(const Path& path)
+{
+    if (path == m_subsurfaceBlurShape)
+        return;
+    m_subsurfaceBlurShape = path;
+    if (m_shell)
+        m_shell->setSubsurfaceBlurShape(path);
+}
+
+void WaylandWindow::setSubsurfaceBlurFill(const BackdropFill& fill)
+{
+    if (fill == m_subsurfaceBlurFill)
+        return;
+    m_subsurfaceBlurFill = fill;
+    if (m_shell)
+        m_shell->setSubsurfaceBlurFill(fill);
 }
 
 void WaylandWindow::setGlass(const std::optional<GlassMaterial>& material)
@@ -304,6 +344,12 @@ void WaylandWindow::setCursorShape(CursorShape shape)
         m_shell->connection().setCursorShape(m_shell.get(), shape);
 }
 
+void WaylandWindow::setCursorImage(const Bitmap& image, int scale, double hotX, double hotY)
+{
+    if (m_shell)
+        m_shell->connection().setCursorImage(m_shell.get(), image, scale, hotX, hotY);
+}
+
 void WaylandWindow::setTextInput(const TextInputState* state)
 {
     if (!m_shell)
@@ -365,6 +411,20 @@ bool WaylandWindow::present(SizeF size, double scale, bool opaque, const PaintFu
     return true;
 }
 
+bool WaylandWindow::presentUnchanged(SizeF size, double scale, bool opaque)
+{
+    if (!m_shell || !m_eglWindow || int(std::lround(size.width * scale)) != m_bufferWidth
+        || int(std::lround(size.height * scale)) != m_bufferHeight
+        || !m_shell->canCommitUnchanged(int(size.width), int(size.height), opaque))
+        return false;
+    for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
+        client->parentCommitting();
+    m_shell->commitUnchanged();
+    for (SubsurfaceClient* client : std::vector<SubsurfaceClient*>(m_subsurfaces))
+        client->parentCommitted();
+    return true;
+}
+
 void WaylandWindow::configure(int width, int height, const WindowStates& states)
 {
     // A status item's width is its own.
@@ -392,6 +452,12 @@ void WaylandWindow::setOpacity(double opacity)
         m_shell->setOpacity(opacity);
 }
 
+void WaylandWindow::setFullScreenBars(int height, bool push)
+{
+    if (m_shell)
+        m_shell->setFullScreenBars(height, push);
+}
+
 bool WaylandWindow::setScreenPosition(PointF position)
 {
     return m_shell && m_shell->setScreenPosition(position);
@@ -413,6 +479,18 @@ void WaylandWindow::setMainMenu(Menu* menu)
     m_mainMenu = std::move(mirror);
     cutefish_main_menu_manager_v1_set_main_menu(m_connection->mainMenus(), m_shell->surface(),
                                                 m_mainMenu ? m_mainMenu->proxy() : nullptr);
+}
+
+void WaylandWindow::setDockMenu(Menu* menu)
+{
+    if (!m_shell || !m_shell->toplevel() || !m_connection->mainMenus())
+        return;
+    std::shared_ptr<MainMenuMirror> mirror = m_connection->mainMenu(menu);
+    if (mirror == m_dockMenu)
+        return;
+    m_dockMenu = std::move(mirror);
+    cutefish_main_menu_manager_v1_set_dock_menu(m_connection->mainMenus(), m_shell->surface(),
+                                                m_dockMenu ? m_dockMenu->proxy() : nullptr);
 }
 
 void WaylandWindow::setStatusItemIdentifier(const std::string& identifier)
@@ -461,6 +539,11 @@ void WaylandWindow::interactiveResize(bool active)
     notifyInteractiveResize(active);
 }
 
+void WaylandWindow::fullScreenReveal(int offset, int durationMs)
+{
+    notifyFullScreenReveal(offset, durationMs);
+}
+
 uint32_t WaylandWindow::dragEnter(double x, double y, DropOffer* offer, uint32_t modifiers)
 {
     return notifyDragEnter(x, y, offer, modifiers);
@@ -496,7 +579,7 @@ bool WaylandWindow::startDrag(DragSource source)
 
 void WaylandWindow::scaleChanged(double scale)
 {
-    notifyScaleChanged(scale);
+    notifyScaleChanged(Application::wholeScaleRendering() ? std::ceil(scale) : scale);
 }
 
 void WaylandWindow::closeRequested()
@@ -562,6 +645,11 @@ void WaylandWindow::key(const KeyEvent& event, bool pressed)
 void WaylandWindow::pointerHold()
 {
     notifyHold();
+}
+
+void WaylandWindow::pointerGesture(const GestureEvent& event)
+{
+    notifyGesture(event);
 }
 
 void WaylandWindow::touchDown(int32_t id, double x, double y)

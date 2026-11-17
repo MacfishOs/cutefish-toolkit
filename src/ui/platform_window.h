@@ -37,6 +37,8 @@ public:
     virtual void statusItemPlaced(const RectF& rect) = 0;
 };
 
+struct BackdropFill;
+
 // The window-system side of a Window: its surface, its buffers and the events
 // that come back. Window does layout, painting, pacing and input routing.
 class PlatformWindow
@@ -105,6 +107,10 @@ public:
     virtual void setBlur(const RectF& rect, double radius) = 0;
     // The outline masking the blur.
     virtual void setBlurShape(const Path&) {}
+    // Wayland only: a blur over the subsurfaces placed below the window.
+    virtual void setSubsurfaceBlur(const RectF&, double) {}
+    virtual void setSubsurfaceBlurShape(const Path&) {}
+    virtual void setSubsurfaceBlurFill(const BackdropFill&) {}
     // Wayland only: glass instead of the plain blur, or none.
     virtual void setGlass(const std::optional<GlassMaterial>&) {}
     // Whether the compositor draws blur and glass behind this window.
@@ -112,16 +118,19 @@ public:
     virtual void setResizeAroundCenter(bool) {}
     virtual void setSkipTaskbar(bool) {}
     virtual void setAlwaysOnTop(bool) {}
+    virtual void hideApplication() {}
     virtual void setRestoreId(const std::string&) {}
     virtual void setPlacementAnchor(const std::optional<PlacementAnchor>&) {}
     virtual void setBodyShape(const Path&) {}
     virtual void setCastsShadow(bool) {}
     virtual void setOpacity(double) {}
+    // See Window::setFullScreenBars().
+    virtual void setFullScreenBars(int, bool) {}
     // A toplevel's top left in the compositor's global logical coordinates;
     // false where the compositor places windows itself.
     virtual bool setScreenPosition(PointF) { return false; }
     virtual void setUserResizable(bool) {}
-    // Toplevels only: the main menu the status bar shows while the window is
+    // Toplevels only: the main menu the menu bar shows while the window is
     // active, null for none.
     virtual void setMainMenu(Menu*) {}
     // A status item's identifier and highlight request.
@@ -137,12 +146,21 @@ public:
 
     // Draws a frame of the logical size at the scale and presents it.
     virtual bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) = 0;
+    // Asks for the next frame with a commit that keeps the buffer shown, for
+    // a frame that changes nothing; false where that would leave something
+    // unanswered, such as a configure or a new size, so a frame is presented.
+    virtual bool presentUnchanged(SizeF, double, bool) { return false; }
     // Headless only: the buffer last presented.
     virtual const Image* presentedImage() const { return nullptr; }
     // Headless only: the moves the window asked for.
     virtual int moveRequests() const { return 0; }
     // Headless only: the glass last asked for.
     virtual std::optional<GlassMaterial> requestedGlass() const { return std::nullopt; }
+
+    // See Window::setFullScreenRevealHandler().
+    std::function<void(int offset, int durationMs)> onFullScreenReveal;
+    // See Window::setPrepareFrameHandler().
+    std::function<void()> onPrepareFrame;
 
 protected:
     // Another window's platform side, such as a window a drag carries.
@@ -151,6 +169,7 @@ protected:
     void notifyConfigure(int width, int height, const WindowStates& states);
     void notifyConfigureBounds(int width, int height);
     void notifyInteractiveResize(bool active);
+    void notifyFullScreenReveal(int offset, int durationMs);
     void notifyScaleChanged(double scale);
     void notifyCloseRequested();
     void notifyFrameDone();
@@ -165,6 +184,7 @@ protected:
     void notifyKeyboardLeave();
     void notifyKey(const KeyEvent& event, bool pressed);
     void notifyHold();
+    void notifyGesture(const GestureEvent& event);
     void notifyTouchDown(int32_t id, double x, double y);
     void notifyTouchMotion(int32_t id, double x, double y);
     void notifyTouchUp(int32_t id);

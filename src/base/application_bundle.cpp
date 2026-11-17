@@ -275,9 +275,20 @@ static std::vector<std::string> documentTypes(const plist::Value& info)
     return result;
 }
 
-std::string applicationsDirectory()
+// A terminal says so with the Shell role on a document type, whatever its
+// rank: it runs what it is handed.
+static bool isTerminal(const plist::Value& info)
 {
-    return paths::home() + "/Applications";
+    const plist::Value* documents = info.find("CFBundleDocumentTypes");
+    if (!documents)
+        return false;
+    return std::any_of(documents->array.begin(), documents->array.end(),
+                       [](const plist::Value& document) { return document.string("CFBundleTypeRole") == "Shell"; });
+}
+
+std::vector<std::string> applicationsDirectories()
+{
+    return {paths::home() + "/Applications", "/Applications"};
 }
 
 std::string bundlePath(const std::string& path)
@@ -324,6 +335,9 @@ static std::string execArgument(const std::string& argument, bool literal)
 // the others when it takes none, and the documents to open last.
 static std::string execFor(const std::string& path, const DesktopEntry& handler)
 {
+    if (handler.exec.empty())
+        return {};
+
     // Field codes have to survive, so the handler's arguments are split with
     // every '%' escaped.
     DesktopEntry raw;
@@ -386,7 +400,12 @@ std::optional<DesktopEntry> read(const std::string& path, const DesktopEntry& ha
             entry.icon = icon;
     }
 
+    // An agent or background application has no dock icon of its own to
+    // show the launch on.
+    entry.startupNotify = !info->flag("LSUIElement") && !info->flag("LSBackgroundOnly");
     entry.mimeTypes = documentTypes(*info);
+    if (isTerminal(*info))
+        entry.categories.push_back("TerminalEmulator");
     entry.exec = execFor(bundle, handler);
     entry.tryExec = handler.tryExec;
     return entry;

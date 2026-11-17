@@ -117,6 +117,17 @@ static const sk_sp<SkTypeface>& typefaceFor(FontSet& set, char32_t c)
     return set.fallbacks.emplace(c, std::move(fallback)).first->second;
 }
 
+// The typeface of the character ending at next, the emoji font when the
+// emoji variation selector follows it.
+static sk_sp<SkTypeface> presentedTypeface(FontSet& set, const std::string& text, UChar32 c, size_t next)
+{
+    const sk_sp<SkTypeface>& face = typefaceFor(set, char32_t(std::max<UChar32>(c, 0)));
+    if (set.emoji && face != set.emoji && text.compare(next, 3, "\xEF\xB8\x8F") == 0
+        && set.emoji->unicharToGlyph(SkUnichar(c)))
+        return set.emoji;
+    return face;
+}
+
 namespace {
 
 // Glyphs of one shaped piece: one font, direction and style.
@@ -163,7 +174,7 @@ class Collector final : public SkShaper::RunHandler
 {
 public:
     Collector(std::vector<GlyphRun>& runs, std::vector<Cluster>& clusters, size_t base, uint8_t level, bool bold,
-              bool italic, bool roundAdvances)
+              bool italic, bool roundAdvances, double spacing)
         : m_runs(runs)
         , m_clusters(clusters)
         , m_base(base)
@@ -171,6 +182,7 @@ public:
         , m_bold(bold)
         , m_italic(italic)
         , m_round(roundAdvances)
+        , m_spacing(spacing)
     {
     }
 
@@ -216,7 +228,7 @@ public:
                 const double advance = m_positions[j + 1].x() - m_positions[j].x();
                 run.x[j] = float(pen + m_offsets[j].x());
                 run.y[j] = m_offsets[j].y();
-                pen += m_round ? std::round(advance) : advance;
+                pen += m_round ? std::round(advance + m_spacing) : advance + m_spacing;
                 ++j;
             }
             cluster.glyphCount = j - i;
@@ -253,6 +265,7 @@ private:
     bool m_bold;
     bool m_italic;
     bool m_round;
+    double m_spacing = 0;
     std::vector<SkGlyphID> m_glyphs;
     std::vector<SkPoint> m_positions;
     std::vector<SkPoint> m_offsets;
@@ -271,6 +284,7 @@ struct TextLayoutPrivate
     bool hintedLayout = true;
     TextLayout::Wrap wrap = TextLayout::Wrap::None;
     double tabStop = 0;
+    double letterSpacing = 0;
     std::vector<TextFormatRange> formats;
     Color defaultColor = Color::rgb(0x000000);
 
@@ -444,7 +458,7 @@ void TextLayoutPrivate::shape()
         int32_t next = int32_t(i);
         UChar32 c;
         U8_NEXT(text.data(), next, int32_t(text.size()), c);
-        sk_sp<SkTypeface> face = typefaceFor(set, char32_t(std::max<UChar32>(c, 0)));
+        sk_sp<SkTypeface> face = presentedTypeface(set, text, c, size_t(next));
         const uint8_t level = levels[i];
         size_t end = size_t(next);
         // Marks and joiners stay with what they follow.
@@ -467,7 +481,7 @@ void TextLayoutPrivate::shape()
             const bool joins = category == U_NON_SPACING_MARK || category == U_ENCLOSING_MARK
                     || category == U_COMBINING_SPACING_MARK || d == 0x200D || (d >= 0xFE00 && d <= 0xFE0F)
                     || (d >= 0x1F3FB && d <= 0x1F3FF) || (d >= 0xE0020 && d <= 0xE007F);
-            if (!joins && typefaceFor(set, char32_t(std::max<UChar32>(d, 0))) != face)
+            if (!joins && presentedTypeface(set, text, d, size_t(after)) != face)
                 break;
             end = size_t(after);
         }
@@ -486,7 +500,7 @@ void TextLayoutPrivate::shape()
         std::unique_ptr<SkShaper::ScriptRunIterator> script = SkShapers::HB::ScriptRunIterator(text.data() + i, length);
         const std::string& locale = Application::instance()->text().locale();
         SkShaper::TrivialLanguageRunIterator language(locale.empty() ? "en" : locale.c_str(), length);
-        Collector collector(runs, clusters, i, level, bold, italic, roundAdvances);
+        Collector collector(runs, clusters, i, level, bold, italic, roundAdvances, letterSpacing * pixelSize);
         if (s_shaper && script) {
             s_shaper->shape(text.data() + i, length, fontRuns, bidiRuns, *script, language, nullptr, 0,
                             std::numeric_limits<SkScalar>::max(), &collector);
@@ -578,6 +592,12 @@ void TextLayout::setWrap(Wrap wrap)
 void TextLayout::setTabStopDistance(double distance)
 {
     d->tabStop = distance;
+}
+
+void TextLayout::setLetterSpacing(double ems)
+{
+    d->letterSpacing = ems;
+    d->invalidate();
 }
 
 void TextLayout::setFormats(std::vector<TextFormatRange> formats)

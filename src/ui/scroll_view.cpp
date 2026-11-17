@@ -63,6 +63,8 @@ ScrollView::ScrollView()
     : d(std::make_unique<Private>(this))
     , m_verticalBar(addChild<ScrollBar>(ScrollBar::Orientation::Vertical))
     , m_horizontalBar(addChild<ScrollBar>(ScrollBar::Orientation::Horizontal))
+    , m_verticalBarTop(ScrollBar::inset)
+    , m_verticalBarBottom(ScrollBar::inset)
 {
     setClipsChildren(true);
     m_verticalBar->onPositionRequested = [this](double y) {
@@ -107,7 +109,26 @@ void ScrollView::setElastic(bool elastic)
 
 void ScrollView::setVerticalBarPadding(double top, double bottom)
 {
-    m_verticalBar->setPadding(top, bottom);
+    m_verticalBarTop = top;
+    m_verticalBarBottom = bottom;
+    requestLayout();
+}
+
+void ScrollView::setCornerRadius(double radius)
+{
+    if (radius == m_cornerRadius)
+        return;
+    m_cornerRadius = radius;
+    setChildClipRadius(radius);
+    requestLayout();
+}
+
+void ScrollView::setBottomCornerRadius(double radius)
+{
+    if (radius == m_bottomCornerRadius)
+        return;
+    m_bottomCornerRadius = radius;
+    requestLayout();
 }
 
 void ScrollView::setVerticalBarPolicy(BarPolicy policy)
@@ -210,6 +231,11 @@ void ScrollView::layout()
     m_horizontalBar->setGeometry({0, bounds.height - ScrollBar::thickness, bounds.width,
                                   ScrollBar::thickness});
     m_verticalBar->setVisible(m_vertical && m_verticalPolicy != BarPolicy::AlwaysOff);
+
+    const double corner = ScrollBar::cornerPadding(m_cornerRadius);
+    const double bottomCorner = std::max(corner, ScrollBar::cornerPadding(m_bottomCornerRadius));
+    m_verticalBar->setPadding(std::max(m_verticalBarTop, corner), std::max(m_verticalBarBottom, bottomCorner));
+    m_horizontalBar->setPadding(bottomCorner, bottomCorner);
     m_horizontalBar->setVisible(m_horizontal);
 
     // A resize keeps the position inside the content, unless it is

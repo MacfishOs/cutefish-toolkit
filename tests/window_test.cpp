@@ -3,14 +3,18 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/event_loop.h"
+#include "ui/application.h"
 #include "ui/dialog_window.h"
 #include "ui/keys.h"
 #include "ui/label.h"
 #include "ui/layout.h"
+#include "ui/menu.h"
 #include "ui/test_input.h"
 #include "ui/text_field.h"
 #include "ui/theme.h"
@@ -33,12 +37,12 @@ TEST(WindowTest, HeaderDoubleClickTogglesMaximized)
     int changes = 0;
     window.onStatesChanged = [&changes] { ++changes; };
 
-    TestInput::click(window, {100, 20});
-    TestInput::click(window, {100, 20});
+    TestInput::click(window, {250, 20});
+    TestInput::click(window, {250, 20});
     EXPECT_TRUE(window.states().maximized);
     EXPECT_EQ(changes, 1);
-    // The maximize button, second from the end, restores.
-    TestInput::click(window, {400 - 4 - 32 - 1 - 16, 20});
+    // The maximize button, third from the start, restores.
+    TestInput::click(window, {9 + 2 * (22 + 1) + 11, 20});
     EXPECT_FALSE(window.states().maximized);
 }
 
@@ -59,6 +63,55 @@ TEST(WindowTest, UnconstrainedConfigureWithoutSizeRestoresTheNormalSize)
         EXPECT_EQ(window.size().width, 400);
         EXPECT_EQ(window.size().height, 300);
     }
+}
+
+// A size suggestion sent before the compositor saw the window's new limits
+// (an activation right after the window resized itself) keeps the limits.
+TEST(WindowTest, FloatingConfigureKeepsTheWindowsLimits)
+{
+    Window window;
+    window.setContentView(std::make_unique<View>());
+    window.resize({179, 254});
+    window.setMinimumSize({179, 254});
+    window.setMaximumSize({179, 254});
+    window.show();
+    TestInput::configure(window, 179, 254, {});
+    window.resize({179, 309});
+    window.setMinimumSize({179, 309});
+    window.setMaximumSize({179, 309});
+    TestInput::configure(window, 179, 254, {.activated = true});
+    EXPECT_EQ(window.size().width, 179);
+    EXPECT_EQ(window.size().height, 309);
+
+    // Without limits the suggestion still sizes the window.
+    window.setMinimumSize({});
+    window.setMaximumSize({16777215, 16777215});
+    TestInput::configure(window, 200, 260, {.activated = true});
+    EXPECT_EQ(window.size().width, 200);
+    EXPECT_EQ(window.size().height, 260);
+}
+
+// A maximum of 0 on an axis is no limit, as it is to the compositor.
+TEST(WindowTest, FloatingConfigureTreatsAZeroMaximumAsNoLimit)
+{
+    Window window;
+    window.setContentView(std::make_unique<View>());
+    window.resize({300, 200});
+    window.setMinimumSize({300, 200});
+    window.setMaximumSize({0, 0});
+    window.show();
+    TestInput::configure(window, 900, 600, {});
+    EXPECT_EQ(window.size().width, 900);
+    EXPECT_EQ(window.size().height, 600);
+
+    window.setMaximumSize({500, 0});
+    TestInput::configure(window, 800, 700, {.activated = true});
+    EXPECT_EQ(window.size().width, 500);
+    EXPECT_EQ(window.size().height, 700);
+
+    TestInput::configure(window, 100, 100, {.activated = true});
+    EXPECT_EQ(window.size().width, 300);
+    EXPECT_EQ(window.size().height, 200);
 }
 
 // The headless platform answers maximize and full screen with a configure
@@ -87,13 +140,20 @@ TEST(WindowTest, HeadlessMaximizeKeepsTheStateAndTheSize)
     EXPECT_EQ(window.size().height, 300);
 }
 
-// FishUI puts the buttons' row in a RowLayout cell after the content and
-// before an end margin item: the row starts on a whole logical pixel, a half
-// rounding up, while the buttons keep the fractional top margin.
+// FishUI puts the buttons' row in a RowLayout cell after a start margin item:
+// the row starts on a whole logical pixel, a half rounding up, while the
+// buttons keep the fractional top margin. Plates sit 6 apart, colored dots 1.
 TEST(WindowTest, HeaderButtonsStartOnAWholePixel)
 {
-    for (const auto& [margin, rowX] : {std::pair{4.0, 1100.0 - 4 - 98}, std::pair{9.375, 993.0},
-                                       std::pair{8.6, 993.0}, std::pair{8.5, 994.0}, std::pair{8.4, 994.0}}) {
+    const Theme saved = Theme::current();
+    for (const bool colored : {false, true})
+    for (const auto& [margin, rowX] : {std::pair{4.0, 9.0}, std::pair{9.375, 14.0}, std::pair{8.6, 14.0},
+                                       std::pair{8.5, 14.0}, std::pair{8.4, 13.0}}) {
+        Theme theme = saved;
+        theme.coloredWindowControls = colored;
+        Theme::setCurrent(theme);
+        const double spacing = colored ? 1 : 6;
+        const double row = 3 * 22 + 2 * spacing;
         Window window;
         auto column = std::make_unique<Column>();
         WindowHeader* header = column->addChild<WindowHeader>(48);
@@ -104,18 +164,27 @@ TEST(WindowTest, HeaderButtonsStartOnAWholePixel)
         window.setContentView(std::move(column));
         window.show();
         window.grab();
-        std::vector<RectF> buttons;
+        // The buttons sit in one row that is hovered as a whole.
+        std::vector<const View*> rows;
         for (const auto& child : header->children()) {
             if (child.get() != content)
-                buttons.push_back(child->geometry());
+                rows.push_back(child.get());
         }
+        ASSERT_EQ(rows.size(), 1u);
+        std::vector<RectF> buttons;
+        for (const auto& child : rows[0]->children())
+            buttons.push_back(child->geometry());
         ASSERT_EQ(buttons.size(), 3u);
         SCOPED_TRACE(margin);
-        EXPECT_EQ(buttons[0], (RectF{rowX, margin, 32, 32}));
-        EXPECT_EQ(buttons[1].x, rowX + 33);
-        EXPECT_EQ(buttons[2].x, rowX + 66);
-        EXPECT_EQ(content->geometry().width, rowX - 1);
+        SCOPED_TRACE(colored);
+        EXPECT_EQ(rows[0]->geometry(), (RectF{rowX, margin + 5, row, 22}));
+        EXPECT_EQ(buttons[0], (RectF{0, 0, 22, 22}));
+        EXPECT_EQ(buttons[1].x, 22 + spacing);
+        EXPECT_EQ(buttons[2].x, 44 + 2 * spacing);
+        EXPECT_EQ(content->geometry().x, rowX + row + spacing);
+        EXPECT_EQ(content->geometry().width, 1100 - (rowX + row + spacing));
     }
+    Theme::setCurrent(saved);
 }
 
 // As Qt's ShortcutOverride: a focused text field keeps plain and Shift keys
@@ -219,12 +288,12 @@ TEST(WindowTest, HeaderDragFromViewsInItMovesTheWindow)
     window.setContentView(std::move(column));
     window.show();
     window.grab();
-    const PointF maximizeButton = {400 - 4 - 32 - 1 - 16, 20};
+    const PointF maximizeButton = {9 + 2 * (22 + 1) + 11, 20};
 
     // The header itself moves at once.
-    TestInput::movePointer(window, {250, 20});
-    TestInput::press(window, {250, 20});
-    TestInput::release(window, {250, 20});
+    TestInput::movePointer(window, {350, 20});
+    TestInput::press(window, {350, 20});
+    TestInput::release(window, {350, 20});
     EXPECT_EQ(TestInput::moveRequests(window), 1);
 
     // A wobble within the drag distance is still a click.
@@ -237,14 +306,14 @@ TEST(WindowTest, HeaderDragFromViewsInItMovesTheWindow)
     EXPECT_EQ(TestInput::moveRequests(window), 2);
     EXPECT_TRUE(window.states().maximized);
 
-    dragBy(window, {50, 20}, {30, 0});
+    dragBy(window, {153, 20}, {30, 0});
     EXPECT_EQ(TestInput::moveRequests(window), 3);
     EXPECT_EQ(row->moving->presses, 1);
     EXPECT_EQ(row->moving->releasesInside, 0);
     EXPECT_EQ(row->moving->releasesOutside, 1);
 
     // A view that keeps its drags, and one outside the header, move nothing.
-    dragBy(window, {150, 20}, {30, 0});
+    dragBy(window, {243, 20}, {30, 0});
     EXPECT_EQ(row->still->releasesInside, 1);
     dragBy(window, {200, 150}, {30, 0});
     EXPECT_EQ(outside->releasesInside, 1);
@@ -252,7 +321,7 @@ TEST(WindowTest, HeaderDragFromViewsInItMovesTheWindow)
 
     // Nor does anything while full screen.
     window.setFullScreen(true);
-    dragBy(window, {50, 20}, {30, 0});
+    dragBy(window, {133, 20}, {30, 0});
     EXPECT_EQ(TestInput::moveRequests(window), 3);
     EXPECT_EQ(row->moving->releasesInside, 1);
 }
@@ -274,7 +343,7 @@ TEST(WindowTest, ConfirmDialogAnswersOnce)
     Window* window = dialog.window();
     ASSERT_NE(window, nullptr);
     window->grab();
-    EXPECT_GE(window->size().width, 336);
+    EXPECT_EQ(window->size().width, AlertView::kWidth);
     // A destructive dialog starts on Cancel; Escape cancels too.
     TestInput::setKeyboardFocus(*window, true);
     TestInput::typeKey(*window, key::Escape);
@@ -324,12 +393,43 @@ TEST(WindowTest, ConfirmDialogTextChangesWhileShown)
     window->grab();
     EXPECT_GT(window->size().height, height);
     dialog.setTitle("Pairing with the keyboard");
-    const View* column = window->contentView()->children().front().get();
-    const View* texts = column->children().front().get();
-    EXPECT_EQ(static_cast<const Label*>(texts->children().front().get())->text(), "Pairing with the keyboard");
+    const auto* alert = static_cast<const AlertView*>(window->contentView()->children().front().get());
+    EXPECT_EQ(alert->title()->text(), "Pairing with the keyboard");
     dialog.setText({});
     window->grab();
     EXPECT_EQ(window->size().height, height);
+}
+
+// The alert's metrics: the title 19 from the top, the text 9 under the
+// title's two spare pixels, the buttons 14 under the text's and 16 from the
+// edges, side by side while both texts fit and stacked otherwise.
+TEST(WindowTest, AlertViewLaysOutAsAnAlert)
+{
+    Window window;
+    auto view = std::make_unique<AlertView>();
+    AlertView* alert = view.get();
+    window.setContentView(std::move(view));
+    alert->title()->setText("Quit?");
+    alert->setText("All sessions end.");
+    alert->cancel()->setText("Cancel");
+    alert->confirm()->setText("Quit");
+    window.resize({AlertView::kWidth, 0});
+    window.setFitsContentHeight(true);
+    window.show();
+    window.grab();
+    const double height = 19 + 16 + 2 + 9 + 16 + 2 + 14 + 28 + 16;
+    EXPECT_EQ(window.size().height, height);
+    EXPECT_EQ(alert->title()->geometry(), (RectF{22, 19, 216, 16}));
+    EXPECT_EQ(alert->text()->geometry(), (RectF{22, 46, 216, 16}));
+    EXPECT_EQ(alert->cancel()->geometry(), (RectF{16, 78, 110, 28}));
+    EXPECT_EQ(alert->confirm()->geometry(), (RectF{134, 78, 110, 28}));
+
+    alert->confirm()->setText("Close Every Window and Quit");
+    window.resize({AlertView::kWidth, 0});
+    window.grab();
+    EXPECT_EQ(window.size().height, height + 28 + 8);
+    EXPECT_EQ(alert->confirm()->geometry(), (RectF{16, 78, 228, 28}));
+    EXPECT_EQ(alert->cancel()->geometry(), (RectF{16, 114, 228, 28}));
 }
 
 TEST(WindowTest, DialogTakesTheHeightOfItsContent)
@@ -344,9 +444,52 @@ TEST(WindowTest, DialogTakesTheHeightOfItsContent)
     column->addChild<View>()->setLayoutHints({.preferredHeight = 100});
     dialog.setContentView(std::move(column));
     dialog.show();
-    // A 44-pixel header, the content, 16 below it.
-    EXPECT_EQ(dialog.window()->size().height, 44 + 100 + 16);
+    // A 42-pixel title bar with the close control, the content under it,
+    // 16 below it.
+    EXPECT_EQ(dialog.window()->size().height, 42 + 100 + 16);
     EXPECT_EQ(dialog.window()->size().width, 320);
+}
+
+TEST(WindowTest, DialogWithoutControlsKeepsTheTallerHeader)
+{
+    Window parent;
+    parent.resize({400, 300});
+    parent.setContentView(std::make_unique<View>());
+    parent.show();
+
+    DialogWindow dialog(&parent, "Details", 320);
+    dialog.setCloseVisible(false);
+    auto column = std::make_unique<Column>();
+    column->addChild<View>()->setLayoutHints({.preferredHeight = 100});
+    dialog.setContentView(std::move(column));
+    dialog.show();
+    EXPECT_EQ(dialog.window()->size().height, 44 + 100 + 16);
+}
+
+TEST(WindowTest, DialogOfAFixedHeightGivesTheRestToItsContent)
+{
+    Window parent;
+    parent.resize({400, 300});
+    parent.setContentView(std::make_unique<View>());
+    parent.show();
+
+    DialogWindow dialog(&parent, "Details", 320);
+    auto column = std::make_unique<Column>();
+    View* content = column.get();
+    column->addChild<View>()->setLayoutHints({.preferredHeight = 100});
+    dialog.setContentView(std::move(column));
+    dialog.setHeight(400);
+    dialog.show();
+    dialog.window()->grab();
+    EXPECT_EQ(dialog.window()->size().height, 400);
+    EXPECT_EQ(content->geometry().y, 42);
+    EXPECT_EQ(content->geometry().height, 400 - 42 - 16);
+
+    dialog.setCloseVisible(false);
+    dialog.window()->grab();
+    EXPECT_EQ(dialog.window()->size().height, 400);
+    EXPECT_EQ(content->geometry().y, 44);
+    EXPECT_EQ(content->geometry().height, 400 - 44 - 16);
 }
 
 TEST(WindowTest, ThemeChangesReachLabels)
@@ -374,6 +517,23 @@ TEST(WindowTest, ThemeChangesReachLabels)
     Theme::setCurrent(original);
 }
 
+TEST(WindowTest, ThemeChangeIsAnnounced)
+{
+    const Theme original = Theme::current();
+    int announced = 0;
+    bool darkWhenAnnounced = false;
+    cutefish::base::Subscription subscription = Theme::changed().connect([&] {
+        ++announced;
+        darkWhenAnnounced = Theme::current().darkMode;
+    });
+    Theme::setCurrent(Theme::dark());
+    EXPECT_EQ(announced, 1);
+    EXPECT_TRUE(darkWhenAnnounced);
+    subscription.reset();
+    Theme::setCurrent(original);
+    EXPECT_EQ(announced, 1);
+}
+
 TEST(WindowTest, DialogKeepsItsMarginAtEveryScale)
 {
     Window parent;
@@ -390,10 +550,10 @@ TEST(WindowTest, DialogKeepsItsMarginAtEveryScale)
     for (const double scale : {1.5, 1.0, 1.25}) {
         window->setScale(scale);
         window->grab();
-        const View* actions = window->contentView()->children().front()->children().back().get();
-        const double margin = window->size().height - actions->geometry().bottom();
-        EXPECT_GE(margin, 12) << scale;
-        EXPECT_LT(margin, 13) << scale;
+        const auto* alert = static_cast<const AlertView*>(window->contentView()->children().front().get());
+        const double margin = window->size().height - alert->confirm()->geometry().bottom();
+        EXPECT_GE(margin, 16) << scale;
+        EXPECT_LT(margin, 17) << scale;
     }
 }
 
@@ -447,6 +607,28 @@ TEST(WindowTest, ToolTipCentresItsText)
     }
 }
 
+// Moving off a view with a tool tip onto one without hides the tip at once,
+// as moving onto another view with one or out of the window does.
+TEST(WindowTest, ToolTipHidesWhenThePointerLeavesItsView)
+{
+    Window window;
+    window.resize({400, 200});
+    window.setContentView(std::make_unique<View>());
+    View* target = window.contentView()->addChild<View>();
+    target->setGeometry({180, 120, 40, 40});
+    target->setToolTip("Stop");
+    window.show();
+    window.grab();
+    TestInput::movePointer(window, {200, 140});
+    cutefish::base::EventLoop& loop = Application::instance()->loop();
+    loop.startTimer(std::chrono::milliseconds(800), false, [&loop] { loop.quit(); });
+    loop.run();
+    ASSERT_NE(TestInput::toolTip(window), nullptr);
+
+    TestInput::movePointer(window, {60, 60});
+    EXPECT_EQ(TestInput::toolTip(window), nullptr);
+}
+
 // A label in no window, given a window's text layout mode, measures as the
 // same label drawn in that window.
 TEST(WindowTest, LabelMeasuredOutsideTheWindowMatchesItsDrawnWidth)
@@ -475,6 +657,27 @@ TEST(WindowTest, LabelMeasuredOutsideTheWindowMatchesItsDrawnWidth)
             }
         }
     }
+}
+
+TEST(WindowTest, DialogShowsItsParentsMainMenu)
+{
+    Window parent;
+    Window dialog;
+    dialog.setTransientParent(&parent, true);
+    EXPECT_EQ(dialog.mainMenu(), nullptr);
+
+    Menu parentMenu;
+    parent.setMainMenu(&parentMenu);
+    EXPECT_EQ(dialog.mainMenu(), &parentMenu);
+
+    Menu dialogMenu;
+    dialog.setMainMenu(&dialogMenu);
+    EXPECT_EQ(dialog.mainMenu(), &dialogMenu);
+    dialog.setMainMenu(nullptr);
+    EXPECT_EQ(dialog.mainMenu(), &parentMenu);
+
+    dialog.setTransientParent(nullptr, false);
+    EXPECT_EQ(dialog.mainMenu(), nullptr);
 }
 
 // A window stays active while its dialog has the focus.
@@ -552,8 +755,8 @@ TEST(WindowTest, ConfirmDialogClosesFromItsCornerOnlyWithoutCancel)
         dialog.show();
         Window* window = dialog.window();
         window->grab();
-        // Where the window's close button is: 8 from the top and the end.
-        TestInput::click(*window, {window->size().width - 8 - 16, 8 + 16});
+        // Where the window's close button is: 8 from the top and the start, in the 32-pixel slot.
+        TestInput::click(*window, {8 + 16, 8 + 16});
         EXPECT_EQ(rejected, !cancel);
     }
 }
@@ -595,4 +798,25 @@ TEST(WindowTest, ResizeFromLayoutLaysTheContentOutAtTheNewSize)
     EXPECT_EQ(window.size().height, 200);
     EXPECT_EQ(content->geometry().width, 300);
     EXPECT_EQ(content->geometry().height, 200);
+}
+
+TEST(WindowTest, PrepareFrameHandlerRunsBeforeTheFrameLaysOut)
+{
+    Window window;
+    auto root = std::make_unique<View>();
+    View* child = root->addChild<View>();
+    window.resize({200, 100});
+    window.setContentView(std::move(root));
+    window.show();
+    window.grab();
+
+    int prepared = 0;
+    window.setPrepareFrameHandler([&] {
+        ++prepared;
+        child->setGeometry({10, 10, 50, 20});
+    });
+    child->requestPaint();
+    TestInput::presentFrame(window, 2000000000);
+    EXPECT_EQ(prepared, 1);
+    EXPECT_EQ(child->geometry().width, 50);
 }

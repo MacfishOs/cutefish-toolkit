@@ -49,6 +49,9 @@ public:
     // An opaque surface (the default) lets the compositor skip what is
     // under it. Applies with the next buffer.
     void setOpaque(bool opaque);
+    // Above or below the window, from the window's next frame on; the
+    // surface and what it shows stay.
+    void setStacking(Stacking stacking);
 
     // Buffers show as soon as they are swapped, except across a size change:
     // the window frame that changes the subsurface's size first calls this
@@ -69,11 +72,16 @@ public:
 
     // Drawing thread. makeCurrent() also binds OpenGL ES on the thread.
     bool makeCurrent();
+    // The same with a context of the caller's, made on eglDisplay() without
+    // a config (EGL_KHR_no_config_context), for a renderer that keeps its
+    // own, such as one on desktop OpenGL; the caller binds its API.
+    bool makeCurrent(void* eglContext);
     void doneCurrent();
     // Makes the context current and takes the size set last: the device
     // pixels to draw the default framebuffer at, empty when there is nothing
     // to draw (no size, no surface).
     base::Size beginFrame();
+    base::Size beginFrame(void* eglContext);
     // Presents what was drawn since beginFrame(), without waiting for the
     // compositor, and asks for a frame callback.
     bool endFrame();

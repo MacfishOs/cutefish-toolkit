@@ -13,6 +13,7 @@
 #include <cxxabi.h>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImageInfo.h"
@@ -20,6 +21,7 @@
 
 #include "base/event_loop.h"
 #include "ui/application.h"
+#include "ui/bitmap.h"
 #include "ui/drag.h"
 #include "ui/embedded_platform_window.h"
 #include "ui/embedded_window.h"
@@ -38,6 +40,21 @@
 #include "wayland/wayland_window.h"
 
 namespace cutefish::ui {
+
+// Each window's cursor picture, kept outside the class, which keeps its
+// layout.
+struct CursorImage
+{
+    Bitmap image;
+    int scale = 1;
+    PointF hotSpot;
+};
+
+static std::unordered_map<const Window*, CursorImage>& cursorImages()
+{
+    static std::unordered_map<const Window*, CursorImage> images;
+    return images;
+}
 
 static constexpr uint64_t kDoubleClickNs = 400000000;
 static constexpr auto kToolTipDelay = std::chrono::milliseconds(700);
@@ -138,6 +155,21 @@ static std::string viewPath(const View* view)
     return path;
 }
 
+// What a new window on screen most likely shows at: the primary output's
+// scale, until the compositor tells the window its own.
+static double expectedScale()
+{
+    const std::vector<Application::Screen> screens = Application::instance()->screens();
+    if (screens.empty())
+        return 1.0;
+    double scale = screens.front().scale;
+    for (const Application::Screen& screen : screens) {
+        if (screen.primary)
+            scale = screen.scale;
+    }
+    return Application::wholeScaleRendering() ? std::ceil(scale) : scale;
+}
+
 Window::Window()
     : m_frameDamage(std::make_unique<FrameDamage>())
     , m_self(std::make_shared<Window*>(this))
@@ -145,7 +177,10 @@ Window::Window()
     m_platform = PlatformWindow::create(this, nullptr, {}, false);
     m_platform->setAppId(Application::instance()->applicationId());
     m_platform->setMainMenu(Application::instance()->mainMenu());
+    updateDockMenu();
     Application::instance()->m_windows.push_back(this);
+    if (!m_platform->isHeadless() && !m_platform->isEmbedded())
+        m_scale = expectedScale();
 }
 
 Window::Window(TrustedConnection& connection)
@@ -155,6 +190,7 @@ Window::Window(TrustedConnection& connection)
     m_platform = std::make_unique<wayland::WaylandWindow>(this, *connection.m_connection, *connection.m_gpu);
     m_platform->setAppId(Application::instance()->applicationId());
     m_platform->setMainMenu(Application::instance()->mainMenu());
+    updateDockMenu();
     Application::instance()->m_windows.push_back(this);
 }
 
@@ -204,10 +240,15 @@ Window::~Window()
         m_saveTimer = 0;
         saveSize();
     }
+    if (m_configureTimer)
+        Application::instance()->loop().stopTimer(m_configureTimer);
     std::erase(Application::instance()->m_windows, this);
+    cursorImages().erase(this);
     for (Window* window : Application::instance()->m_windows) {
-        if (window->m_transientParent == this)
+        if (window->m_transientParent == this) {
             window->m_transientParent = nullptr;
+            window->updateMainMenu();
+        }
     }
     hideToolTip();
     if (m_parent) {
@@ -216,6 +257,8 @@ Window::~Window()
     }
     for (Window* popup : m_popups)
         popup->m_parent = nullptr;
+    // A frame of this window under way holds the pointer and sees it gone.
+    *m_self = nullptr;
     m_self.reset();
     for (FrameClient* client : m_frameClients)
         client->m_window = nullptr;
@@ -237,14 +280,33 @@ void Window::setTitle(const std::string& title)
 void Window::setMainMenu(Menu* menu)
 {
     m_mainMenu = menu;
-    m_platform->setMainMenu(mainMenu());
+    updateMainMenu();
 }
 
 Menu* Window::mainMenu() const
 {
     if (isPopup())
         return nullptr;
-    return m_mainMenu ? m_mainMenu : Application::instance()->mainMenu();
+    if (m_mainMenu)
+        return m_mainMenu;
+    return m_transientParent ? m_transientParent->mainMenu() : Application::instance()->mainMenu();
+}
+
+void Window::updateDockMenu()
+{
+    if (auto* platform = dynamic_cast<wayland::WaylandWindow*>(m_platform.get()))
+        platform->setDockMenu(Application::instance()->dockMenu());
+}
+
+void Window::updateMainMenu()
+{
+    if (isPopup())
+        return;
+    m_platform->setMainMenu(mainMenu());
+    for (Window* window : Application::instance()->m_windows) {
+        if (window->m_transientParent == this && !window->m_mainMenu)
+            window->updateMainMenu();
+    }
 }
 
 void Window::setMinimumSize(SizeF size)
@@ -267,6 +329,11 @@ void Window::setMaximized(bool maximized)
 void Window::setFullScreen(bool fullScreen)
 {
     m_platform->setFullScreen(fullScreen);
+}
+
+void Window::hideApplication()
+{
+    m_platform->hideApplication();
 }
 
 void Window::minimize()
@@ -318,6 +385,7 @@ void Window::setTransientParent(Window* parent, bool modal)
     m_transientParent = parent;
     m_modal = parent && modal;
     m_platform->setTransientParent(parent ? parent->m_platform.get() : nullptr, modal);
+    updateMainMenu();
     m_active = familyActivated(this);
     // Opened over the parent, it most likely shows at the parent's scale.
     if (parent && !m_configured)
@@ -412,6 +480,25 @@ void Window::setBackgroundBlurShape(const Path& path)
     scheduleFrame();
 }
 
+void Window::setSubsurfaceBlur(const RectF& rect, double radius)
+{
+    m_platform->setSubsurfaceBlur(rect, radius);
+    // Surface state the next commit carries.
+    scheduleFrame();
+}
+
+void Window::setSubsurfaceBlurShape(const Path& path)
+{
+    m_platform->setSubsurfaceBlurShape(path);
+    scheduleFrame();
+}
+
+void Window::setSubsurfaceBlurFill(const BackdropFill& fill)
+{
+    m_platform->setSubsurfaceBlurFill(fill);
+    scheduleFrame();
+}
+
 void Window::setBackgroundGlass(const std::optional<GlassMaterial>& material)
 {
     m_platform->setGlass(material);
@@ -497,6 +584,21 @@ void Window::setCastsShadow(bool castsShadow)
 void Window::setOpacity(double opacity)
 {
     m_platform->setOpacity(opacity);
+}
+
+void Window::setFullScreenBars(int height, bool push)
+{
+    m_platform->setFullScreenBars(height, push);
+}
+
+void Window::setFullScreenRevealHandler(std::function<void(int offset, int durationMs)> handler)
+{
+    m_platform->onFullScreenReveal = std::move(handler);
+}
+
+void Window::setPrepareFrameHandler(std::function<void()> handler)
+{
+    m_platform->onPrepareFrame = std::move(handler);
 }
 
 bool Window::setScreenPosition(PointF position)
@@ -709,7 +811,8 @@ Image Window::grab(uint64_t frameTimeNs)
 {
     if (!m_contentView)
         return {};
-    prepareFrame(frameTimeNs ? frameTimeNs : monotonicNs());
+    if (!prepareFrame(frameTimeNs ? frameTimeNs : monotonicNs()))
+        return {};
 
     Image image(int(std::lround(m_size.width * m_scale)), int(std::lround(m_size.height * m_scale)));
     // The background is opaque, so premultiplied pixels are the unpremultiplied ones.
@@ -761,6 +864,18 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
         width = int(m_normalSize.width);
         height = int(m_normalSize.height);
     }
+    // A floating window's size suggestion may predate limits the window set
+    // since and the compositor has not seen yet; the limits win, and a
+    // maximum of 0 on an axis is no limit there, as it is to the compositor.
+    if (width > 0 && height > 0 && !constrained) {
+        const auto limit = [](int size, double minimum, double maximum) {
+            const int least = int(std::ceil(minimum));
+            const int most = int(std::floor(maximum));
+            return most > 0 ? std::clamp(size, least, std::max(least, most)) : std::max(size, least);
+        };
+        width = limit(width, m_minimumSize.width, m_maximumSize.width);
+        height = limit(height, m_minimumSize.height, m_maximumSize.height);
+    }
     if (width > 0 && height > 0 && (width != m_size.width || height != m_size.height)) {
         m_size = {double(width), double(height)};
         m_layoutNeeded = true;
@@ -793,12 +908,35 @@ void Window::handleConfigure(int width, int height, const WindowStates& states)
     if (changed && onStatesChanged)
         onStatesChanged();
     m_needsFrame = true;
-    // Answered without waiting for a frame callback: the compositor waits
-    // for the commit that acks it.
-    if (m_platform->isEmbedded())
+    m_configureUnanswered = true;
+    if (m_platform->isEmbedded()) {
         scheduleRender();
-    else if (!m_platform->isHeadless())
-        postRender();
+    } else if (!m_platform->isHeadless()) {
+        // Answered without waiting for a frame callback, as the compositor
+        // waits for the commit that acks it; once per frame, as a pointer
+        // resizing the window moves more often than the screen refreshes.
+        if (!m_framePending || !m_configureAnswered)
+            postRender();
+        else
+            answerConfigureLater();
+    }
+}
+
+// A window the compositor shows nowhere hears of no frame callbacks; its
+// configures are answered a little later instead.
+void Window::answerConfigureLater()
+{
+    if (m_configureTimer)
+        return;
+    base::EventLoop& loop = Application::instance()->loop();
+    const auto wait = std::chrono::nanoseconds(2 * m_refreshNs);
+    m_configureTimer = loop.startTimer(wait, false, [self = std::weak_ptr<Window*>(m_self)] {
+        if (const auto window = self.lock()) {
+            (*window)->m_configureTimer = 0;
+            if ((*window)->m_configureUnanswered)
+                (*window)->postRender();
+        }
+    });
 }
 
 void Window::handleScaleChanged(double scale)
@@ -824,7 +962,8 @@ void Window::handleCloseRequested()
 void Window::handleFrameDone()
 {
     m_framePending = false;
-    if (m_needsFrame || hasTickingClients())
+    m_configureAnswered = false;
+    if (m_needsFrame || m_hoverStale || hasTickingClients())
         postRender();
 }
 
@@ -1423,8 +1562,14 @@ void Window::updateHoverChain()
     }
 }
 
+void Window::deferHover()
+{
+    m_hoverDeferred = true;
+}
+
 void Window::updateHover()
 {
+    m_hoverStale = false;
     updateHoverChain();
     View* view = m_contentView && m_pointerInside ? viewAt(m_pointer, true) : nullptr;
     if (view != m_hovered) {
@@ -1445,7 +1590,7 @@ void Window::updateHover()
         owner = owner->parent();
     if (owner != m_toolTipDismissed)
         m_toolTipDismissed = nullptr;
-    if (owner != m_toolTipOwner && owner != m_toolTipDismissed)
+    if (owner != m_toolTipOwner && (!owner || owner != m_toolTipDismissed))
         scheduleToolTip(owner);
 }
 
@@ -1520,6 +1665,15 @@ void Window::hideToolTip()
     }
 }
 
+void Window::setCursorImage(const Bitmap& image, int scale, const PointF& hotSpot)
+{
+    cursorImages()[this] = {image, scale, hotSpot};
+    if (m_cursorShape == int(CursorShape::Image)) {
+        m_cursorShape = -1;
+        updateCursor();
+    }
+}
+
 void Window::updateCursor()
 {
     // The view holding the pointer keeps its cursor until the release.
@@ -1535,13 +1689,23 @@ void Window::updateCursor()
     if (int(shape) == m_cursorShape)
         return;
     m_cursorShape = int(shape);
-    m_platform->setCursorShape(shape);
+    const auto image = cursorImages().find(this);
+    auto* platform = dynamic_cast<wayland::WaylandWindow*>(m_platform.get());
+    if (shape == CursorShape::Image && image != cursorImages().end() && platform)
+        platform->setCursorImage(image->second.image, image->second.scale, image->second.hotSpot.x,
+                                 image->second.hotSpot.y);
+    else
+        m_platform->setCursorShape(shape == CursorShape::Image ? CursorShape::Default : shape);
 }
 
 void Window::scheduleRender()
 {
-    // A paint asked for while rendering is drawn on the next frame.
-    if (!m_configured || m_framePending || m_rendering || m_platform->isHeadless())
+    // A paint asked for while rendering is drawn on the next frame. One
+    // asked for while only a frame that drew nothing is pending, as an
+    // animation without visible progress ticks, renders at once and its
+    // commit takes over that frame's callback: it shows at the next refresh,
+    // as in a window that was idle.
+    if (!m_configured || (m_framePending && !m_framePendingUnchanged) || m_rendering || m_platform->isHeadless())
         return;
     // The host renders when it composites next.
     if (m_platform->isEmbedded()) {
@@ -1557,7 +1721,7 @@ void Window::postRender()
         return;
     m_renderPosted = true;
     Application::instance()->loop().post([self = std::weak_ptr<Window*>(m_self)] {
-        if (const auto window = self.lock())
+        if (const auto window = self.lock(); window && *window)
             (*window)->render();
     });
 }
@@ -1573,11 +1737,20 @@ void Window::render()
 bool Window::renderFrame(uint64_t frameTimeNs, bool prepared)
 {
     m_rendering = true;
-    if (!prepared)
-        prepareFrame(frameTimeNs);
+    // Nothing of the window is left to touch when it went away in the ticks.
+    if (!prepared && !prepareFrame(frameTimeNs))
+        return false;
     // Whatever asked for a paint until here is drawn by this frame.
     m_needsFrame = false;
     const Color background = backgroundColor();
+    // A frame that changes nothing, such as one an animation without visible
+    // progress ticks, keeps the frame callbacks coming without drawing.
+    if (!hasPendingDamage() && m_platform->presentUnchanged(m_size, m_scale, background.a == 255)) {
+        m_rendering = false;
+        m_framePending = true;
+        m_framePendingUnchanged = true;
+        return true;
+    }
     const bool presented = m_platform->present(
         m_size, m_scale, background.a == 255,
         [this](SkCanvas* canvas, int bufferAge) { return paintFrame(canvas, bufferAge); });
@@ -1587,6 +1760,9 @@ bool Window::renderFrame(uint64_t frameTimeNs, bool prepared)
 
     // Headless and embedded windows hear of no frame callbacks.
     m_framePending = !m_platform->isHeadless() && !m_platform->isEmbedded();
+    m_framePendingUnchanged = false;
+    if (std::exchange(m_configureUnanswered, false))
+        m_configureAnswered = true;
     ++m_statistics.rendered;
     if (!m_statistics.firstSwapNs)
         m_statistics.firstSwapNs = monotonicNs();
@@ -1609,17 +1785,32 @@ uint64_t Window::frameTime(uint64_t now)
     return m_frameTimeNs;
 }
 
-void Window::prepareFrame(uint64_t frameTimeNs)
+bool Window::prepareFrame(uint64_t frameTimeNs)
 {
-    // A client may stop, or go away, from its own tick.
+    // Being destroyed: its surface may already be gone.
+    if (!m_self)
+        return false;
+    // A client may stop, or go away, from its own tick, and so may the
+    // window: a program closes windows from its animation callbacks.
+    const std::shared_ptr<Window*> self = m_self;
     const std::vector<FrameClient*> clients = m_frameClients;
     for (FrameClient* client : clients) {
         if (std::find(m_frameClients.begin(), m_frameClients.end(), client) != m_frameClients.end()
             && client->m_ticking)
             client->tick(frameTimeNs);
+        if (!*self)
+            return false;
+    }
+    if (m_platform->onPrepareFrame) {
+        m_platform->onPrepareFrame();
+        if (!*self)
+            return false;
     }
 
-    if (layoutIfNeeded()) {
+    const bool laidOut = layoutIfNeeded();
+    if (std::exchange(m_hoverDeferred, false)) {
+        m_hoverStale = true;
+    } else if (laidOut || m_hoverStale) {
         updateHover();
     } else if (m_pointerInside) {
         // A scroll or an animation may have moved a view under the pointer.
@@ -1631,6 +1822,7 @@ void Window::prepareFrame(uint64_t frameTimeNs)
         collectDamage(m_overlay.get(), {});
     if (m_toolTip)
         collectDamage(m_toolTip.get(), {});
+    return true;
 }
 
 bool Window::layoutIfNeeded()

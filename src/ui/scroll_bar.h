@@ -25,6 +25,8 @@ public:
 
     // Across the bar, padding included.
     static constexpr double thickness = 8;
+    // The handle's gap to the bar's sides and, unless padded, its track ends.
+    static constexpr double inset = 1;
 
     explicit ScrollBar(Orientation orientation);
     ~ScrollBar() override;
@@ -37,6 +39,10 @@ public:
     // Before and after the handle's track, along the bar, as ScrollBar's
     // topPadding and bottomPadding; 1 unless set.
     void setPadding(double start, double end);
+    // The padding at an end of a bar along the edge of a plate or window with
+    // corners of this radius that keeps the handle's rounded end concentric
+    // with the corner, one inset clear of it.
+    static double cornerPadding(double radius);
     bool isNeeded() const { return m_content > m_viewport; }
     // The handle drawn for a dark or a light background whatever the theme,
     // unset follows the theme.

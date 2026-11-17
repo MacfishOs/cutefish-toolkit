@@ -105,6 +105,8 @@ public:
                             Color border = {});
     // Exactly the device pixels given, for shapes centred by their own rules.
     void fillDeviceRoundedRect(const Rect& rect, double radiusPx, Color color);
+    // An antialiased border of any width inside exactly the device pixels given.
+    void strokeDeviceRoundedRect(const Rect& rect, double radiusPx, Color color, double widthPx);
     // A border inside the rect, as RoundedRectangle's.
     void strokeRoundedRect(const RectF& rect, double radius, Color color, int widthPx = 1,
                            Corners corners = Corners::Circular);
@@ -113,6 +115,10 @@ public:
     static double shadowReach(double sigma) { return 3 * sigma; }
     // A blurred copy of the rounded rect, sigma in logical pixels, under what follows.
     void drawShadow(const RectF& rect, double radius, double sigma, Color color, PointF offset = {});
+    // The shadow only past the snapped rounded rect, so a translucent fill
+    // drawn over it keeps its own colour.
+    void drawOuterShadow(const RectF& rect, double radius, Corners corners, double sigma, Color color,
+                         PointF offset = {});
     void drawHorizontalLine(double x, double y, double width, Color color, int widthPx = 1);
     void drawVerticalLine(double x, double y, double height, Color color, int widthPx = 1);
     // Antialiased and not snapped, for glyph-like strokes.

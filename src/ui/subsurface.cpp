@@ -62,6 +62,7 @@ struct SubsurfacePrivate final : wayland::SubsurfaceClient
     bool swapIntervalSet = false;
 
     // UI thread state.
+    Subsurface::Stacking stacking = Subsurface::Stacking::Below;
     RectF geometry;
     PointF placedPosition = {-1e9, -1e9};
     // Synchronised for the window's commit under way.
@@ -172,6 +173,7 @@ Subsurface::Subsurface(Window* window, Stacking stacking)
     d->surface = wl_compositor_create_surface(connection.compositor());
     wl_surface* parentSurface = parent->shell()->surface();
     d->subsurface = wl_subcompositor_get_subsurface(connection.subcompositor(), d->surface, parentSurface);
+    d->stacking = stacking;
     if (stacking == Stacking::Below)
         wl_subsurface_place_below(d->subsurface, parentSurface);
     else
@@ -246,6 +248,21 @@ RectF Subsurface::geometry() const
     return d->geometry;
 }
 
+void Subsurface::setStacking(Stacking stacking)
+{
+    if (!d->subsurface || !d->parent || stacking == d->stacking)
+        return;
+    d->stacking = stacking;
+    wl_surface* parentSurface = d->parent->shell()->surface();
+    if (stacking == Stacking::Below)
+        wl_subsurface_place_below(d->subsurface, parentSurface);
+    else
+        wl_subsurface_place_above(d->subsurface, parentSurface);
+    // The order lands with the window's next commit.
+    if (d->window)
+        d->window->scheduleFrame();
+}
+
 void Subsurface::setOpaque(bool opaque)
 {
     std::lock_guard lock(d->mutex);
@@ -275,11 +292,18 @@ bool Subsurface::makeCurrent()
     if (!isValid())
         return false;
     eglBindAPI(EGL_OPENGL_ES_API);
+    return makeCurrent(d->context);
+}
+
+bool Subsurface::makeCurrent(void* eglContext)
+{
+    if (!d->subsurface || eglContext == EGL_NO_CONTEXT)
+        return false;
     if (d->eglSurface == EGL_NO_SURFACE) {
         // A context with no surface yet, for a renderer to set itself up.
-        return eglMakeCurrent(d->eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, d->context);
+        return eglMakeCurrent(d->eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, eglContext);
     }
-    if (!eglMakeCurrent(d->eglDisplay, d->eglSurface, d->eglSurface, d->context))
+    if (!eglMakeCurrent(d->eglDisplay, d->eglSurface, d->eglSurface, eglContext))
         return false;
     if (!d->swapIntervalSet) {
         // Frames are paced by waitForFrame(), never inside a swap.
@@ -307,6 +331,14 @@ base::Size Subsurface::beginFrame()
 {
     if (!isValid())
         return {};
+    eglBindAPI(EGL_OPENGL_ES_API);
+    return beginFrame(d->context);
+}
+
+base::Size Subsurface::beginFrame(void* eglContext)
+{
+    if (!d->subsurface || eglContext == EGL_NO_CONTEXT)
+        return {};
     {
         std::lock_guard lock(d->mutex);
         d->frameSize = d->wanted;
@@ -328,7 +360,7 @@ base::Size Subsurface::beginFrame()
         wl_egl_window_resize(d->eglWindow, size.width(), size.height(), 0, 0);
     }
     d->eglSize = size;
-    if (!makeCurrent())
+    if (!makeCurrent(eglContext))
         return {};
     return size;
 }

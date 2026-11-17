@@ -52,6 +52,7 @@ add_executable(cutefish-toolkit-tests
     header_backdrop_test.cpp
     glyph_run_test.cpp
     image_formats_test.cpp
+    image_info_test.cpp
     image_view_test.cpp
     input_test.cpp
     label_test.cpp
@@ -75,12 +76,14 @@ add_executable(cutefish-toolkit-tests
     window_tab_bar_test.cpp
     window_hints_test.cpp
     window_restore_test.cpp
+    zoomable_image_view_test.cpp
     compositing_test.cpp
+    backdrop_test.cpp
     test_views.h
 )
 
 # The image tests write their files with the codecs' own encoders.
-pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libpng libwebp libtiff-4 libjxl libheif)
+pkg_check_modules(ImageTestEncoders REQUIRED IMPORTED_TARGET libjpeg libpng libwebp libtiff-4 libjxl libheif zlib)
 target_link_libraries(cutefish-toolkit-tests PRIVATE cutefish-toolkit GTest::gtest PkgConfig::ImageTestEncoders)
 target_compile_definitions(cutefish-toolkit-tests
     PRIVATE CUTEFISH_TOOLKIT_PROTOCOL_DIR="${PROJECT_SOURCE_DIR}/protocols"
@@ -113,6 +116,7 @@ foreach(xml
         stable/xdg-shell/xdg-shell.xml
         stable/viewporter/viewporter.xml
         staging/fractional-scale/fractional-scale-v1.xml
+        unstable/pointer-gestures/pointer-gestures-unstable-v1.xml
         unstable/xdg-output/xdg-output-unstable-v1.xml)
     get_filename_component(name ${xml} NAME_WE)
     set(code ${TEST_PROTOCOL_DIR}/${name}-protocol.c)
@@ -127,7 +131,7 @@ foreach(xml
 endforeach()
 # The project's own protocols, for a compositor that records their requests.
 foreach(name cutefish-window-hints-v1 cutefish-window-placement-v1 cutefish-status-item-v1
-        cutefish-main-menu-v1)
+        cutefish-main-menu-v1 cutefish-surface-blur-v1)
     set(code ${TEST_PROTOCOL_DIR}/${name}-protocol.c)
     set(header ${TEST_PROTOCOL_DIR}/${name}-server-protocol.h)
     set(xml ${PROJECT_SOURCE_DIR}/protocols/${name}.xml)

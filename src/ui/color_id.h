@@ -87,12 +87,15 @@ enum class ColorId : uint16_t {
 
     HeaderButtonTint,
 
+    // An alert's window and its text.
+    AlertBackground,
+    AlertText,
+
     DialogButtonBackground,
-    DialogButtonBackgroundHovered,
-    DialogButtonBorder,
-    DialogButtonInnerEdge,
+    DialogButtonBackgroundPressed,
     DialogButtonProminentText,
-    DialogButtonProminentInnerEdge,
+    DialogButtonDestructiveBackground,
+    DialogButtonDestructiveText,
     DialogButtonFocusRing,
 
     MenuHighlight,
@@ -110,7 +113,6 @@ enum class ColorId : uint16_t {
     ToolTipBackground,
     ToolTipShadow,
     ToastShadow,
-    AboutDialogBackground,
 
     ToolkitEnd,
 

@@ -44,7 +44,8 @@ public:
     explicit ImageView(std::string path = {});
     ~ImageView() override;
 
-    // A file; empty shows nothing.
+    // A file; empty shows nothing. The same file again is decoded again
+    // when it has been written over since.
     void setSource(std::string path);
     const std::string& source() const { return m_source; }
     // Through the freedesktop thumbnail cache, as Cutefish's
@@ -72,6 +73,10 @@ public:
     // Trilinear filtering when shrinking; used by MaskedLayer, which
     // otherwise filters bilinearly.
     void setMipmap(bool mipmap);
+    // Turns the picture this many quarters clockwise as it is drawn, without
+    // decoding it again; the view's rect holds the turned picture. Direct
+    // rendering only.
+    void setQuarterTurns(int turns);
 
     enum class Rendering {
         // On device pixels, cut to the corner radius with antialiasing.
@@ -106,6 +111,9 @@ private:
     void setStatus(Status status);
 
     std::string m_source;
+    // The file as it was when set, so a picture written over is not
+    // taken from the cache.
+    std::string m_stamp;
     bool m_thumbnail = false;
     FillMode m_fillMode = FillMode::Stretch;
     SizeF m_sourceSize;
@@ -114,6 +122,7 @@ private:
     Corners m_corners = Corners::Circular;
     bool m_smooth = true;
     bool m_mipmap = false;
+    uint8_t m_quarterTurns = 0;
     Rendering m_rendering = Rendering::Direct;
     Status m_status = Status::Null;
     std::shared_ptr<const Picture> m_picture;

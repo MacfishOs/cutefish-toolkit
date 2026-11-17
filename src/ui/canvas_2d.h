@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -36,11 +37,48 @@ public:
     int height() const;
     // The pixels the handle keeps, for the bytes it costs.
     size_t byteCount() const;
+    // Copies the rect of `bitmap`, which has this one's size, in; a GPU
+    // canvas uploads only that part again. Every copy of the handle shows
+    // it. Any thread.
+    void update(const Bitmap& bitmap, const Rect& rect);
 
 private:
     friend class Canvas2D;
     struct Data;
-    std::shared_ptr<const Data> d;
+    std::shared_ptr<Data> d;
+};
+
+// A picture another process draws into a DMA-BUF, such as a web page's
+// frame, which a GPU canvas draws without reading it into memory. The owner
+// may draw into the buffer again between draws. A canvas that paints in
+// software, or a driver that cannot take the buffer, does not draw it, and
+// the caller then reads the pixels itself.
+class DmaBufImage
+{
+public:
+    struct Plane
+    {
+        int fd = -1;
+        uint32_t offset = 0;
+        uint32_t stride = 0;
+    };
+
+    DmaBufImage();
+    // The descriptors are duplicated. fourcc is a DRM format code, and
+    // modifier the DRM format modifier, invalid when the layout is implicit.
+    DmaBufImage(int width, int height, uint32_t fourcc, uint64_t modifier, const std::vector<Plane>& planes);
+    ~DmaBufImage();
+    DmaBufImage(const DmaBufImage&);
+    DmaBufImage& operator=(const DmaBufImage&);
+
+    bool isNull() const { return !d; }
+    int width() const;
+    int height() const;
+
+private:
+    friend class Canvas2D;
+    struct Data;
+    std::shared_ptr<Data> d;
 };
 
 // A colour with floating-point components, 0 to 1, not premultiplied.
@@ -138,6 +176,11 @@ public:
 
     void clipToRect(const RectF& rect);
     void clipToPath(const Path& path);
+    // Drawing from here on is kept by the alpha of the bitmap stretched
+    // over `rect`, and nowhere outside the rect; clearing and every
+    // composite mode go through it as through any clip.
+    void clipToBitmap(const Bitmap& bitmap, const RectF& rect, bool mirrored = false);
+    void clipToBitmap(const RetainedBitmap& bitmap, const RectF& rect, bool mirrored = false);
     // The clip's bounds in the current coordinates.
     RectF clipBounds() const;
 
@@ -185,6 +228,20 @@ public:
     // bottom when mirrored.
     void drawBitmap(const Bitmap& bitmap, const RectF& rect, bool mirrored = false);
     void drawBitmap(const RetainedBitmap& bitmap, const RectF& rect, bool mirrored = false);
+    // False when this canvas cannot draw it; nothing is drawn then.
+    bool drawDmaBufImage(const DmaBufImage& image, const RectF& rect, bool mirrored = false);
+
+    // Replaces what is already drawn inside the path, and the clip, by it
+    // blurred: a Gaussian of `radius` (the canvas's units, as for shadows),
+    // sampling what lies around the path too. A frosted panel's backdrop.
+    void blurBackdrop(const Path& path, double radius);
+    // The same, with the blurred backdrop's saturation scaled by
+    // `saturation` (1 leaves it as the plain blur, above 1 deepens it).
+    void blurBackdrop(const Path& path, double radius, double saturation);
+    // The same, except that inside a group it blurs what lies under the
+    // whole group stack (the canvas's own surface) instead of the group's
+    // layer, as a material sees what is behind it through any groups.
+    void blurBackdropBelowGroups(const Path& path, double radius, double saturation);
 
     // Drawing from here on is a group, composited as one at the matching
     // end with the global alpha, composite mode and shadow of the begin.
@@ -222,6 +279,8 @@ private:
 
     void applyMatrix();
     void drawImage(SkImage* image, const RectF& rect, bool mirrored);
+    void clipToImage(SkImage* image, const RectF& rect, bool mirrored);
+    void withImage(const RetainedBitmap& bitmap, const std::function<void(SkImage*)>& use);
     void drawWith(const std::function<void(SkCanvas*, const void* paint)>& draw, const ColorF& color,
                   bool stroke);
 

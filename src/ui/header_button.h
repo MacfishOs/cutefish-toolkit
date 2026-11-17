@@ -40,8 +40,18 @@ public:
     // The glyph or artwork in this colour instead of the header mode's tint;
     // the plates keep the tint.
     void setGlyphColor(std::optional<Color> color);
+    // A window control, drawn by window_controls in the theme's style.
+    void setWindowControl(bool windowControl);
+    // The group's hover, set by the owner of the neighbouring controls; only
+    // colored controls light up with their row.
+    void setGroupHovered(bool hovered);
+    // One square of the plate its parent paints, as in NavigationButtons:
+    // shaded under the pointer within the plate's round ends, its glyph in
+    // the window controls' ink.
+    void setSegment(bool segment);
 
     SizeF sizeHint() const override { return {m_size, m_size}; }
+    RectF visualRect() const override;
     bool acceptsPointer() const override { return true; }
 
     std::function<void()> onClicked;
@@ -50,6 +60,8 @@ protected:
     // The artwork drawn now; a button may pick it from the window's state.
     virtual std::string currentArtwork() const { return m_artwork; }
     void paint(Painter& painter) override;
+    void paintWindowControl(Painter& painter);
+    void paintSegment(Painter& painter);
     void pointerEnter() override;
     void pointerLeave() override;
     void pointerPress(const PointerEvent& event) override;
@@ -60,14 +72,13 @@ private:
     std::string m_glyph;
     double m_glyphSize = 16;
     double m_size;
-
-protected:
     bool m_hovered = false;
     bool m_pressed = false;
     bool m_checked = false;
     bool m_highlighted = false;
-
-private:
+    bool m_windowControl = false;
+    bool m_groupHovered = false;
+    bool m_segment = false;
     std::optional<Color> m_glyphColor;
     PlateAlphas m_light = {0.11, 0.21};
     PlateAlphas m_dark = {0.12, 0.06};

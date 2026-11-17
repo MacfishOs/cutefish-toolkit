@@ -4,10 +4,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <vector>
 
+#include "base/event_loop.h"
 #include "test_views.h"
+#include "ui/application.h"
 #include "ui/keys.h"
 #include "ui/layout.h"
 #include "ui/menu.h"
@@ -108,10 +111,10 @@ TEST(MenuTest, RowsHaveThemeMetrics)
     f.menu.popupFor(f.anchor);
     Window* popup = f.menu.window();
     popup->grab();
-    // Three rows of 30, one separator of 5, a pixel between each, five
-    // pixels above and below.
-    EXPECT_EQ(popup->size().height, 3 * 30 + 5 + 3 + 2 * 5);
-    EXPECT_GE(popup->size().width, 146 + 2 * 3);
+    // Three rows of 26 and one separator of 12, five pixels above and
+    // below.
+    EXPECT_EQ(popup->size().height, 3 * 26 + 12 + 2 * 5);
+    EXPECT_GE(popup->size().width, 158 + 2 * 5);
 }
 
 // A drop-down: half the screen tall at most, opened centred on the checked
@@ -206,10 +209,10 @@ TEST(MenuTest, ClickChoosesTheRowUnderThePointer)
     Window* popup = f.menu.window();
     popup->grab();
     // The second row is disabled; a click there does nothing.
-    TestInput::click(*popup, {40, 5 + 30 + 15});
+    TestInput::click(*popup, {40, 5 + 26 + 13});
     EXPECT_TRUE(f.chosen.empty());
     EXPECT_TRUE(f.menu.isOpen());
-    TestInput::click(*popup, {40, 5 + 15});
+    TestInput::click(*popup, {40, 5 + 13});
     EXPECT_EQ(f.chosen, (std::vector<std::string>{"Open"}));
 }
 
@@ -220,9 +223,73 @@ TEST(MenuTest, HoverLightsTheRowUnderThePointer)
     Window* popup = f.menu.window();
     popup->grab();
     // No button held: the row lights from hover alone, and Return takes it.
-    TestInput::movePointer(*popup, {40, 5 + 30 + 30 + 9 + 15});
+    TestInput::movePointer(*popup, {40, 5 + 26 + 26 + 12 + 13});
     TestInput::typeKey(*popup, key::Return);
     EXPECT_EQ(f.chosen, (std::vector<std::string>{"Quit"}));
+}
+
+// On its way into a submenu the pointer crosses the frame's margin beside the
+// row; the submenu stays until the pointer reaches another row.
+TEST(MenuTest, SubmenuStaysWhileThePointerCrossesTheMargin)
+{
+    Fixture f;
+    Menu* more = f.menu.addSubmenu("More");
+    more->addItem("Inside", [] {});
+    f.menu.popup(&f.window, {20, 20});
+    Window* popup = f.menu.window();
+    popup->grab();
+    const double moreRow = 5 + 26 + 26 + 12 + 26 + 13;
+    TestInput::movePointer(*popup, {40, moreRow});
+    ASSERT_TRUE(more->isOpen());
+
+    TestInput::movePointer(*popup, {popup->size().width - 2, moreRow});
+    cutefish::base::EventLoop& loop = Application::instance()->loop();
+    loop.startTimer(std::chrono::milliseconds(200), false, [&loop] { loop.quit(); });
+    loop.run();
+    EXPECT_TRUE(more->isOpen());
+
+    TestInput::movePointer(*popup, {40, 5 + 13});
+    EXPECT_FALSE(more->isOpen());
+}
+
+TEST(MenuTest, SubmenusStayWhileThePointerIsInADeeperOne)
+{
+    Fixture f;
+    Menu* more = f.menu.addSubmenu("More");
+    more->addItem("Inside", [] {});
+    Menu* deeper = more->addSubmenu("Deeper");
+    deeper->addItem("Deepest", [] {});
+    f.menu.popup(&f.window, {20, 20});
+    Window* popup = f.menu.window();
+    popup->grab();
+    const double moreRow = 5 + 26 + 26 + 12 + 26 + 13;
+    TestInput::movePointer(*popup, {40, moreRow});
+    ASSERT_TRUE(more->isOpen());
+
+    // Into More and onto Deeper, then into Deeper's own window: each menu
+    // the pointer leaves hears it.
+    TestInput::leavePointer(*popup);
+    Window* moreWindow = more->window();
+    moreWindow->grab();
+    TestInput::movePointer(*moreWindow, {40, 5 + 26 + 13});
+    ASSERT_TRUE(deeper->isOpen());
+    TestInput::leavePointer(*moreWindow);
+    Window* deeperWindow = deeper->window();
+    deeperWindow->grab();
+    TestInput::movePointer(*deeperWindow, {40, 5 + 13});
+    cutefish::base::EventLoop& loop = Application::instance()->loop();
+    loop.startTimer(std::chrono::milliseconds(200), false, [&loop] { loop.quit(); });
+    loop.run();
+    EXPECT_TRUE(f.menu.isOpen());
+    EXPECT_TRUE(more->isOpen());
+    EXPECT_TRUE(deeper->isOpen());
+
+    // Back on another row of the first menu, both go.
+    TestInput::leavePointer(*deeperWindow);
+    TestInput::movePointer(*popup, {40, 5 + 13});
+    EXPECT_FALSE(more->isOpen());
+    EXPECT_FALSE(deeper->isOpen());
+    EXPECT_TRUE(f.menu.isOpen());
 }
 
 TEST(MenuTest, EscapeAndDismissalClose)
@@ -357,8 +424,8 @@ TEST(MenuTest, GlyphsOverGlassKeepTheirColour)
         const Color text = Theme::current().text;
         // The first row's icon at its start, the second row's chevron at its
         // end, labels elsewhere; device pixels at 1.5, clear of the corners.
-        const int iconEnd = 55;
-        const int chevronStart = glass.width() - 45;
+        const int iconEnd = 59;
+        const int chevronStart = glass.width() - 50;
         const int half = glass.height() / 2;
         int glyphWorst = 0;
         int textWorst = 0;

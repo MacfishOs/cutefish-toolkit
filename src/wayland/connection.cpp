@@ -4,11 +4,14 @@
 #include "wayland/connection.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <utility>
 #include <wayland-client.h>
 
@@ -33,6 +36,7 @@
 #include <xdg-toplevel-drag-v1-client-protocol.h>
 
 #include "base/event_loop.h"
+#include "ui/bitmap.h"
 #include "wayland/data_device.h"
 #include "wayland/keyboard.h"
 #include "wayland/main_menu.h"
@@ -229,6 +233,13 @@ struct ConnectionListeners
             shell->delegate()->interactiveResize(active != 0);
     }
 
+    static void fullscreenReveal(void*, cutefish_window_hints_v1*, wl_surface* surface, int32_t offset,
+                                 uint32_t duration)
+    {
+        if (ShellSurface* shell = shellSurfaceFor(surface))
+            shell->delegate()->fullScreenReveal(offset, int(duration));
+    }
+
     static void workArea(void* data, cutefish_window_hints_v1*, const char* output, int32_t x, int32_t y,
                          int32_t width, int32_t height, uint32_t primary)
     {
@@ -264,11 +275,18 @@ struct ConnectionListeners
                 self->m_hold = zwp_pointer_gestures_v1_get_hold_gesture(self->m_pointerGestures,
                                                                         self->m_pointer);
                 zwp_pointer_gesture_hold_v1_add_listener(self->m_hold, &hold, self);
+                self->m_pinch = zwp_pointer_gestures_v1_get_pinch_gesture(self->m_pointerGestures,
+                                                                          self->m_pointer);
+                zwp_pointer_gesture_pinch_v1_add_listener(self->m_pinch, &pinch, self);
             }
         } else if (!hasPointer && self->m_pointer) {
             if (self->m_hold) {
                 zwp_pointer_gesture_hold_v1_destroy(self->m_hold);
                 self->m_hold = nullptr;
+            }
+            if (self->m_pinch) {
+                zwp_pointer_gesture_pinch_v1_destroy(self->m_pinch);
+                self->m_pinch = nullptr;
             }
             if (self->m_cursorShapeDevice) {
                 wp_cursor_shape_device_v1_destroy(self->m_cursorShapeDevice);
@@ -505,13 +523,52 @@ struct ConnectionListeners
     {
     }
 
+    // Updates and the end name no surface: they go where the pointer is,
+    // which is where the pinch began.
+    static void pinchGesture(Connection* self, GestureEvent event, uint32_t time)
+    {
+        event.time = time;
+        event.modifiers = self->m_keyboard ? self->m_keyboard->modifiers() : NoModifier;
+        if (self->m_pointerFocus)
+            self->m_pointerFocus->delegate()->pointerGesture(event);
+    }
+
+    static void pinchBegin(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, uint32_t time, wl_surface*,
+                           uint32_t fingers)
+    {
+        GestureEvent event;
+        event.type = GestureEvent::Type::PinchBegin;
+        event.fingers = fingers;
+        pinchGesture(static_cast<Connection*>(data), event, time);
+    }
+
+    static void pinchUpdate(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t time, wl_fixed_t dx, wl_fixed_t dy,
+                            wl_fixed_t scale, wl_fixed_t rotation)
+    {
+        GestureEvent event;
+        event.type = GestureEvent::Type::PinchUpdate;
+        event.delta = {wl_fixed_to_double(dx), wl_fixed_to_double(dy)};
+        event.scale = wl_fixed_to_double(scale);
+        event.rotation = wl_fixed_to_double(rotation);
+        pinchGesture(static_cast<Connection*>(data), event, time);
+    }
+
+    static void pinchEnd(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, uint32_t time, int32_t cancelled)
+    {
+        GestureEvent event;
+        event.type = GestureEvent::Type::PinchEnd;
+        event.cancelled = cancelled != 0;
+        pinchGesture(static_cast<Connection*>(data), event, time);
+    }
+
     static constexpr wl_registry_listener registry = {global, globalRemove};
     static constexpr wl_output_listener outputListener = {outputGeometry, outputMode, outputDone, outputScale};
     static constexpr zxdg_output_v1_listener xdgOutput = {xdgOutputPosition, xdgOutputSize, xdgOutputDone,
                                                           xdgOutputName, xdgOutputDescription};
     static constexpr zwp_pointer_gesture_hold_v1_listener hold = {holdBegin, holdEnd};
+    static constexpr zwp_pointer_gesture_pinch_v1_listener pinch = {pinchBegin, pinchUpdate, pinchEnd};
     static constexpr xdg_wm_base_listener wmBase = {ping};
-    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize, workArea};
+    static constexpr cutefish_window_hints_v1_listener windowHints = {interactiveResize, workArea, fullscreenReveal};
     static constexpr cutefish_window_placement_v1_listener windowPlacement = {windowPosition};
     static constexpr wl_seat_listener seat = {capabilities, seatName};
     static constexpr wl_pointer_listener pointer = {
@@ -576,8 +633,10 @@ std::vector<Connection::OutputInfo> Connection::outputs() const
                           output.logicalSize.height}};
         // Either side of the output, whichever way it is turned.
         const double logical = std::max(output.logicalSize.width, output.logicalSize.height);
+        // Scales come in 120ths (fractional-scale-v1) and the logical size in
+        // whole units, so the ratio is rounded back to the scale it came from.
         if (logical > 0 && output.pixelSize.width > 0)
-            info.scale = std::max(output.pixelSize.width, output.pixelSize.height) / logical;
+            info.scale = std::round(std::max(output.pixelSize.width, output.pixelSize.height) / logical * 120) / 120;
         if (const auto area = m_workAreas.find(output.outputName); area != m_workAreas.end()) {
             info.workArea = area->second.area;
             info.primary = area->second.primary;
@@ -658,10 +717,16 @@ Connection::~Connection()
     m_keyboard.reset();
     if (m_hold)
         zwp_pointer_gesture_hold_v1_destroy(m_hold);
+    if (m_pinch)
+        zwp_pointer_gesture_pinch_v1_destroy(m_pinch);
     if (m_pointerGestures)
         zwp_pointer_gestures_v1_destroy(m_pointerGestures);
     if (m_cursorShapeDevice)
         wp_cursor_shape_device_v1_destroy(m_cursorShapeDevice);
+    if (m_cursorBuffer)
+        wl_buffer_destroy(m_cursorBuffer);
+    if (m_cursorSurface)
+        wl_surface_destroy(m_cursorSurface);
     if (m_pointer)
         wl_pointer_release(m_pointer);
     if (m_touch)
@@ -821,8 +886,127 @@ void Connection::setCursorShape(ShellSurface* shell, CursorShape shape)
         break;
     case CursorShape::Blank:
         break;
+    case CursorShape::ContextMenu:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU;
+        break;
+    case CursorShape::Help:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+        break;
+    case CursorShape::Progress:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+        break;
+    case CursorShape::Wait:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+        break;
+    case CursorShape::Cell:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CELL;
+        break;
+    case CursorShape::Crosshair:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+        break;
+    case CursorShape::VerticalText:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_VERTICAL_TEXT;
+        break;
+    case CursorShape::Alias:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALIAS;
+        break;
+    case CursorShape::Copy:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY;
+        break;
+    case CursorShape::NoDrop:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+        break;
+    case CursorShape::AllScroll:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL;
+        break;
+    case CursorShape::ColumnResize:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE;
+        break;
+    case CursorShape::RowResize:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ROW_RESIZE;
+        break;
+    case CursorShape::ResizeNorth:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE;
+        break;
+    case CursorShape::ResizeEast:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE;
+        break;
+    case CursorShape::ResizeSouth:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE;
+        break;
+    case CursorShape::ResizeWest:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE;
+        break;
+    case CursorShape::ResizeNorthEast:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE;
+        break;
+    case CursorShape::ResizeNorthWest:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE;
+        break;
+    case CursorShape::ResizeSouthEast:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE;
+        break;
+    case CursorShape::ResizeSouthWest:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE;
+        break;
+    case CursorShape::ResizeNorthEastSouthWest:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE;
+        break;
+    case CursorShape::ResizeNorthWestSouthEast:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE;
+        break;
+    case CursorShape::ZoomIn:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_IN;
+        break;
+    case CursorShape::ZoomOut:
+        wire = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT;
+        break;
+    case CursorShape::Image:
+        return;
     }
     wp_cursor_shape_device_v1_set_shape(m_cursorShapeDevice, m_enterSerial, wire);
+}
+
+void Connection::setCursorImage(ShellSurface* shell, const Bitmap& image, int scale, double hotX, double hotY)
+{
+    if (shell != m_pointerFocus || !m_pointer || !m_shm || image.isNull())
+        return;
+    const Bitmap pixels = image.converted(Bitmap::Format::Argb32Premultiplied);
+    const int width = pixels.width();
+    const int height = pixels.height();
+    const size_t stride = size_t(width) * 4;
+    const size_t size = stride * size_t(height);
+    const int fd = memfd_create("cutefish-cursor", MFD_CLOEXEC);
+    if (fd < 0)
+        return;
+    if (ftruncate(fd, off_t(size)) < 0) {
+        close(fd);
+        return;
+    }
+    void* memory = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (memory == MAP_FAILED) {
+        close(fd);
+        return;
+    }
+    for (int y = 0; y < height; ++y)
+        std::memcpy(static_cast<uint8_t*>(memory) + size_t(y) * stride, pixels.constScanLine(y), stride);
+    munmap(memory, size);
+    wl_shm_pool* pool = wl_shm_create_pool(m_shm, fd, int32_t(size));
+    wl_buffer* buffer = wl_shm_pool_create_buffer(pool, 0, width, height, int32_t(stride), WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    close(fd);
+    if (!m_cursorSurface)
+        m_cursorSurface = wl_compositor_create_surface(m_compositor);
+    wl_surface_set_buffer_scale(m_cursorSurface, std::max(scale, 1));
+    wl_surface_attach(m_cursorSurface, buffer, 0, 0);
+    wl_surface_damage_buffer(m_cursorSurface, 0, 0, width, height);
+    wl_surface_commit(m_cursorSurface);
+    // The surface keeps its buffer until the next one is attached.
+    if (m_cursorBuffer)
+        wl_buffer_destroy(m_cursorBuffer);
+    m_cursorBuffer = buffer;
+    wl_pointer_set_cursor(m_pointer, m_enterSerial, m_cursorSurface, int32_t(std::lround(hotX)),
+                          int32_t(std::lround(hotY)));
 }
 
 static void syncDone(void* data, wl_callback* callback, uint32_t)

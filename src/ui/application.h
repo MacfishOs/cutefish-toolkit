@@ -64,6 +64,12 @@ public:
 
     static Application* instance();
 
+    // Windows on screen draw at the next whole scale at or above their
+    // output's and the compositor scales them down to it, as on systems
+    // without fractional scales. Set before the first window shows.
+    static void setWholeScaleRendering(bool enabled);
+    static bool wholeScaleRendering();
+
     const std::vector<std::string>& arguments() const { return m_arguments; }
     Platform platform() const { return m_platform; }
 
@@ -75,6 +81,9 @@ public:
     // single-instance application to hand to its running instance, whose
     // Window::activate() takes it. Empty when there was none.
     std::string takeActivationToken() { return std::exchange(m_activationToken, {}); }
+    // For a process that took the token out of its environment before the
+    // application existed, as one whose environment other code holds must.
+    void setActivationToken(std::string token) { m_activationToken = std::move(token); }
 
     base::EventLoop& loop() const { return *m_loop; }
     bool hasConnection() const { return m_connection != nullptr; }
@@ -92,12 +101,16 @@ public:
     base::dbus::Connection* sessionBus() const { return m_sessionBus; }
     const std::vector<Window*>& windows() const { return m_windows; }
 
-    // The main menu the status bar shows while one of the application's
+    // The main menu the menu bar shows while one of the application's
     // windows is active, unless the window has its own: its rows are the
     // bar's entries, and the submenu with MenuRole::Application opens from
     // the application's name. Not owned; it stays while it is the main menu.
     void setMainMenu(Menu* menu);
     Menu* mainMenu() const { return m_mainMenu; }
+    // The entries the dock's menu for the application shows after its
+    // windows. Not owned; it stays while it is the dock menu.
+    void setDockMenu(Menu* menu);
+    Menu* dockMenu() const;
 
     struct Screen
     {
@@ -111,7 +124,7 @@ public:
         RectF workArea;
         // Device pixels per logical pixel.
         double scale = 1;
-        // The one with the status bar.
+        // The one with the menu bar.
         bool primary = false;
     };
     // The outputs, known from the start, before any window; none off

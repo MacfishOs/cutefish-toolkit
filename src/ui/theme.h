@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 
+#include "base/signal.h"
 #include "ui/geometry.h"
 
 namespace cutefish::ui {
@@ -42,6 +43,8 @@ struct Theme
     std::string iconTheme = "Cutefish";
     // The compositor's window corners on large panels.
     bool continuousCorners = true;
+    // The title bar controls as red, yellow and green dots instead of plates.
+    bool coloredWindowControls = false;
 
     // Points to logical pixels at the 96 dpi logical resolution.
     double fontSize() const { return fontPointSize * 4 / 3; }
@@ -55,6 +58,9 @@ struct Theme
     static void setCurrent(const Theme& theme);
     // Counts the changes, for caches of what the theme decides.
     static uint64_t generation();
+    // After setCurrent has reached the windows: for what takes the theme
+    // outside them.
+    static base::Signal<>& changed();
 };
 
 namespace accent {

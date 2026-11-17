@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <poll.h>
@@ -189,10 +191,10 @@ static void type(EmbeddedWindow& window, uint32_t keysym, std::string text = {})
     window.key(event, false);
 }
 
-// The middle of a menu's row: five pixels of margin, rows of 30 and 1 between.
+// The middle of a menu's row: five pixels of margin and rows of 26.
 static PointF menuRow(int row)
 {
-    return {40, 5 + row * 31 + 15.0};
+    return {40, 5 + row * 26 + 13.0};
 }
 
 TEST(EmbeddedHostTest, MenuOpensAsAHostPlacedPopup)
@@ -224,7 +226,7 @@ TEST(EmbeddedHostTest, MenuOpensAsAHostPlacedPopup)
     EXPECT_EQ(popup->popupPlacement().gravity, PopupAnchor::BottomRight);
     EXPECT_EQ(popup->scale(), 1.5);
     EXPECT_GT(popup->size().width, 140);
-    EXPECT_EQ(popup->size().height, 5 + 30 + 1 + 30 + 5);
+    EXPECT_EQ(popup->size().height, 5 + 26 + 26 + 5);
     // The menu's body is blurred behind, at the window radius.
     EXPECT_EQ(popup->blurRect(), (RectF{0, 0, popup->size().width, popup->size().height}));
     EXPECT_GT(popup->blurRadius(), 0);
@@ -306,7 +308,7 @@ TEST(EmbeddedHostTest, SubmenusOpenBesideTheirRows)
     EXPECT_TRUE(placement.slide);
     EXPECT_DOUBLE_EQ(placement.anchorRect.x, 2);
     EXPECT_DOUBLE_EQ(placement.anchorRect.right(), root->size().width - 2);
-    EXPECT_DOUBLE_EQ(placement.anchorRect.y, 31);
+    EXPECT_DOUBLE_EQ(placement.anchorRect.y, 26);
     sub->render();
 
     // Another row takes it down.
@@ -746,8 +748,8 @@ TEST(EmbeddedHostTest, BubbleMenusPointAtTheirTarget)
 
     // MenuSurface's implicit size: rows, margins and the arrow's length.
     const SizeF size = menu.implicitSize(&window);
-    EXPECT_EQ(size.width, 320 + 2 * 3);
-    EXPECT_EQ(size.height, 30 + 1 + 5 + 1 + 30 + 2 * 5 + 6);
+    EXPECT_EQ(size.width, 320 + 2 * 5);
+    EXPECT_EQ(size.height, 26 + 12 + 26 + 2 * 5 + 6);
     EXPECT_GT(menu.minimumEdgeLength(), 40);
 
     menu.popupAt(&window, {580, 10});
@@ -815,6 +817,47 @@ TEST(EmbeddedHostTest, ThemeIconsTintAsSilhouettes)
     EXPECT_GT(coloured, 100);
 }
 
+// A drawing fitted to the raster's pixels, kept beside the directory, is the
+// one drawn; a raster twice its size takes it as well.
+TEST(EmbeddedHostTest, ThemeSizeIconsPreferTheFittedDrawing)
+{
+    char pattern[] = "/tmp/cutefish-fitted-icon-XXXXXX";
+    const std::filesystem::path root = mkdtemp(pattern);
+    const auto write = [&root](const char* directory, int x) {
+        std::filesystem::create_directories(root / directory);
+        std::ofstream(root / directory / "mark.svg")
+                << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 20 20\">"
+                << "<rect x=\"" << x << "\" width=\"10\" height=\"20\"/></svg>";
+    };
+    write("20", 0);
+    write("20@30px", 10);
+
+    EmbeddedWindow window;
+    auto content = std::make_unique<Free>();
+    ThemeIcon* icon = content->addChild<ThemeIcon>((root / "20" / "mark.svg").string(), 20);
+    icon->setThemeSize(20);
+    icon->setColor(Color{0, 0, 0, 255});
+    icon->setGeometry({0, 0, 20, 20});
+    window.setContentView(std::move(content));
+    window.setSize({20, 20});
+    const auto inked = [&window](double x) {
+        const EmbeddedWindow::Frame& frame = window.render();
+        const int column = int(frame.width * x);
+        return frame.pixels[size_t(frame.height / 2) * frame.stride + size_t(column) * 4 + 3] > 0;
+    };
+    EXPECT_TRUE(inked(0.25));
+    EXPECT_FALSE(inked(0.75));
+    for (double scale : {1.5, 3.0}) {
+        window.setScale(scale);
+        EXPECT_FALSE(inked(0.25)) << scale;
+        EXPECT_TRUE(inked(0.75)) << scale;
+    }
+    window.setScale(1.25);
+    EXPECT_TRUE(inked(0.25));
+    EXPECT_FALSE(inked(0.75));
+    std::filesystem::remove_all(root);
+}
+
 // A miss in the theme's icon-theme.cache must leave the cache usable: the
 // cache's order puts the application's scalable drawing first.
 TEST(EmbeddedHostTest, ThemeIconMissesKeepTheIconCache)
@@ -859,7 +902,7 @@ TEST(EmbeddedHostTest, PopupAtAsksAboutToShowOnce)
     EXPECT_EQ(asked, 1);
     ASSERT_EQ(host.open.size(), 1u);
     // The row it added counts in the size.
-    EXPECT_EQ(host.open[0]->size().height, 30 + 2 * 5);
+    EXPECT_EQ(host.open[0]->size().height, 26 + 2 * 5);
     menu.close();
     runLoop(10ms);
 }
@@ -896,7 +939,7 @@ TEST(EmbeddedHostTest, OpenMenusTakeChangedRows)
     menu.itemsChanged();
     runLoop(10ms);
     ASSERT_EQ(host.repositioned.size(), 1u);
-    EXPECT_EQ(popup->size().height, 3 * 30 + 2 + 2 * 5);
+    EXPECT_EQ(popup->size().height, 3 * 26 + 2 * 5);
     // The submenu's row is still there: kept, and it has the keys.
     EXPECT_TRUE(more->isOpen());
     type(window, XKB_KEY_Left);
@@ -961,9 +1004,10 @@ TEST(EmbeddedHostTest, StyledSpansUnderlineAndLink)
     }
     EXPECT_EQ(found, "https://example.org");
     EXPECT_EQ(label->linkAt({linkX, line->top + line->height + 5}), "");
-    // An underline in the link's colour below the baseline.
+    // An underline in the link's colour below the baseline, where the face
+    // puts it.
     int blue = 0;
-    for (int y = int(line->baseline) + 1; y < int(line->baseline) + 4 && y < frame.height; ++y) {
+    for (int y = int(line->baseline) + 1; y < frame.height; ++y) {
         for (int x = int(linkX); x < int(linkX) + 20; ++x) {
             const uint8_t* pixel = frame.pixels + size_t(y) * frame.stride + size_t(x) * 4;
             blue += pixel[2] > 200 && pixel[0] < 120;
@@ -1147,7 +1191,7 @@ TEST(EmbeddedHostTest, SubpixelTextOverTranslucentWindows)
 }
 
 // Text with a style (a shadow) and text marked NoSubpixelAntialias stay
-// greyscale, as on the status bar.
+// greyscale, as on the menu bar.
 TEST(EmbeddedHostTest, StyledAndMarkedTextStaysGreyscale)
 {
     const auto fringes = [](View* label) {

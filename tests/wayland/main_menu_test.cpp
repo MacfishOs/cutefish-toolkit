@@ -202,6 +202,9 @@ void settle(FakeCompositor& compositor, wayland::Connection& connection)
     compositor.post([done] { *done = true; });
     for (int i = 0; i < 100 && !*done; ++i)
         wl_display_roundtrip(connection.display());
+    // The handlers of the events read here may send requests; the second
+    // roundtrip has the compositor read them.
+    wl_display_roundtrip(connection.display());
     wl_display_roundtrip(connection.display());
 }
 
@@ -402,12 +405,14 @@ TEST_F(MainMenuTest, ActivatingAnItemRunsItsAction)
     ASSERT_EQ(2u, items.size());
 
     compositor.post([&] {
-        cutefish_menu_item_v1_send_activated(compositor.object(made(items[0])));
-        cutefish_menu_item_v1_send_activated(compositor.object(made(items[1])));
+        cutefish_menu_item_v1_send_activated(compositor.object(made(items[0])), 41);
+        cutefish_menu_item_v1_send_activated(compositor.object(made(items[1])), 42);
     });
     settle(compositor, *connection);
     EXPECT_EQ(1, opened);
     EXPECT_EQ(0, closed);
+    // The choice counts as input, so the clipboard may be set after it.
+    EXPECT_EQ(42u, connection->inputSerial());
 }
 
 // The export goes with the last window showing it, and with it its objects.

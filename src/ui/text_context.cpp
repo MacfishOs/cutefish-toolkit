@@ -33,6 +33,17 @@ namespace cutefish::ui {
 // Character fallbacks remembered before the cache starts over.
 static constexpr size_t kMaximumFallbacks = 65536;
 
+// Inter ships its large-size cut as a separate family, "Inter Display",
+// taken from this pixel size up.
+static constexpr double kInterDisplayPixelSize = 20;
+
+// Inter's published tracking curve (rsms.me/inter/dynmetrics): letter
+// spacing in em for a size in pixels, looser below 12 px, tighter above.
+static double interTracking(double pixelSize)
+{
+    return -0.0223 + 0.185 * std::exp(-0.1745 * pixelSize);
+}
+
 // "zh_CN.UTF-8" becomes "zh-CN"; "C" and "POSIX" name no language.
 namespace {
 
@@ -198,6 +209,7 @@ public:
         std::lock_guard lock(m_mutex);
         m_fallbacks.clear();
         m_families.clear();
+        m_styles.clear();
     }
 
 protected:
@@ -265,9 +277,21 @@ protected:
         return sk_make_sp<FamilyStyleSet>(own.empty() ? std::move(firstFamily) : std::move(own));
     }
 
+    // Each answer is a fontconfig match over every installed font (about
+    // 1.5 ms with 3000 fonts), asked again for every layout of the same
+    // font; misses are kept too.
     sk_sp<SkTypeface> onMatchFamilyStyle(const char family[], const SkFontStyle& style) const override
     {
-        return m_fonts->matchFamilyStyle(family, style);
+        StyleKey key{family != nullptr, family ? family : "", style.weight(), style.width(), int(style.slant())};
+        std::lock_guard lock(m_mutex);
+        const auto found = m_styles.find(key);
+        if (found != m_styles.end())
+            return found->second;
+        sk_sp<SkTypeface> typeface = m_fonts->matchFamilyStyle(family, style);
+        if (m_styles.size() >= kMaximumFallbacks)
+            m_styles.clear();
+        m_styles.emplace(std::move(key), typeface);
+        return typeface;
     }
 
     // Everything the answer depends on is in the key; misses are kept too.
@@ -319,6 +343,7 @@ protected:
 
 private:
     using Key = std::tuple<std::string, int, int, int, std::string, SkUnichar>;
+    using StyleKey = std::tuple<bool, std::string, int, int, int>;
 
     struct ListedFont
     {
@@ -333,6 +358,7 @@ private:
     {
         FcPattern* pattern = FcPatternCreate();
         FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family.c_str()));
+        FcPatternAddBool(pattern, FC_VARIABLE, FcFalse);
         FcObjectSet* objects = FcObjectSetBuild(FC_FAMILY, FC_FILE, FC_INDEX, FC_WEIGHT, FC_WIDTH, FC_SLANT, nullptr);
         FcFontSet* fonts = FcFontList(nullptr, pattern, objects);
         FcObjectSetDestroy(objects);
@@ -393,7 +419,7 @@ private:
         if (typeface) {
             SkString name;
             typeface->getFamilyName(&name);
-            if (name.isEmpty())
+            if (!(typeface->fontStyle() == font.style) || !name.equals(font.family.c_str()))
                 typeface.reset();
         }
         if (!typeface)
@@ -406,6 +432,7 @@ private:
     sk_sp<SkFontMgr> m_fonts;
     mutable std::mutex m_mutex;
     mutable std::map<Key, sk_sp<SkTypeface>> m_fallbacks;
+    mutable std::map<StyleKey, sk_sp<SkTypeface>> m_styles;
     mutable std::map<std::string, sk_sp<SkFontStyleSet>> m_families;
     mutable std::map<std::pair<std::string, int>, sk_sp<SkTypeface>> m_typefaces;
 };
@@ -481,41 +508,22 @@ skia::textlayout::TextStyle TextContext::style(double fontSize, int weight, Colo
 {
     const Theme& theme = Theme::current();
     const std::string& themeFamily = theme.fontFamily.empty() ? m_family : theme.fontFamily;
-    skia::textlayout::TextStyle style;
+    const std::string& primary = family.empty() ? themeFamily : family;
+    const double size = pixelSize(fontSize > 0 ? fontSize : theme.fontSize());
+    const bool inter = primary == "Inter";
 
-    std::vector<SkString> fontFamilies;
+    std::vector<SkString> families;
+    if (inter && size >= kInterDisplayPixelSize)
+        families.emplace_back("Inter Display");
+    families.emplace_back(primary.c_str());
     if (!family.empty())
-        fontFamilies.push_back(SkString(family.c_str()));
-    if (!themeFamily.empty() && themeFamily != family)
-        fontFamilies.push_back(SkString(themeFamily.c_str()));
+        families.emplace_back(themeFamily.c_str());
 
-    // Apple / macOS typography fallback priority
-    for (const char* f : {"SF Pro Text", "SF Pro Display", "SF Pro", "-apple-system", "Inter", "system-ui", "Cantarell", "Noto Sans"}) {
-        fontFamilies.push_back(SkString(f));
-    }
-    style.setFontFamilies(fontFamilies);
-
-    const double px = pixelSize(fontSize > 0 ? fontSize : theme.fontSize());
-    style.setFontSize(SkScalar(px));
-
-    // Apple Dynamic Tracking (letter spacing):
-    // Small text has subtle positive letter spacing; body has ~0; headers have negative letter spacing
-    double tracking = 0.0;
-    if (px <= 11.0) {
-        tracking = 0.15;
-    } else if (px <= 13.0) {
-        tracking = 0.05;
-    } else if (px <= 15.0) {
-        tracking = -0.05;
-    } else if (px <= 18.0) {
-        tracking = -0.15;
-    } else if (px <= 24.0) {
-        tracking = -0.30;
-    } else {
-        tracking = -0.45;
-    }
-    style.setLetterSpacing(SkScalar(tracking));
-
+    skia::textlayout::TextStyle style;
+    style.setFontFamilies(families);
+    style.setFontSize(SkScalar(size));
+    if (inter)
+        style.setLetterSpacing(SkScalar(size * interTracking(size)));
     style.setFontStyle(SkFontStyle(weight, SkFontStyle::kNormal_Width, SkFontStyle::kUpright_Slant));
     style.setColor(color.argb());
     style.setFontEdging(m_edging);
@@ -536,13 +544,6 @@ sk_sp<SkTypeface> TextContext::typeface(int weight, const std::string& family) c
         typefaces = m_fontCollection->findTypefaces({SkString(family.c_str())}, style);
     if (typefaces.empty())
         typefaces = m_fontCollection->findTypefaces({SkString(themeFamily.c_str())}, style);
-    if (typefaces.empty()) {
-        for (const char* f : {"SF Pro Text", "SF Pro Display", "SF Pro", "Inter", "Cantarell", "Noto Sans"}) {
-            typefaces = m_fontCollection->findTypefaces({SkString(f)}, style);
-            if (!typefaces.empty())
-                break;
-        }
-    }
     if (typefaces.empty())
         typefaces = m_fontCollection->findTypefaces({SkString(m_family.c_str())}, SkFontStyle());
     return typefaces.empty() ? nullptr : typefaces.front();

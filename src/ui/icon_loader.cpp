@@ -22,6 +22,7 @@
 #include "include/codec/SkCodec.h"
 #include "include/codec/SkJpegDecoder.h"
 #include "include/codec/SkPngDecoder.h"
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkData.h"
@@ -44,6 +45,25 @@ namespace cutefish::ui {
 // Enough for every icon a few windows show at two scales.
 static constexpr size_t kCacheLimit = 512;
 static const char* const kExtensions[] = {".png", ".svg"};
+// ICNS application icons put their plate 824 px wide on a 1024 px canvas; the
+// icon theme's plates are 56 of 64. The picture grows by the ratio, around its
+// centre, so both plates come out alike.
+static constexpr double kIcnsScale = (56.0 / 64) / (824.0 / 1024);
+// The icon theme's plate, drawn under applications' own icons from outside
+// the theme; their visible part gets as wide as the theme's logos on it.
+static constexpr const char* kPlateName = "cutefish-application-plate";
+static constexpr double kPlateContent = 44.0 / 64;
+static constexpr double kPlateExtent = 56.0 / 64;
+// A solid part this square, solid along all four sides outside its corners,
+// is a plate of the icon's own, drawn as large as the theme's plate instead of
+// on it; round and shaped logos leave at least 6% of that area clear.
+static constexpr double kOwnPlateAspect = 1.02;
+static constexpr double kOwnPlateCorner = 0.25;
+static constexpr double kOwnPlateFill = 0.99;
+// Coverage below this is a soft shadow or glow, not the visible part.
+static constexpr uint8_t kInkAlpha = 16;
+// The drawing size an SVG icon's visible part is measured at.
+static constexpr int kInkSize = 256;
 
 // Where icon themes live, first match first.
 static std::vector<std::string> iconBases()
@@ -682,6 +702,7 @@ IconLoader::IconTheme& IconLoader::theme(const std::string& name)
         if (entry.count("Threshold"))
             directory.threshold = std::atoi(entry["Threshold"].c_str());
         directory.generic = entry["Context"] != "Applications" && entry["Context"] != "MimeTypes";
+        directory.applications = entry["Context"] == "Applications";
         theme.directories.push_back(directory);
     }
     return theme;
@@ -728,14 +749,18 @@ static bool matchesSize(char type, int size, int minimum, int maximum, int thres
 
 // The theme lookup: the theme, its parents depth first, the first with the name
 // giving every file it has of it, pictures before drawings; an exact size
-// first, else the closest.
-std::string IconLoader::lookup(const std::string& name, const std::string& requested, int size, int scale)
+// first, else the closest. Foreign is set for an application icon that only
+// a parent or hicolor has.
+std::string IconLoader::lookup(const std::string& name, const std::string& requested, int size, int scale,
+                               bool* foreign)
 {
     struct Entry
     {
         const Directory* directory;
         std::string path;
     };
+    const std::string& current = Theme::current().iconTheme;
+    std::string found;
     const bool shortened = name.size() < requested.size();
     std::vector<std::string> visited;
     std::vector<Entry> entries;
@@ -774,8 +799,10 @@ std::string IconLoader::lookup(const std::string& name, const std::string& reque
                     entries.push_back({&directory, base + ".svg"});
             }
         }
-        if (!entries.empty())
+        if (!entries.empty()) {
+            found = themeName;
             return;
+        }
         std::vector<std::string> parents = iconTheme.parents;
         if (themeName != "hicolor" && std::find(parents.begin(), parents.end(), "hicolor") == parents.end())
             parents.push_back("hicolor");
@@ -785,31 +812,50 @@ std::string IconLoader::lookup(const std::string& name, const std::string& reque
                 return;
         }
     };
-    search(search, Theme::current().iconTheme);
+    search(search, current);
 
+    const Entry* best = nullptr;
     for (const Entry& entry : entries) {
         const Directory& d = *entry.directory;
-        if (matchesSize(d.type, d.size, d.minimum, d.maximum, d.threshold, d.scale, size, scale))
-            return entry.path;
-    }
-    std::string best;
-    int bestDistance = INT_MAX;
-    for (const Entry& entry : entries) {
-        const Directory& d = *entry.directory;
-        const int distance = sizeDistance(d.type, d.size, d.minimum, d.maximum, d.threshold, d.scale, size, scale);
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            best = entry.path;
+        if (matchesSize(d.type, d.size, d.minimum, d.maximum, d.threshold, d.scale, size, scale)) {
+            best = &entry;
+            break;
         }
     }
-    return best;
+    if (!best) {
+        int bestDistance = INT_MAX;
+        for (const Entry& entry : entries) {
+            const Directory& d = *entry.directory;
+            const int distance = sizeDistance(d.type, d.size, d.minimum, d.maximum, d.threshold, d.scale, size, scale);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = &entry;
+            }
+        }
+    }
+    if (!best)
+        return {};
+    if (foreign)
+        *foreign = found != current && best->directory->applications;
+    return best->path;
+}
+
+void IconLoader::reload()
+{
+    m_themes.clear();
+    m_paths.clear();
 }
 
 std::string IconLoader::themeIconPath(const std::string& name, int size, double scale)
 {
+    return resolve(name, size, scale).path;
+}
+
+IconLoader::Resolved IconLoader::resolve(const std::string& name, int size, double scale)
+{
     // A desktop entry's Icon may name a file by its absolute path.
     if (name.starts_with('/'))
-        return std::filesystem::is_regular_file(name) ? name : std::string();
+        return {std::filesystem::is_regular_file(name) ? name : std::string(), {}};
 
     const int iconScale = int(std::ceil(scale));
     const std::string key = name + "@" + std::to_string(size) + "x" + std::to_string(iconScale) + "/"
@@ -821,8 +867,9 @@ std::string IconLoader::themeIconPath(const std::string& name, int size, double 
     // A missing "a-b-c" falls back to "a-b", then "a"; then /usr/share/pixmaps
     // is looked in for the name itself.
     std::string path;
+    bool foreign = false;
     for (std::string candidate = name; !candidate.empty();) {
-        path = lookup(candidate, name, size, iconScale);
+        path = lookup(candidate, name, size, iconScale, &foreign);
         if (!path.empty())
             break;
         const size_t dash = candidate.rfind('-');
@@ -831,16 +878,21 @@ std::string IconLoader::themeIconPath(const std::string& name, int size, double 
     for (const char* extension : kExtensions) {
         if (!path.empty())
             break;
-        if (std::filesystem::exists("/usr/share/pixmaps/" + name + extension))
+        if (std::filesystem::exists("/usr/share/pixmaps/" + name + extension)) {
             path = "/usr/share/pixmaps/" + name + extension;
+            foreign = true;
+        }
     }
-    m_paths.emplace(key, path);
-    return path;
+    Resolved resolved{path, {}};
+    if (foreign && !name.ends_with("-symbolic"))
+        resolved.plate = lookup(kPlateName, kPlateName, 64, 1, nullptr);
+    m_paths.emplace(key, resolved);
+    return resolved;
 }
 
 // An ICNS file's picture for the size, as a desktop entry's Icon may name
 // one; any other file as it is.
-static sk_sp<SkData> iconFileData(const std::string& path, int pixels)
+static sk_sp<SkData> iconFileData(const std::string& path, int pixels, bool* icns = nullptr)
 {
     sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
     if (!data)
@@ -848,17 +900,229 @@ static sk_sp<SkData> iconFileData(const std::string& path, int pixels)
     const std::string_view bytes(static_cast<const char*>(data->data()), data->size());
     if (!image_formats::isIcns(bytes))
         return data;
-    const std::string_view png = image_formats::icnsPng(bytes, pixels);
+    if (icns)
+        *icns = true;
+    const std::string_view png = image_formats::icnsPng(bytes, int(std::ceil(pixels * kIcnsScale)));
     if (png.empty())
         return nullptr;
     return SkData::MakeSubset(data.get(), size_t(png.data() - bytes.data()), png.size());
 }
 
-sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Color* tint)
+struct Ink
 {
-    sk_sp<SkData> data = iconFileData(path, size);
+    SkIRect bounds;
+    // The pixels at half coverage or more, and their share of those bounds
+    // outside four corner squares of kOwnPlateCorner of the shorter side.
+    SkIRect solidBounds;
+    double sideFill = 0;
+    // solidBounds to the partial coverage of their edge pixels across the
+    // middle, where a plate's sides are straight.
+    SkRect edges;
+};
+
+// Where a straight edge crosses from the outside pixel to the first solid one.
+static double edgeAt(int first, uint8_t inner, uint8_t outer, int direction)
+{
+    const double covered = inner < 255 ? inner / 255.0 : 1 + outer / 255.0;
+    return direction > 0 ? first + 1 - covered : first + covered;
+}
+
+// The pixels with at least kInkAlpha coverage; nothing for a blank picture.
+static std::optional<Ink> measureInk(const sk_sp<SkImage>& image)
+{
+    SkBitmap bitmap;
+    if (!bitmap.tryAllocPixels(SkImageInfo::MakeA8(image->width(), image->height()))
+        || !image->readPixels(bitmap.pixmap(), 0, 0))
+        return std::nullopt;
+    int left = INT_MAX;
+    int top = INT_MAX;
+    int right = INT_MIN;
+    int bottom = INT_MIN;
+    for (int y = 0; y < bitmap.height(); ++y) {
+        const uint8_t* row = bitmap.getAddr8(0, y);
+        for (int x = 0; x < bitmap.width(); ++x) {
+            if (row[x] < kInkAlpha)
+                continue;
+            left = std::min(left, x);
+            right = std::max(right, x + 1);
+            top = std::min(top, y);
+            bottom = std::max(bottom, y + 1);
+        }
+    }
+    if (left == INT_MAX)
+        return std::nullopt;
+    bool solid = false;
+    int solidLeft = INT_MAX;
+    int solidTop = INT_MAX;
+    int solidRight = INT_MIN;
+    int solidBottom = INT_MIN;
+    for (int y = top; y < bottom; ++y) {
+        const uint8_t* row = bitmap.getAddr8(0, y);
+        for (int x = left; x < right; ++x) {
+            if (row[x] < 128)
+                continue;
+            solid = true;
+            solidLeft = std::min(solidLeft, x);
+            solidRight = std::max(solidRight, x + 1);
+            solidTop = std::min(solidTop, y);
+            solidBottom = std::max(solidBottom, y + 1);
+        }
+    }
+    Ink ink;
+    ink.bounds = SkIRect::MakeLTRB(left, top, right, bottom);
+    if (!solid)
+        return ink;
+    ink.solidBounds = SkIRect::MakeLTRB(solidLeft, solidTop, solidRight, solidBottom);
+
+    const int corner = int(std::lround(std::min(ink.solidBounds.width(), ink.solidBounds.height())
+                                       * kOwnPlateCorner));
+    size_t area = 0;
+    size_t filled = 0;
+    for (int y = solidTop; y < solidBottom; ++y) {
+        const bool cornerRow = y < solidTop + corner || y >= solidBottom - corner;
+        const uint8_t* row = bitmap.getAddr8(0, y);
+        for (int x = solidLeft; x < solidRight; ++x) {
+            if (cornerRow && (x < solidLeft + corner || x >= solidRight - corner))
+                continue;
+            ++area;
+            if (row[x] >= 128)
+                ++filled;
+        }
+    }
+    ink.sideFill = area > 0 ? double(filled) / double(area) : 0;
+
+    const auto at = [&bitmap](int x, int y) -> uint8_t {
+        if (x < 0 || y < 0 || x >= bitmap.width() || y >= bitmap.height())
+            return 0;
+        return *bitmap.getAddr8(x, y);
+    };
+    const int middleX = (solidLeft + solidRight) / 2;
+    const int middleY = (solidTop + solidBottom) / 2;
+    ink.edges = SkRect::MakeLTRB(
+        SkScalar(edgeAt(solidLeft, at(solidLeft, middleY), at(solidLeft - 1, middleY), 1)),
+        SkScalar(edgeAt(solidTop, at(middleX, solidTop), at(middleX, solidTop - 1), 1)),
+        SkScalar(edgeAt(solidRight - 1, at(solidRight - 1, middleY), at(solidRight, middleY), -1)),
+        SkScalar(edgeAt(solidBottom - 1, at(middleX, solidBottom - 1), at(middleX, solidBottom), -1)));
+    return ink;
+}
+
+// The theme's plate at a size, drawn once: every icon on it at that size
+// shares the drawing. Any thread.
+static sk_sp<SkImage> plateImage(const std::string& plate, int size)
+{
+    static std::mutex mutex;
+    static std::unordered_map<std::string, sk_sp<SkImage>> plates;
+    const std::string key = plate + "@" + std::to_string(size);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (const auto it = plates.find(key); it != plates.end())
+            return it->second;
+    }
+    sk_sp<SkData> data = SkData::MakeFromFileName(plate.c_str());
+    sk_sp<SkImage> image = data ? renderSvg(loadSvg(std::move(data)), size, nullptr) : nullptr;
+    if (!image)
+        return nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (plates.size() >= 32)
+        plates.clear();
+    plates.emplace(key, image);
+    return image;
+}
+
+static bool hasOwnPlate(const Ink& ink)
+{
+    const int longer = std::max(ink.solidBounds.width(), ink.solidBounds.height());
+    const int shorter = std::min(ink.solidBounds.width(), ink.solidBounds.height());
+    return shorter > 0 && longer <= shorter * kOwnPlateAspect && ink.sideFill >= kOwnPlateFill;
+}
+
+// An application's own icon on the theme's plate, its visible part
+// kPlateContent of the size at the longer side and centred; one with a plate
+// of its own takes the theme plate's place and size instead.
+static sk_sp<SkImage> renderOnPlate(const std::string& plate, sk_sp<SkData> data, bool svg, int size)
+{
+    sk_sp<SkSVGDOM> drawing;
+    sk_sp<SkImage> picture;
+    if (svg) {
+        drawing = loadSvg(std::move(data));
+        picture = renderSvg(drawing, kInkSize, nullptr);
+    } else if (std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data))) {
+        picture = std::get<0>(codec->getImage());
+    }
+    if (!picture)
+        return nullptr;
+
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(size, size));
+    if (!surface)
+        return nullptr;
+    SkCanvas* canvas = surface->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    const std::optional<Ink> measured = measureInk(picture);
+    const bool ownPlate = measured && hasOwnPlate(*measured);
+    if (!ownPlate) {
+        const sk_sp<SkImage> base = plateImage(plate, size);
+        if (!base)
+            return nullptr;
+        canvas->drawImage(base, 0, 0);
+    }
+    if (!measured)
+        return surface->makeImageSnapshot();
+
+    // An own plate's soft edge and shadow stay outside the theme plate's size.
+    const SkRect ink = ownPlate ? measured->edges : SkRect::Make(measured->bounds);
+    const double extent = ownPlate ? kPlateExtent : kPlateContent;
+    const double factor = size * extent / std::max(ink.width(), ink.height());
+    const double centre = size / 2.0;
+    if (drawing) {
+        // Drawn again at the size that gives the visible part its extent, so
+        // its edges stay sharp.
+        const double drawn = kInkSize * factor;
+        canvas->translate(SkScalar(centre - (ink.left() + ink.width() / 2.0) * factor),
+                          SkScalar(centre - (ink.top() + ink.height() / 2.0) * factor));
+        drawing->setContainerSize(SkSize::Make(SkScalar(drawn), SkScalar(drawn)));
+        drawing->render(canvas);
+    } else {
+        // The cubic filter reads 4 x 4 pixels, too few for a picture several
+        // times larger: it is halved first, each pixel the mean of four.
+        SkRect source = ink;
+        double remaining = factor;
+        while (remaining < 0.5) {
+            const int width = std::max(1, picture->width() / 2);
+            const int height = std::max(1, picture->height() / 2);
+            sk_sp<SkSurface> half = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(width, height));
+            if (!half)
+                return nullptr;
+            half->getCanvas()->clear(SK_ColorTRANSPARENT);
+            half->getCanvas()->drawImageRect(picture, SkRect::MakeIWH(width, height),
+                                             SkSamplingOptions(SkFilterMode::kLinear));
+            source = SkRect::MakeLTRB(source.left() * width / picture->width(),
+                                      source.top() * height / picture->height(),
+                                      source.right() * width / picture->width(),
+                                      source.bottom() * height / picture->height());
+            remaining *= double(picture->width()) / width;
+            picture = half->makeImageSnapshot();
+        }
+        const SkRect target = SkRect::MakeXYWH(SkScalar(centre - ink.width() * factor / 2),
+                                               SkScalar(centre - ink.height() * factor / 2),
+                                               SkScalar(ink.width() * factor), SkScalar(ink.height() * factor));
+        const SkSamplingOptions sampling = remaining < 1 ? SkSamplingOptions(SkCubicResampler::Mitchell())
+                                                         : SkSamplingOptions(SkFilterMode::kLinear);
+        // Antialiased, or the target's edges snap to whole pixels.
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        canvas->drawImageRect(picture, source, target, sampling, &paint, SkCanvas::kStrict_SrcRectConstraint);
+    }
+    return surface->makeImageSnapshot();
+}
+
+sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Color* tint, const std::string& plate)
+{
+    bool icns = false;
+    sk_sp<SkData> data = iconFileData(path, size, &icns);
     if (!data)
         return nullptr;
+    if (!plate.empty() && !icns && !tint)
+        return renderOnPlate(plate, std::move(data), path.ends_with(".svg"), size);
     if (path.ends_with(".svg"))
         return renderSvg(loadSvg(std::move(data)), size, tint);
 
@@ -872,12 +1136,14 @@ sk_sp<SkImage> IconLoader::rasterise(const std::string& path, int size, const Co
     if (!surface)
         return nullptr;
     surface->getCanvas()->clear(SK_ColorTRANSPARENT);
+    const SkScalar extent = SkScalar(icns ? size * kIcnsScale : size);
     // A larger picture is scaled down smoothly; a smaller
     // one stays as it is and the item stretches it, sampled linearly.
-    const bool larger = decoded->width() > size || decoded->height() > size;
+    const bool larger = decoded->width() > extent || decoded->height() > extent;
     const SkSamplingOptions sampling = larger ? SkSamplingOptions(SkCubicResampler::Mitchell())
                                               : SkSamplingOptions(SkFilterMode::kLinear);
-    surface->getCanvas()->drawImageRect(decoded, SkRect::MakeWH(SkScalar(size), SkScalar(size)), sampling);
+    const SkScalar inset = (SkScalar(size) - extent) / 2;
+    surface->getCanvas()->drawImageRect(decoded, SkRect::MakeXYWH(inset, inset, extent, extent), sampling);
     return surface->makeImageSnapshot();
 }
 
@@ -926,17 +1192,18 @@ sk_sp<SkImage> IconLoader::pixmap(const std::string& name, int pixels)
     const std::string key = "pixmap:" + Theme::current().iconTheme + "/" + name + "@" + std::to_string(pixels);
     if (sk_sp<SkImage> image = cached(key))
         return image;
-    const std::string path = name.starts_with('/') ? name : themeIconPath(name, pixels, 1);
+    const Resolved resolved = resolve(name, pixels, 1);
+    const std::string& path = resolved.path;
     if (path.empty())
         return nullptr;
     sk_sp<SkImage> image;
-    if (path.ends_with(".svg")) {
-        image = rasterise(path, pixels, nullptr);
-    } else if (sk_sp<SkData> data = iconFileData(path, pixels)) {
+    if (path.ends_with(".svg") || !resolved.plate.empty()) {
+        image = rasterise(path, pixels, nullptr, resolved.plate);
+    } else if (bool icns = false; sk_sp<SkData> data = iconFileData(path, pixels, &icns)) {
         // A larger picture is scaled down and a smaller one left as it is.
         if (std::unique_ptr<SkCodec> codec = SkCodec::MakeFromData(std::move(data))) {
             auto [decoded, result] = codec->getImage();
-            if (decoded && (decoded->width() > pixels || decoded->height() > pixels))
+            if (decoded && (icns || decoded->width() > pixels || decoded->height() > pixels))
                 image = rasterise(path, pixels, nullptr);
             else
                 image = decoded;
@@ -947,16 +1214,35 @@ sk_sp<SkImage> IconLoader::pixmap(const std::string& name, int pixels)
     return image;
 }
 
+// A theme may keep, beside a directory, the same drawings fitted to the pixel
+// grid of one raster size: "20@30px" beside "20" holds them for 30 pixels. A
+// drawing fitted to half the pixels, or a quarter, doubles onto the grid too.
+static std::string fittedDrawing(const std::string& path, int pixels)
+{
+    const std::filesystem::path file(path);
+    for (int fit = pixels; fit > 0; fit /= 2) {
+        std::filesystem::path fitted = file.parent_path();
+        fitted += "@" + std::to_string(fit) + "px";
+        fitted /= file.filename();
+        std::error_code error;
+        if (std::filesystem::is_regular_file(fitted, error))
+            return fitted.string();
+        if (fit % 2 != 0)
+            break;
+    }
+    return path;
+}
+
 sk_sp<SkImage> IconLoader::themeIcon(const std::string& name, int size, int iconScale, int pixels)
 {
     const std::string key = "theme:" + Theme::current().iconTheme + "/" + name + "@" + std::to_string(size) + "x"
             + std::to_string(iconScale) + ":" + std::to_string(pixels);
     if (sk_sp<SkImage> image = cached(key))
         return image;
-    const std::string path = themeIconPath(name, size, iconScale);
-    if (path.empty())
+    const Resolved resolved = resolve(name, size, iconScale);
+    if (resolved.path.empty())
         return nullptr;
-    sk_sp<SkImage> image = rasterise(path, pixels, nullptr);
+    sk_sp<SkImage> image = rasterise(fittedDrawing(resolved.path, pixels), pixels, nullptr, resolved.plate);
     if (image)
         store(key, image);
     return image;
@@ -970,6 +1256,7 @@ void IconLoader::preloadThemeIcons(const std::vector<std::string>& names, int si
     {
         std::string key;
         std::string path;
+        std::string plate;
         sk_sp<SkImage> image;
     };
     auto pending = std::make_shared<std::vector<Pending>>();
@@ -978,9 +1265,9 @@ void IconLoader::preloadThemeIcons(const std::vector<std::string>& names, int si
                 + std::to_string(device);
         if (cached(key) || std::any_of(pending->begin(), pending->end(), [&key](const Pending& p) { return p.key == key; }))
             continue;
-        std::string path = themeIconPath(name, size, scale);
-        if (!path.empty())
-            pending->push_back({key, std::move(path), nullptr});
+        Resolved resolved = resolve(name, size, scale);
+        if (!resolved.path.empty())
+            pending->push_back({key, std::move(resolved.path), std::move(resolved.plate), nullptr});
     }
     if (pending->empty()) {
         if (done)
@@ -993,7 +1280,10 @@ void IconLoader::preloadThemeIcons(const std::vector<std::string>& names, int si
     auto finished = std::make_shared<std::function<void()>>(std::move(done));
     for (size_t i = 0; i < pending->size(); ++i) {
         base::ThreadPool::global()
-            .run([pending, i, device] { (*pending)[i].image = rasterise((*pending)[i].path, device, nullptr); },
+            .run([pending, i, device] {
+                     Pending& entry = (*pending)[i];
+                     entry.image = rasterise(entry.path, device, nullptr, entry.plate);
+                 },
                  [this, pending, remaining, finished] {
                      if (--*remaining > 0)
                          return;
@@ -1015,10 +1305,10 @@ sk_sp<SkImage> IconLoader::themeIcon(const std::string& name, int size, double s
             + std::to_string(device);
     if (sk_sp<SkImage> image = cached(key))
         return image;
-    const std::string path = themeIconPath(name, size, scale);
-    if (path.empty())
+    const Resolved resolved = resolve(name, size, scale);
+    if (resolved.path.empty())
         return nullptr;
-    sk_sp<SkImage> image = rasterise(path, device, nullptr);
+    sk_sp<SkImage> image = rasterise(resolved.path, device, nullptr, resolved.plate);
     if (image)
         store(key, image);
     return image;

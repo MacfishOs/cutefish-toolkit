@@ -26,21 +26,17 @@
 namespace cutefish::ui {
 
 // Row, separator and surface metrics.
-static constexpr double kRowHeight = 30;
-static constexpr double kRowSpacing = 1;
-static constexpr double kSeparatorHeight = 5;
-static constexpr double kMinimumRowWidth = 146;
-static constexpr double kContentMargin = 3;
+static constexpr double kRowHeight = 26;
+static constexpr double kSeparatorHeight = 12;
+static constexpr double kMinimumRowWidth = 158;
+static constexpr double kContentMargin = 5;
 static constexpr double kVerticalContentMargin = 5;
-// The highlight inside a row.
-static constexpr double kHighlightInsetX = 3;
-static constexpr double kHighlightInsetY = 1;
 static constexpr double kRowPadding = 8;
 static constexpr double kLabelPadding = 4;
-static constexpr double kItemSpacing = 9;
-static constexpr double kShortcutSpacing = 24;
+static constexpr double kItemSpacing = 10;
+static constexpr double kShortcutSpacing = 26;
 static constexpr double kCheckSize = 12;
-static constexpr double kCheckSpacing = 6;
+static constexpr double kCheckSpacing = 7;
 static constexpr double kIconSize = 22;
 static constexpr double kGlyphSize = 16;
 // A row's chevron slot, and how far a submenu overlaps its menu's frame.
@@ -67,7 +63,7 @@ static std::string lowered(const std::string& text)
 }
 
 // The rows, in a ScrollView of the surface: MenuItems and MenuSeparators in
-// a column with one pixel between them.
+// a column.
 class Menu::Rows : public View
 {
 public:
@@ -125,7 +121,7 @@ public:
         double height = 0;
         for (size_t i = 0; i < m_rows.size(); ++i) {
             const Row& row = m_rows[i];
-            height += (i > 0 ? kRowSpacing : 0) + (row.label ? kRowHeight : kSeparatorHeight);
+            height += row.label ? kRowHeight : kSeparatorHeight;
             if (row.label)
                 width = std::max(width, rowWidth(row));
         }
@@ -156,8 +152,17 @@ public:
         if (m_keyboard && row < 0 && m_menu->m_dropDown)
             return;
         m_keyboard = false;
+        // Over the menu's own margin with a submenu open: the row stays lit and
+        // the hover check decides, as when the pointer leaves the menu. Taking
+        // the submenu down at once here closed it under a pointer crossing the
+        // frame slowly, one pixel at a time, on its way into the submenu.
+        if (row < 0 && m_menu->m_openSubmenu) {
+            setCurrent(submenuRow());
+            m_menu->scheduleSubmenuCheck();
+            return;
+        }
         setCurrent(row);
-        // Another row, or none, takes the submenu down; a row with one opens it.
+        // Another row takes the submenu down; a row with one opens it.
         if (m_menu->m_openSubmenu && row != submenuRow())
             m_menu->closeSubmenu();
         if (row >= 0 && m_menu->m_items[m_rows[size_t(row)].index].submenu)
@@ -275,7 +280,7 @@ protected:
         for (Row& row : m_rows) {
             if (!row.label) {
                 row.rect = {0, y, width, kSeparatorHeight};
-                y += kSeparatorHeight + kRowSpacing;
+                y += kSeparatorHeight;
                 continue;
             }
             row.rect = {0, y, width, kRowHeight};
@@ -305,7 +310,7 @@ protected:
             }
             const double left = row.rect.x + kRowPadding + lead + glyphPadding(row);
             row.label->setGeometry({left, y, std::max(0.0, right - left), kRowHeight});
-            y += kRowHeight + kRowSpacing;
+            y += kRowHeight;
         }
 
         if (m_centreRow >= 0 && m_scrollView) {
@@ -331,9 +336,7 @@ protected:
                 continue;
             }
             if (int(i) == m_current && m_menu->m_items[row.index].enabled) {
-                const RectF highlight = row.rect.adjusted(kHighlightInsetX, kHighlightInsetY,
-                                                          -kHighlightInsetX, -kHighlightInsetY);
-                painter.drawRoundedRect(highlight, {theme.smallRadius, 0, themeCorners()},
+                painter.drawRoundedRect(row.rect, {theme.windowRadius - kContentMargin, 0, themeCorners()},
                                         color(ColorId::MenuHighlight));
             }
         }
@@ -341,7 +344,6 @@ protected:
 
     void pointerMove(const PointerEvent& event) override { pointerMoved(mapToWindow(event.position)); }
     void pointerPress(const PointerEvent& event) override { pointerMoved(mapToWindow(event.position)); }
-    void pointerLeave() override { pointerLeft(); }
 
     void pointerRelease(const PointerEvent& event) override
     {
@@ -575,7 +577,7 @@ private:
     int pageStep() const
     {
         const double viewport = m_scrollView ? m_scrollView->geometry().height : 0;
-        return std::max(1, int(std::floor(viewport / (kRowHeight + kRowSpacing))) - 1);
+        return std::max(1, int(std::floor(viewport / kRowHeight)) - 1);
     }
 
     void activateHighlighted()
@@ -899,6 +901,14 @@ static std::string keyEquivalentText(const std::string& key, uint32_t modifiers)
     else
         text += key;
     return text;
+}
+
+void Menu::setItemShortcut(size_t index, std::string text)
+{
+    if (index >= m_items.size() || m_items[index].shortcut == text)
+        return;
+    m_items[index].shortcut = std::move(text);
+    changed();
 }
 
 void Menu::setItemKeyEquivalent(size_t index, std::string key, uint32_t modifiers)
@@ -1232,9 +1242,11 @@ void Menu::checkSubmenuHover()
 {
     if (!m_openSubmenu || m_submenuFromKeyboard)
         return;
-    const Rows* submenuRows = m_openSubmenu->rows();
-    if (submenuRows && submenuRows->pointerInside())
-        return;
+    for (const Menu* open = m_openSubmenu; open; open = open->m_openSubmenu) {
+        const Rows* openRows = open->rows();
+        if (openRows && openRows->pointerInside())
+            return;
+    }
     const Rows* own = rows();
     if (own && own->pointerInside() && own->current() == own->submenuRow())
         return;

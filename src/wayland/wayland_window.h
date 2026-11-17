@@ -69,21 +69,28 @@ public:
     void setPopupPlacement(const PopupPlacement& placement, int width, int height) override;
     void startMove() override;
     void setCursorShape(CursorShape shape) override;
+    void setCursorImage(const Bitmap& image, int scale, double hotX, double hotY);
     void setBlur(const RectF& rect, double radius) override;
     void setBlurShape(const Path& path) override;
+    void setSubsurfaceBlur(const RectF& rect, double radius) override;
+    void setSubsurfaceBlurShape(const Path& path) override;
+    void setSubsurfaceBlurFill(const BackdropFill& fill) override;
     void setGlass(const std::optional<GlassMaterial>& material) override;
     bool glassAvailable() const override;
     void setResizeAroundCenter(bool aroundCenter) override;
     void setSkipTaskbar(bool skip) override;
     void setAlwaysOnTop(bool onTop) override;
+    void hideApplication() override;
     void setRestoreId(const std::string& id) override;
     void setPlacementAnchor(const std::optional<PlacementAnchor>& anchor) override;
     void setBodyShape(const Path& path) override;
     void setCastsShadow(bool castsShadow) override;
     void setOpacity(double opacity) override;
+    void setFullScreenBars(int height, bool push) override;
     bool setScreenPosition(PointF position) override;
     void setUserResizable(bool resizable) override;
     void setMainMenu(Menu* menu) override;
+    void setDockMenu(Menu* menu);
     void setStatusItemIdentifier(const std::string& identifier) override;
     void setStatusItemHighlight(bool highlighted) override;
     void setForeignParent(const std::string& handle, bool modal) override;
@@ -94,6 +101,7 @@ public:
     bool startDrag(DragSource source) override;
 
     bool present(SizeF size, double scale, bool opaque, const PaintFunction& paint) override;
+    bool presentUnchanged(SizeF size, double scale, bool opaque) override;
 
     // Null for a popup not shown yet.
     ShellSurface* shell() const { return m_shell.get(); }
@@ -118,6 +126,7 @@ private:
     void keyboardLeave() override;
     void key(const KeyEvent& event, bool pressed) override;
     void pointerHold() override;
+    void pointerGesture(const GestureEvent& event) override;
     void touchDown(int32_t id, double x, double y) override;
     void touchMotion(int32_t id, double x, double y) override;
     void touchUp(int32_t id) override;
@@ -125,6 +134,7 @@ private:
     void textInput(const TextInputEvent& event) override;
     void configureBounds(int width, int height) override;
     void interactiveResize(bool active) override;
+    void fullScreenReveal(int offset, int durationMs) override;
     uint32_t dragEnter(double x, double y, DropOffer* offer, uint32_t modifiers) override;
     uint32_t dragMotion(double x, double y, uint32_t modifiers) override;
     void dragLeave() override;
@@ -147,10 +157,15 @@ private:
     RectF m_blurRect;
     double m_blurRadius = 0;
     Path m_blurShape;
+    RectF m_subsurfaceBlurRect;
+    double m_subsurfaceBlurRadius = 0;
+    Path m_subsurfaceBlurShape;
+    BackdropFill m_subsurfaceBlurFill;
     std::optional<GlassMaterial> m_glass;
     double m_opacity = 1;
     std::vector<SubsurfaceClient*> m_subsurfaces;
     std::shared_ptr<MainMenuMirror> m_mainMenu;
+    std::shared_ptr<MainMenuMirror> m_dockMenu;
     wl_egl_window* m_eglWindow = nullptr;
     EGLSurface m_eglSurface = EGL_NO_SURFACE;
     sk_sp<SkSurface> m_surface;

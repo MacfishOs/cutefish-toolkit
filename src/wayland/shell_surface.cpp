@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <wayland-client.h>
 
 #include <cutefish-shell-v1-client-protocol.h>
@@ -519,29 +520,72 @@ void ShellSurface::setBlur(const RectF& rect, double radius)
                                  int(std::round(rect.bottom())) - top, int(std::round(radius)));
 }
 
-void ShellSurface::setBlurShape(const Path& path)
+void ShellSurface::setSubsurfaceBlur(const RectF& rect, double radius)
 {
     cutefish_surface_blur_v1* blur = m_connection.surfaceBlur();
     if (!blur)
         return;
-    if (path.isEmpty()) {
-        cutefish_surface_blur_v1_unset_shape(blur, m_surface);
+    if (rect.width <= 0 || rect.height <= 0) {
+        cutefish_surface_blur_v1_unset_over_subsurfaces(blur, m_surface);
         return;
     }
+    const int left = int(std::round(rect.x));
+    const int top = int(std::round(rect.y));
+    cutefish_surface_blur_v1_set_over_subsurfaces(blur, m_surface, left, top, int(std::round(rect.right())) - left,
+                                                  int(std::round(rect.bottom())) - top, int(std::round(radius)));
+}
+
+// The path as cutefish_surface_blur_v1 takes outlines, handed to `set`; false
+// for one the protocol would refuse.
+static bool sendPath(const Path& path, const std::function<void(wl_array*)>& set)
+{
     const std::vector<int32_t> values = pathValues(path);
     // The protocol's limit; a longer outline would be a protocol error.
-    if (values.size() > 4096) {
-        cutefish_surface_blur_v1_unset_shape(blur, m_surface);
-        return;
-    }
+    if (values.size() > 4096)
+        return false;
     wl_array array;
     wl_array_init(&array);
     void* data = wl_array_add(&array, values.size() * sizeof(int32_t));
     if (data) {
         std::copy(values.begin(), values.end(), static_cast<int32_t*>(data));
-        cutefish_surface_blur_v1_set_shape(blur, m_surface, &array);
+        set(&array);
     }
     wl_array_release(&array);
+    return true;
+}
+
+void ShellSurface::setBlurShape(const Path& path)
+{
+    cutefish_surface_blur_v1* blur = m_connection.surfaceBlur();
+    if (!blur)
+        return;
+    if (path.isEmpty()
+        || !sendPath(path, [&](wl_array* array) { cutefish_surface_blur_v1_set_shape(blur, m_surface, array); }))
+        cutefish_surface_blur_v1_unset_shape(blur, m_surface);
+}
+
+void ShellSurface::setSubsurfaceBlurFill(const BackdropFill& fill)
+{
+    cutefish_surface_blur_v1* blur = m_connection.surfaceBlur();
+    if (!blur)
+        return;
+    const auto fixed = [](double value) { return wl_fixed_from_double(std::clamp(value, 0.0, 1.0)); };
+    cutefish_surface_blur_v1_set_over_subsurfaces_fill(blur, m_surface, fixed(fill.tint[0]), fixed(fill.tint[1]),
+                                                      fixed(fill.tint[2]), fixed(fill.tint[3]),
+                                                      uint32_t(fill.blend), fixed(fill.color[0]),
+                                                      fixed(fill.color[1]), fixed(fill.color[2]),
+                                                      fixed(fill.color[3]));
+}
+
+void ShellSurface::setSubsurfaceBlurShape(const Path& path)
+{
+    cutefish_surface_blur_v1* blur = m_connection.surfaceBlur();
+    if (!blur)
+        return;
+    if (path.isEmpty() || !sendPath(path, [&](wl_array* array) {
+            cutefish_surface_blur_v1_set_over_subsurfaces_shape(blur, m_surface, array);
+        }))
+        cutefish_surface_blur_v1_unset_over_subsurfaces_shape(blur, m_surface);
 }
 
 void ShellSurface::setServerResize(bool enabled)
@@ -581,6 +625,13 @@ void ShellSurface::setOpacity(double opacity)
     if (m_connection.windowHints())
         cutefish_window_hints_v1_set_opacity(m_connection.windowHints(), m_surface,
                                              wl_fixed_from_double(std::clamp(opacity, 0.0, 1.0)));
+}
+
+void ShellSurface::setFullScreenBars(int height, bool push)
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_set_fullscreen_bars(m_connection.windowHints(), m_surface, std::max(height, 0),
+                                                     push ? 1 : 0);
 }
 
 bool ShellSurface::setScreenPosition(PointF position)
@@ -638,6 +689,12 @@ void ShellSurface::setAlwaysOnTop(bool onTop)
 {
     if (m_connection.windowHints())
         cutefish_window_hints_v1_set_always_on_top(m_connection.windowHints(), m_surface, onTop ? 1 : 0);
+}
+
+void ShellSurface::hideApplication()
+{
+    if (m_connection.windowHints())
+        cutefish_window_hints_v1_hide_application(m_connection.windowHints(), m_surface);
 }
 
 void ShellSurface::setRestoreId(const std::string& id)
@@ -718,16 +775,33 @@ void ShellSurface::prepareCommit(int width, int height, bool opaque)
     m_committedHeight = height;
     m_committedOpaque = opaque;
 
-    if (!m_frameCallback) {
-        m_frameCallback = wl_surface_frame(m_surface);
-        wl_callback_add_listener(m_frameCallback, &ShellSurfaceListeners::frame, this);
-    }
+    requestFrame();
 
     if (m_connection.presentation()) {
         struct wp_presentation_feedback* feedback =
             wp_presentation_feedback(m_connection.presentation(), m_surface);
         wp_presentation_feedback_add_listener(feedback, &ShellSurfaceListeners::feedback, this);
         m_feedbacks.insert(feedback);
+    }
+}
+
+bool ShellSurface::canCommitUnchanged(int width, int height, bool opaque) const
+{
+    return !m_configurePending && width == m_committedWidth && height == m_committedHeight
+            && opaque == m_committedOpaque;
+}
+
+void ShellSurface::commitUnchanged()
+{
+    requestFrame();
+    wl_surface_commit(m_surface);
+}
+
+void ShellSurface::requestFrame()
+{
+    if (!m_frameCallback) {
+        m_frameCallback = wl_surface_frame(m_surface);
+        wl_callback_add_listener(m_frameCallback, &ShellSurfaceListeners::frame, this);
     }
 }
 

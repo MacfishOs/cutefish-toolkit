@@ -176,6 +176,12 @@ void PlatformWindow::notifyInteractiveResize(bool active)
     m_window->handleInteractiveResize(active);
 }
 
+void PlatformWindow::notifyFullScreenReveal(int offset, int durationMs)
+{
+    if (onFullScreenReveal)
+        onFullScreenReveal(offset, durationMs);
+}
+
 void PlatformWindow::notifyScaleChanged(double scale)
 {
     m_window->handleScaleChanged(scale);
@@ -244,6 +250,11 @@ void PlatformWindow::notifyKey(const KeyEvent& event, bool pressed)
 void PlatformWindow::notifyHold()
 {
     m_window->handleHold();
+}
+
+void PlatformWindow::notifyGesture(const GestureEvent& event)
+{
+    m_window->handleGesture(event);
 }
 
 void PlatformWindow::notifyTouchDown(int32_t id, double x, double y)

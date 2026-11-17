@@ -31,6 +31,8 @@ TEST(SubsurfaceTest, HeadlessWindowsHaveNone)
     EXPECT_FALSE(subsurface.endFrame());
     EXPECT_FALSE(subsurface.waitForFrame(0));
     EXPECT_FALSE(subsurface.makeCurrent());
+    subsurface.setStacking(Subsurface::Stacking::Above);
+    EXPECT_FALSE(subsurface.isValid());
     EXPECT_EQ(Subsurface::waylandDisplay(), nullptr);
     // A frame of the window still renders.
     EXPECT_GT(window.grab().width(), 0);
@@ -65,13 +67,12 @@ TEST(WindowHintsTest, GlassAndShapeAreAcceptedEverywhere)
     EXPECT_GT(window.grab().width(), 0);
 }
 
-// The close button's glyph, sampled at its middle stroke.
+// The close button's plate, sampled at its middle.
 static Color closeGlyphColor(Window& window, double headerHeight)
 {
     const Image image = window.grab();
-    // The close glyph is a cross: its centre is inked.
-    const int x = int(300 - 4 - 16);
-    const int y = int(headerHeight == 44 ? 6 + 16 : 4 + 16);
+    const int x = int(7 + 13);
+    const int y = int(headerHeight == 44 ? 9 + 13 : 7 + 13);
     return image.pixel(x, y);
 }
 
@@ -87,6 +88,8 @@ TEST(WindowHintsTest, HeaderDarkModeTintsTheButtonsWhateverTheTheme)
     window.setBackgroundColor(Color::rgb(0x808080));
     window.setContentView(std::move(column));
     window.show();
+    // The plates are coloured while active; the tint shows on the inactive grey ones.
+    TestInput::configure(window, 300, 200, {});
 
     EXPECT_EQ(window.headerDarkMode(), wasDark);
     window.setHeaderDarkMode(true);
@@ -95,9 +98,9 @@ TEST(WindowHintsTest, HeaderDarkModeTintsTheButtonsWhateverTheTheme)
     window.setHeaderDarkMode(false);
     EXPECT_FALSE(window.headerDarkMode());
     const Color light = closeGlyphColor(window, 44);
-    // White ink on the grey for a dark header, near-black for a light one.
+    // A lighter plate on the grey for a dark header, a darker one for a light one.
     EXPECT_GT(dark.r, 0x90);
-    EXPECT_LT(light.r, 0x70);
+    EXPECT_LT(light.r, 0x78);
     window.setHeaderDarkMode(std::nullopt);
     EXPECT_EQ(window.headerDarkMode(), wasDark);
 }
@@ -113,11 +116,71 @@ TEST(WindowHintsTest, CenteredHeaderButtons)
     window.setContentView(std::move(column));
     window.show();
     window.grab();
-    // Close, maximize and minimize from the end, 4 px from it, 6 px down.
+    // Close, minimize and maximize from the start, 9 px from it, 11 px down,
+    // 6 apart.
     const std::string dump = window.layoutDump();
-    EXPECT_NE(dump.find("logical 264 6 32 32"), std::string::npos) << dump;
-    EXPECT_NE(dump.find("logical 231 6 32 32"), std::string::npos) << dump;
-    EXPECT_NE(dump.find("logical 198 6 32 32"), std::string::npos) << dump;
+    EXPECT_NE(dump.find("logical 9 11 78 22"), std::string::npos) << dump;
+    EXPECT_NE(dump.find("device 9 11 22 22"), std::string::npos) << dump;
+    EXPECT_NE(dump.find("device 37 11 22 22"), std::string::npos) << dump;
+    EXPECT_NE(dump.find("device 65 11 22 22"), std::string::npos) << dump;
+}
+
+TEST(WindowHintsTest, WindowControlPlatesHoverOneAtATime)
+{
+    Window window;
+    auto column = std::make_unique<Column>();
+    WindowHeader* header = column->addChild<WindowHeader>(44);
+    header->setButtonsCentered(true);
+    header->setLayoutHints({.fillWidth = true});
+    window.resize({300, 200});
+    window.setContentView(std::move(column));
+    window.show();
+    // The close and minimize plates beside their glyphs.
+    const auto plates = [&] {
+        const Image image = window.grab();
+        return std::pair{int(image.pixel(13, 22).r), int(image.pixel(41, 22).r)};
+    };
+    const auto [closeRest, minimizeRest] = plates();
+    TestInput::movePointer(window, {48, 22});
+    const auto [close, minimize] = plates();
+    EXPECT_EQ(close, closeRest);
+    EXPECT_LT(minimize, minimizeRest - 4);
+    // The gap between them hovers neither.
+    TestInput::movePointer(window, {34, 22});
+    EXPECT_EQ(plates(), std::pair(closeRest, minimizeRest));
+}
+
+TEST(WindowHintsTest, ColoredWindowControlGlyphsShowAcrossTheWholeRow)
+{
+    const Theme saved = Theme::current();
+    Theme theme = saved;
+    theme.coloredWindowControls = true;
+    Theme::setCurrent(theme);
+    Window window;
+    auto column = std::make_unique<Column>();
+    WindowHeader* header = column->addChild<WindowHeader>(44);
+    header->setButtonsCentered(true);
+    header->setLayoutHints({.fillWidth = true});
+    window.resize({300, 200});
+    window.setContentView(std::move(column));
+    window.show();
+    // The middles of the close and minimize plates, where their glyphs ink.
+    const auto centres = [&] {
+        const Image image = window.grab();
+        return std::pair{int(image.pixel(20, 22).r), int(image.pixel(43, 22).r)};
+    };
+    const auto [closeRest, minimizeRest] = centres();
+    // The gap between close and minimize, over minimize, and over maximize.
+    for (const double x : {31.5, 43.0, 66.0}) {
+        SCOPED_TRACE(x);
+        TestInput::movePointer(window, {x, 22});
+        const auto [close, minimize] = centres();
+        EXPECT_LT(close, closeRest - 40);
+        EXPECT_LT(minimize, minimizeRest - 40);
+    }
+    TestInput::movePointer(window, {200, 22});
+    EXPECT_EQ(centres(), std::pair(closeRest, minimizeRest));
+    Theme::setCurrent(saved);
 }
 
 TEST(WindowHintsTest, ScrollBarDarkModeOverridesTheTheme)

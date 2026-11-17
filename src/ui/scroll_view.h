@@ -43,6 +43,12 @@ public:
     // The vertical bar's track starts and ends this far in, as a ScrollBar's
     // topPadding and bottomPadding, e.g. to stop under a floating header.
     void setVerticalBarPadding(double top, double bottom);
+    // Clips to corners of this radius, those of the rounded plate it fills,
+    // and keeps the bars' handles clear of them.
+    void setCornerRadius(double radius);
+    // Its bottom edge is that of a window or plate with corners of this
+    // radius: the bars keep clear of them, and the content is not clipped.
+    void setBottomCornerRadius(double radius);
     // The content takes presses over the bars, as a ScrollBar with z: -1,
     // for rows whose handles reach into the bar's strip.
     void setBarsBelowContent(bool below);
@@ -88,6 +94,10 @@ private:
     bool m_horizontal = false;
     bool m_vertical = true;
     bool m_barsBelow = false;
+    double m_cornerRadius = 0;
+    double m_bottomCornerRadius = 0;
+    double m_verticalBarTop;
+    double m_verticalBarBottom;
     BarPolicy m_verticalPolicy = BarPolicy::AsNeeded;
 };
 
