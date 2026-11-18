@@ -36,6 +36,7 @@ public:
     void setMinimizeVisible(bool visible);
     void setMaximizeVisible(bool visible);
     void setCloseVisible(bool visible);
+    void setCloseOnly(bool closeOnly);
     // From the top and the end, 4 by default and 8 in dialogs.
     void setButtonMargin(double margin);
     // The buttons centred in the bar's height, with no top margin, keeping the

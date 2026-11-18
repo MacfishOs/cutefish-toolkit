@@ -394,7 +394,7 @@ public:
     std::function<bool()> isGroupHovered;
     std::function<void()> onHoverChanged;
 
-    bool isHovered() const { return m_hovered || m_pressed || m_checked; }
+    bool isControlHovered() const { return HeaderButton::isButtonHovered() || HeaderButton::isButtonPressed() || HeaderButton::isChecked(); }
 
     void pointerEnter() override
     {
@@ -416,8 +416,8 @@ public:
         const double size = 14.0;
         const RectF logical((localRect().width - size) / 2.0, (localRect().height - size) / 2.0, size, size);
 
-        const bool pressed = m_pressed || m_checked;
-        const bool groupHovered = (isGroupHovered && isGroupHovered()) || m_hovered || pressed;
+        const bool pressed = HeaderButton::isButtonPressed() || HeaderButton::isChecked();
+        const bool groupHovered = (isGroupHovered && isGroupHovered()) || HeaderButton::isButtonHovered() || pressed;
         const double opacity = (active || groupHovered) ? 1.0 : 0.35;
         Color color = m_plateColor;
         if (pressed) color = color.darker(1.25);
@@ -653,6 +653,12 @@ void WindowHeader::setMaximizeVisible(bool visible)
 void WindowHeader::setCloseVisible(bool visible)
 {
     m_close->setVisible(visible);
+}
+
+void WindowHeader::setCloseOnly(bool closeOnly)
+{
+    setMinimizeVisible(!closeOnly);
+    setMaximizeVisible(!closeOnly);
 }
 
 void WindowHeader::setButtonMargin(double margin)

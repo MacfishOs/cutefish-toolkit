@@ -44,7 +44,7 @@ struct Theme
     // The compositor's window corners on large panels.
     bool continuousCorners = true;
     // The title bar controls as red, yellow and green dots instead of plates.
-    bool coloredWindowControls = false;
+    bool coloredWindowControls = true;
 
     // Points to logical pixels at the 96 dpi logical resolution.
     double fontSize() const { return fontPointSize * 4 / 3; }

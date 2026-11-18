@@ -50,6 +50,9 @@ public:
     // the window controls' ink.
     void setSegment(bool segment);
 
+    bool isButtonHovered() const { return m_hovered; }
+    bool isButtonPressed() const { return m_pressed; }
+
     SizeF sizeHint() const override { return {m_size, m_size}; }
     RectF visualRect() const override;
     bool acceptsPointer() const override { return true; }
